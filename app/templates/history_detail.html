@@ -1,0 +1,418 @@
+{% extends "base.html" %}
+
+{% block title %}Historical Process Detail · Pi Workflow Studio{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="/static/assets/diagram-js.css">
+<link rel="stylesheet" href="/static/assets/bpmn-font/css/bpmn.css">
+<link rel="stylesheet" href="/static/assets/bpmn-js.css">
+<link rel="stylesheet" href="/static/app/diagram-js-minimap.css">
+{% endblock %}
+
+{% block content %}
+<main class="max-w-[1600px] mx-auto px-5 py-4 pb-6">
+  <header class="relative z-50 flex justify-between gap-3 items-center border-b border-line pb-3 mb-3">
+    <div class="min-w-0 flex-1 pr-2">
+      <div class="text-[10px] font-bold text-accent tracking-widest uppercase">Process History & Save Point Inspector</div>
+      <h1 id="title" class="text-base sm:text-xl md:text-2xl font-bold tracking-tight text-ink mt-0.5 mb-0.5 truncate">{{ workflow_id }}</h1>
+    </div>
+    <div class="flex items-center gap-2 shrink-0">
+      <!-- Desktop Nav -->
+      <nav class="hidden md:flex items-center gap-1.5">
+        <a href="/" class="nav-link">Studio</a>
+        <a href="/history" class="nav-link active">History</a>
+        <a href="/instance/{{ workflow_id }}" class="nav-link">Live View</a>
+        <button onclick="toggleTheme()" class="btn btn-secondary text-xs px-2 py-1 ml-1" title="Toggle Light/Dark Theme">
+          <span class="theme-toggle-icon">☀️</span>
+        </button>
+      </nav>
+      <button class="btn btn-danger text-xs px-2.5 py-1" onclick="deleteCurrentInstance()">Delete</button>
+      <!-- Mobile Hamburger Button & Theme -->
+      <button onclick="toggleTheme()" class="md:hidden btn btn-secondary text-xs px-2 py-1" title="Toggle Light/Dark Theme">
+        <span class="theme-toggle-icon">☀️</span>
+      </button>
+      <button id="mobile-menu-btn" class="md:hidden p-2 rounded-md bg-panel border border-line text-ink hover:bg-card-hover hover:border-line-highlight transition-colors" aria-label="Toggle Menu">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+      </button>
+    </div>
+    <!-- Mobile Dropdown Menu -->
+    <div id="mobile-menu" class="hidden md:hidden absolute top-full right-0 mt-1 w-44 py-2 bg-panel border border-line rounded-lg shadow-2xl z-[1000] flex flex-col gap-1 backdrop-blur-md">
+      <a href="/" class="nav-link mx-2">Studio</a>
+      <a href="/history" class="nav-link active mx-2">History</a>
+      <a href="/instance/{{ workflow_id }}" class="nav-link mx-2">Live View</a>
+      <a href="/editor" class="nav-link mx-2">Editor</a>
+      <a href="/admin" class="nav-link mx-2">Admin</a>
+    </div>
+  </header>
+
+  <div id="main-layout" class="flex flex-col xl:flex-row gap-3.5 xl:h-[calc(100vh-130px)] h-auto min-h-[580px]">
+    <!-- Column 1: BPMN Canvas -->
+    <div id="canvas-container" class="w-full xl:flex-1 min-w-0 h-[480px] min-h-[260px] xl:h-full relative bg-white rounded-lg overflow-hidden border border-line shadow-2xl shrink-0">
+      <button id="toggle-sidebar" class="absolute top-3 left-3 z-30 bg-panel-header/90 border border-line-highlight text-ink px-2.5 py-1 text-xs font-semibold rounded-md backdrop-blur-md shadow-md hover:bg-card-hover hover:text-accent transition-colors" title="Toggle Panels (Alt+S)">◧ Toggle Panels</button>
+      <div id="canvas" class="w-full h-full bg-[#f8fafc]"></div>
+
+      <div class="diagram-controls">
+        <button class="ctrl-btn" id="ctrl-zoom-in" title="Zoom In (Ctrl +)">＋</button>
+        <button class="ctrl-btn" id="ctrl-zoom-out" title="Zoom Out (Ctrl -)">－</button>
+        <button class="ctrl-btn" id="ctrl-zoom-fit" title="Fit Diagram to Viewport (Ctrl 0)">⛶ Fit</button>
+        <button class="ctrl-btn" id="ctrl-zoom-reset" title="Reset Zoom (1:1)">1:1</button>
+        <button class="ctrl-btn" id="ctrl-minimap" title="Toggle Minimap (M)">🗺️ Map</button>
+      </div>
+    </div>
+
+    <!-- Vertical Resizer for Stacked Layouts -->
+    <div id="v-resizer-stacked" class="xl:hidden v-resizer-handle h-3.5 w-full flex items-center justify-center cursor-row-resize shrink-0 select-none group hover:bg-accent-dim active:bg-accent-dim/80 rounded transition-colors" title="Drag to resize BPMN diagram height">
+      <div class="v-resizer-pill w-12 h-1 bg-line-highlight group-hover:bg-accent rounded-full transition-colors"></div>
+    </div>
+
+    <!-- Right Panels Container -->
+    <div id="sidebar" class="w-full xl:w-auto flex flex-col md:flex-row xl:flex-row gap-3.5 xl:h-full shrink-0 transition-[width,min-width,opacity] duration-200">
+      
+      <!-- Column 2: Savepoints & Status -->
+      <aside class="w-full md:w-1/2 xl:w-[370px] xl:shrink-0 h-auto xl:h-full flex flex-col bg-panel border border-line rounded-lg overflow-hidden shadow-2xl">
+        <div class="flex justify-between items-center px-3.5 py-2.5 bg-panel-header border-b border-line shrink-0">
+          <div>
+            <div class="text-[9.5px] font-bold text-accent tracking-wider uppercase mb-0.5">Status</div>
+            <strong id="status" class="badge">loading</strong>
+          </div>
+          <span class="badge" id="process">...</span>
+        </div>
+
+        <div class="flex-1 min-h-0 overflow-y-auto p-3 pb-12 flex flex-col gap-3">
+          <!-- Save Points Accordion -->
+          <div class="acc-card flex flex-col shrink-0">
+            <div class="acc-header" onclick="toggleAcc(this)">
+              <div class="acc-title">
+                <svg class="acc-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                <span>Recorded Save Points</span>
+              </div>
+              <span class="badge" id="sp-badge">0</span>
+            </div>
+            <div class="acc-body">
+              <div id="savepoints" class="overflow-y-auto max-h-[460px] pr-1 pb-2 flex flex-col gap-2"></div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Column 3: State & Tasks -->
+      <aside class="w-full md:w-1/2 xl:w-[370px] xl:shrink-0 h-auto xl:h-full flex flex-col bg-panel border border-line rounded-lg overflow-hidden shadow-2xl">
+        <div class="px-3.5 py-2.5 bg-panel-header border-b border-line flex justify-between items-center shrink-0">
+          <div>
+            <div class="text-[9.5px] font-bold text-accent tracking-wider uppercase mb-0.5">Save Point Payload</div>
+            <span id="active-sp-name" class="badge">None Selected</span>
+          </div>
+          <a id="fork-btn" href="#" class="btn text-xs px-2.5 py-1 hidden">Fork Save Point</a>
+        </div>
+
+        <div class="flex-1 min-h-0 overflow-y-auto p-3 pb-12 flex flex-col gap-3">
+          <!-- Execution Tasks Accordion -->
+          <div class="acc-card flex flex-col shrink-0">
+            <div class="acc-header" onclick="toggleAcc(this)">
+              <div class="acc-title">
+                <svg class="acc-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                <span>Snapshot Tasks</span>
+              </div>
+              <span class="badge" id="tasks-badge">0</span>
+            </div>
+            <div class="acc-body">
+              <div id="tasks-list" class="overflow-y-auto max-h-[220px] pr-1.5 pb-2"></div>
+            </div>
+          </div>
+
+          <!-- Workflow Data Accordion -->
+          <div class="acc-card flex flex-col shrink-0">
+            <div class="acc-header" onclick="toggleAcc(this)">
+              <div class="acc-title">
+                <svg class="acc-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                <span>Workflow Data</span>
+              </div>
+              <span class="text-[10px] text-muted font-mono">Payload</span>
+            </div>
+            <div class="acc-body">
+              <pre id="data-view" class="bg-card text-ink-secondary p-2.5 rounded border border-line-highlight font-mono text-[11px] leading-relaxed overflow-x-auto max-h-[260px]"></pre>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Vertical Resizer for Desktop 3-Panel Layout (below the row) -->
+  <div id="v-resizer-desktop" class="hidden xl:flex v-resizer-handle h-3.5 w-full items-center justify-center cursor-row-resize shrink-0 select-none group hover:bg-accent-dim active:bg-accent-dim/80 rounded transition-colors mt-1.5" title="Drag to resize workspace height">
+    <div class="v-resizer-pill w-16 h-1 bg-line-highlight group-hover:bg-accent rounded-full transition-colors"></div>
+  </div>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/app/bpmn-viewer-bundle.js"></script>
+<script>
+const id = '{{ workflow_id }}';
+let state = null, viewer = null, savePoints = [], currentSpData = {};
+const $ = x => document.getElementById(x);
+
+function toggleAcc(header) {
+  const isCollapsed = header.classList.toggle('collapsed');
+  const body = header.nextElementSibling;
+  if (body) body.classList.toggle('collapsed', isCollapsed);
+}
+
+// Sidebar toggle
+$('toggle-sidebar').onclick = () => {
+  const sb = $('sidebar');
+  const cc = $('canvas-container');
+  const vrStacked = $('v-resizer-stacked');
+  const isCollapsed = sb.classList.toggle('!hidden');
+  if (isCollapsed) {
+    cc.classList.add('!h-[calc(100vh-130px)]', 'min-h-[520px]');
+    if (vrStacked) vrStacked.classList.add('!hidden');
+  } else {
+    cc.classList.remove('!h-[calc(100vh-130px)]');
+    if (vrStacked) vrStacked.classList.remove('!hidden');
+  }
+  if (viewer) {
+    viewer.get('canvas').resized();
+    setTimeout(fitDiagram, 150);
+  }
+};
+
+// Vertical Resizers (Mobile / Stacked BPMN Canvas & Desktop 3-Panel Workspace)
+function setupVerticalResizers() {
+  const vrStacked = $('v-resizer-stacked');
+  const vrDesktop = $('v-resizer-desktop');
+  const mainLayout = $('main-layout');
+  const canvasContainer = $('canvas-container');
+
+  function initResizer(handle, targetElem, minH, maxH, onResizeCb) {
+    if (!handle || !targetElem) return;
+    let isResizing = false;
+    let startY = 0;
+    let startH = 0;
+
+    const onStart = (e) => {
+      isResizing = true;
+      startY = e.clientY != null ? e.clientY : (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
+      startH = targetElem.offsetHeight;
+      handle.classList.add('resizing');
+      if (e.pointerId && handle.setPointerCapture) {
+        try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+      }
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'row-resize';
+      if (e.cancelable) e.preventDefault();
+    };
+
+    const onMove = (e) => {
+      if (!isResizing) return;
+      const clientY = e.clientY != null ? e.clientY : (e.touches && e.touches[0] ? e.touches[0].clientY : startY);
+      const delta = clientY - startY;
+      const newHeight = Math.max(minH, Math.min(maxH, startH + delta));
+      targetElem.style.height = `${newHeight}px`;
+      targetElem.style.minHeight = `${newHeight}px`;
+      if (onResizeCb) onResizeCb(newHeight);
+      if (viewer) {
+        try { viewer.get('canvas').resized(); } catch (_) {}
+      }
+      if (e.cancelable) e.preventDefault();
+    };
+
+    const onEnd = (e) => {
+      if (isResizing) {
+        isResizing = false;
+        handle.classList.remove('resizing');
+        if (e && e.pointerId && handle.releasePointerCapture) {
+          try { handle.releasePointerCapture(e.pointerId); } catch (_) {}
+        }
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        if (viewer) {
+          try {
+            viewer.get('canvas').resized();
+            fitDiagram();
+          } catch (_) {}
+        }
+      }
+    };
+
+    handle.addEventListener('pointerdown', onStart);
+    handle.addEventListener('mousedown', onStart);
+    handle.addEventListener('touchstart', onStart, { passive: false });
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('touchmove', onMove, { passive: false });
+
+    window.addEventListener('pointerup', onEnd);
+    window.addEventListener('mouseup', onEnd);
+    window.addEventListener('touchend', onEnd);
+    window.addEventListener('pointercancel', onEnd);
+    window.addEventListener('touchcancel', onEnd);
+  }
+
+  if (vrStacked && canvasContainer) {
+    initResizer(vrStacked, canvasContainer, 220, 1400);
+  }
+  if (vrDesktop && mainLayout) {
+    initResizer(vrDesktop, mainLayout, 380, 2200);
+  }
+}
+setupVerticalResizers();
+
+function copySpData() {
+  navigator.clipboard.writeText(JSON.stringify(currentSpData, null, 2));
+  alert('Save point variable snapshot copied to clipboard!');
+}
+
+function copyFinalData() {
+  if (state && state.data) {
+    navigator.clipboard.writeText(JSON.stringify(state.data, null, 2));
+    alert('Final workflow variables copied to clipboard!');
+  }
+}
+
+async function load() {
+  const [xmlResponse, stateResponse] = await Promise.all([
+    fetch(`/instance/${id}/diagram`),
+    fetch(`/instance/${id}/state`)
+  ]);
+  const xml = await xmlResponse.text();
+  state = await stateResponse.json();
+
+  const ViewerCtor = window.BpmnNavigatedViewer || window.BpmnJS;
+  viewer = new ViewerCtor({
+    container: '#canvas',
+    additionalModules: [window.minimapModule].filter(Boolean)
+  });
+
+  await viewer.importXML(xml);
+  fitDiagram();
+
+  $('status').textContent = state.status;
+  $('status').className = `badge ${state.status}`;
+  $('process').textContent = state.process_id;
+  $('final-data').textContent = JSON.stringify(state.data, null, 2);
+
+  savePoints = state.save_points || [];
+  renderSavePoints();
+
+  if (viewer && state.tasks) {
+    const canvas = viewer.get('canvas');
+    state.tasks.filter(t => t.state === 'COMPLETED').forEach(t => canvas.addMarker(t.bpmn_id, 'task-active'));
+  }
+}
+
+function fitDiagram() {
+  try {
+    viewer.get('canvas').zoom('fit-viewport', 'auto');
+  } catch(e) {}
+}
+
+// Navigation Controls
+$('ctrl-zoom-in').onclick = () => {
+  try { viewer.get('zoomScroll').stepZoom(1); } catch(e) {
+    const canvas = viewer.get('canvas');
+    canvas.zoom(canvas.zoom() * 1.2);
+  }
+};
+$('ctrl-zoom-out').onclick = () => {
+  try { viewer.get('zoomScroll').stepZoom(-1); } catch(e) {
+    const canvas = viewer.get('canvas');
+    canvas.zoom(canvas.zoom() / 1.2);
+  }
+};
+$('ctrl-zoom-fit').onclick = () => fitDiagram();
+$('ctrl-zoom-reset').onclick = () => {
+  try { viewer.get('canvas').zoom(1.0); } catch(e) {}
+};
+$('ctrl-minimap').onclick = () => {
+  try {
+    const minimap = viewer.get('minimap');
+    minimap.toggle();
+    $('ctrl-minimap').classList.toggle('active', minimap.isOpen());
+  } catch(e) {}
+};
+
+async function deleteCurrentInstance() {
+  if (confirm('Delete this workflow instance from history?')) {
+    const res = await fetch('/api/history/instances/' + id, { method: 'DELETE' });
+    if (res.ok) location.href = '/history';
+  }
+}
+
+function renderSavePoints() {
+  const container = $('sp-list');
+  $('sp-badge').textContent = savePoints.length;
+  if (!savePoints.length) {
+    container.innerHTML = '<small class="text-muted text-xs">No save points recorded.</small>';
+    return;
+  }
+
+  container.innerHTML = [...savePoints].reverse().map(sp => `
+    <div class="sp-card p-2 rounded-md bg-card border border-line mb-1.5 text-xs cursor-pointer hover:border-line-highlight hover:bg-card-hover transition-colors" data-sp-id="${sp.id}" onclick="selectSavePoint('${sp.id}')">
+      <strong class="font-semibold text-ink">${sp.phase}</strong>
+      <small class="text-muted text-[10.5px]">${sp.task_name} · ${new Date(sp.created_at).toLocaleString()}</small>
+      <div class="flex justify-between items-center mt-1.5">
+        <span class="text-muted text-[10px]">${sp.resume_action}</span>
+        <button class="btn btn-secondary text-[10px] px-1.5 py-0.5" onclick="event.stopPropagation(); forkSavePoint('${sp.id}')">Fork</button>
+      </div>
+    </div>
+  `).join('');
+
+  if (savePoints.length > 0) {
+    selectSavePoint(savePoints[savePoints.length - 1].id);
+  }
+}
+
+async function selectSavePoint(spId) {
+  document.querySelectorAll('.sp-card').forEach(c => {
+    c.classList.remove('border-accent', 'bg-card-hover', 'shadow-[0_0_0_1px_rgba(94,234,212,0.25)]');
+  });
+  const card = document.querySelector(`.sp-card[data-sp-id="${spId}"]`);
+  if (card) {
+    card.classList.add('border-accent', 'bg-card-hover', 'shadow-[0_0_0_1px_rgba(94,234,212,0.25)]');
+  }
+
+  const sp = savePoints.find(p => p.id === spId);
+  if (!sp) return;
+
+  $('sp-name').textContent = sp.phase;
+  const res = await fetch(`/instance/${id}/savepoint/${spId}`);
+  if (res.ok) {
+    const detail = await res.json();
+    currentSpData = detail.data;
+    $('sp-data').textContent = JSON.stringify(detail.data, null, 2);
+  } else {
+    currentSpData = sp.data || {};
+    $('sp-data').textContent = JSON.stringify(sp.data || {}, null, 2);
+  }
+}
+
+async function forkSavePoint(spId) {
+  const res = await fetch(`/instance/${id}/fork/${spId}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ variables: {} })
+  });
+  if (res.ok) {
+    const next = await res.json();
+    location.href = `/instance/${next.workflow_id}`;
+  }
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.key === 'm' || e.key === 'M') {
+    $('ctrl-minimap').click();
+  } else if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+    e.preventDefault();
+    fitDiagram();
+  } else if (e.altKey && (e.key === 's' || e.key === 'S')) {
+    e.preventDefault();
+    $('toggle-sidebar').click();
+  }
+});
+
+load();
+</script>
+{% endblock %}

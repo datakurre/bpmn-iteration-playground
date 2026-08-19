@@ -1,0 +1,428 @@
+{% extends "base.html" %}
+
+{% block title %}BPMN Visual Modeler & Editor · Pi Workflow Studio{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="/static/assets/diagram-js.css">
+<link rel="stylesheet" href="/static/assets/bpmn-font/css/bpmn.css">
+<link rel="stylesheet" href="/static/assets/bpmn-js.css">
+<link rel="stylesheet" href="/static/app/diagram-js-minimap.css">
+<link rel="stylesheet" href="/static/app/properties-panel.css">
+{% endblock %}
+
+{% block content %}
+<main class="max-w-[1600px] mx-auto px-5 py-4 pb-6">
+  <header class="relative z-50 flex justify-between gap-4 items-start sm:items-end border-b border-line pb-3 mb-3">
+    <div class="min-w-0 flex-1 pr-2">
+      <div class="text-[10px] font-bold text-accent tracking-widest uppercase">Visual Workflow Modeler</div>
+      <h1 class="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight text-ink mt-0.5 mb-0.5">BPMN Workflow Editor</h1>
+      <p class="text-muted text-xs sm:text-[13px] leading-relaxed hidden sm:block">Design, modify, and persist executable BPMN 2.0 processes directly with live properties and AI harness configurations.</p>
+    </div>
+    <!-- Desktop Nav -->
+    <nav class="hidden md:flex items-center gap-1.5 shrink-0">
+      <a href="/" class="nav-link">Studio</a>
+      <a href="/history" class="nav-link">History</a>
+      <a href="/editor" class="nav-link active">Editor</a>
+      <a href="/admin" class="nav-link">Admin</a>
+      <button onclick="toggleTheme()" class="btn btn-secondary text-xs px-2 py-1 ml-1" title="Toggle Light/Dark Theme">
+        <span class="theme-toggle-icon">☀️</span>
+      </button>
+    </nav>
+    <!-- Mobile Hamburger Button & Theme -->
+    <div class="md:hidden flex items-center gap-2 shrink-0">
+      <button onclick="toggleTheme()" class="btn btn-secondary text-xs px-2 py-1" title="Toggle Light/Dark Theme">
+        <span class="theme-toggle-icon">☀️</span>
+      </button>
+      <button id="mobile-menu-btn" class="p-2 rounded-md bg-panel border border-line text-ink hover:bg-card-hover hover:border-line-highlight transition-colors" aria-label="Toggle Menu">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+      </button>
+    </div>
+    <!-- Mobile Dropdown Menu -->
+    <div id="mobile-menu" class="hidden md:hidden absolute top-full right-0 mt-1 w-44 py-2 bg-panel border border-line rounded-lg shadow-2xl z-[1000] flex flex-col gap-1 backdrop-blur-md">
+      <a href="/" class="nav-link mx-2">Studio</a>
+      <a href="/history" class="nav-link mx-2">History</a>
+      <a href="/editor" class="nav-link active mx-2">Editor</a>
+      <a href="/admin" class="nav-link mx-2">Admin</a>
+    </div>
+  </header>
+
+  <div class="flex flex-col h-[calc(100vh-140px)] min-h-[520px]">
+    <section class="flex justify-between items-center gap-2.5 mb-2.5 flex-wrap bg-panel border border-line rounded-md px-2.5 py-1.5 shadow-md">
+      <div class="flex items-center gap-1.5 flex-wrap">
+        <label for="template-select" class="text-muted text-xs font-semibold uppercase tracking-wide whitespace-nowrap">Template:</label>
+        <select id="template-select" class="w-48 border border-line rounded-md bg-card text-ink px-2 py-1 text-xs focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent">
+          <option value="">-- Blank New Diagram --</option>
+        </select>
+        <button id="load-btn" class="btn btn-secondary px-2.5 py-1 text-xs" title="Load selected template">Load</button>
+        <button id="new-btn" class="btn btn-secondary px-2.5 py-1 text-xs" title="Create blank diagram">New</button>
+        <button id="layout-btn" class="btn btn-secondary px-2.5 py-1 text-xs" title="Auto-layout diagram nodes">🪄 Auto-Layout</button>
+        <button id="undo-btn" class="btn btn-secondary px-2 py-1 text-xs" title="Undo (Ctrl+Z)">↩</button>
+        <button id="redo-btn" class="btn btn-secondary px-2 py-1 text-xs" title="Redo (Ctrl+Y)">↪</button>
+      </div>
+
+      <div class="flex items-center gap-1.5 flex-wrap">
+        <input type="file" id="file-input" accept=".bpmn,.xml" class="hidden">
+        <button id="open-file-btn" class="btn btn-secondary px-2.5 py-1 text-xs" title="Open local BPMN file">📂 Open</button>
+        <button id="download-btn" class="btn btn-secondary px-2.5 py-1 text-xs" title="Download BPMN XML file">💾 Export</button>
+        <input type="text" id="workflow-name" placeholder="workflow_name" value="custom_workflow" class="w-36 border border-line rounded-md bg-card text-ink px-2 py-1 text-xs focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent">
+        <button id="save-btn" class="btn px-3 py-1 text-xs">Save BPMN</button>
+        <button id="toggle-properties-btn" class="btn btn-secondary px-2.5 py-1 text-xs" title="Toggle Properties Panel (Alt+P)">⚙ Properties</button>
+      </div>
+    </section>
+
+    <div id="save-msg" class="hidden mb-2 p-2 rounded-md text-xs"></div>
+
+    <div class="flex flex-1 min-h-0 relative bg-white rounded-lg overflow-hidden border border-line shadow-2xl">
+      <div id="modeler" class="modeler-canvas flex-1 h-full min-w-[300px] relative bg-white">
+        <div class="diagram-controls !left-16">
+          <button class="ctrl-btn" id="ctrl-zoom-in" title="Zoom In (Ctrl +)">＋</button>
+          <button class="ctrl-btn" id="ctrl-zoom-out" title="Zoom Out (Ctrl -)">－</button>
+          <button class="ctrl-btn" id="ctrl-zoom-fit" title="Fit Diagram to Viewport (Ctrl 0)">⛶ Fit</button>
+          <button class="ctrl-btn" id="ctrl-zoom-reset" title="Reset Zoom (1:1)">1:1</button>
+          <button class="ctrl-btn" id="ctrl-minimap" title="Toggle Minimap (M)">🗺️ Map</button>
+        </div>
+      </div>
+
+      <div id="resizer" class="resizer-handle" title="Drag to resize properties panel"></div>
+
+      <aside id="properties-container" class="properties-container w-[330px] min-w-[240px] max-w-[600px] h-full flex flex-col bg-panel border-l border-line transition-[width] duration-150 overflow-hidden">
+        <div class="flex justify-between items-center px-3 py-2 bg-panel-header border-b border-line text-[11.5px] font-bold tracking-wider uppercase text-ink select-none shrink-0">
+          <span>Element Properties</span>
+          <button id="close-properties-btn" class="bg-transparent border-0 text-muted hover:text-ink text-sm px-1.5 py-0.5 cursor-pointer" title="Collapse Panel">✕</button>
+        </div>
+        <div id="properties-panel" class="flex-1 overflow-y-auto bg-card text-ink"></div>
+      </aside>
+    </div>
+  </div>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/app/bpmn-modeler-bundle.js"></script>
+<script>
+let modeler = null;
+const $ = id => document.getElementById(id);
+
+const blankBPMN = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="new_process" name="New Process" isExecutable="true">
+    <bpmn:startEvent id="StartEvent_1" name="Start">
+      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="StartEvent_1" targetRef="ServiceTask_1" />
+    <bpmn:serviceTask id="ServiceTask_1" name="AI Task">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="assistant" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="ServiceTask_1" targetRef="EndEvent_1" />
+    <bpmn:endEvent id="EndEvent_1" name="End">
+      <bpmn:incoming>Flow_2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="new_process">
+      <bpmndi:BPMNShape id="StartEvent_1_di" bpmnElement="StartEvent_1">
+        <dc:Bounds x="180" y="160" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceTask_1_di" bpmnElement="ServiceTask_1">
+        <dc:Bounds x="270" y="138" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_1_di" bpmnElement="EndEvent_1">
+        <dc:Bounds x="450" y="160" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_1_di" bpmnElement="Flow_1">
+        <di:waypoint x="216" y="178" />
+        <di:waypoint x="270" y="178" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_2_di" bpmnElement="Flow_2">
+        <di:waypoint x="390" y="178" />
+        <di:waypoint x="450" y="178" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>`;
+
+async function init() {
+  const ModelerCtor = window.BpmnModeler || window.BpmnJS;
+  modeler = new ModelerCtor({
+    container: '#modeler',
+    propertiesPanel: {
+      parent: '#properties-panel'
+    },
+    additionalModules: [
+      window.BpmnPropertiesPanelModule,
+      window.BpmnPropertiesProviderModule,
+      window.CamundaPlatformPropertiesProviderModule,
+      window.minimapModule
+    ].filter(Boolean),
+    moddleExtensions: {
+      camunda: window.camundaModdleDescriptor || {}
+    }
+  });
+
+  await modeler.importXML(blankBPMN);
+  fitDiagram();
+  loadTemplatesList();
+  setupResizer();
+  setupShortcuts();
+}
+
+function fitDiagram() {
+  try {
+    modeler.get('canvas').zoom('fit-viewport', 'auto');
+  } catch(e) {}
+}
+
+async function loadTemplatesList() {
+  try {
+    const res = await fetch('/api/templates');
+    if (res.ok) {
+      const templates = await res.json();
+      templates.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = `${t.name} (${t.id})`;
+        $('template-select').appendChild(opt);
+      });
+    }
+  } catch(e) {}
+}
+
+$('load-btn').onclick = async () => {
+  const selected = $('template-select').value;
+  if (!selected) {
+    await modeler.importXML(blankBPMN);
+    $('workflow-name').value = 'new_workflow';
+    fitDiagram();
+    return;
+  }
+  try {
+    const res = await fetch(`/api/templates/${selected}/xml`);
+    if (res.ok) {
+      const xml = await res.text();
+      await modeler.importXML(xml);
+      $('workflow-name').value = selected;
+      fitDiagram();
+    }
+  } catch(e) {
+    alert('Failed to load template: ' + e);
+  }
+};
+
+$('new-btn').onclick = async () => {
+  if (confirm('Create new blank diagram? Any unsaved edits will be cleared.')) {
+    await modeler.importXML(blankBPMN);
+    $('workflow-name').value = 'new_workflow';
+    fitDiagram();
+  }
+};
+
+$('layout-btn').onclick = async () => {
+  try {
+    const { xml } = await modeler.saveXML({ format: true });
+    if (window.AutoLayout && window.AutoLayout.layoutProcess) {
+      const newXml = await window.AutoLayout.layoutProcess(xml);
+      await modeler.importXML(newXml);
+      fitDiagram();
+    }
+  } catch(e) {
+    alert('Auto-layout error: ' + e.message);
+  }
+};
+
+$('undo-btn').onclick = () => {
+  try { modeler.get('commandStack').undo(); } catch(e) {}
+};
+$('redo-btn').onclick = () => {
+  try { modeler.get('commandStack').redo(); } catch(e) {}
+};
+
+// Navigation Zoom & Minimap Controls
+$('ctrl-zoom-in').onclick = () => {
+  try { modeler.get('zoomScroll').stepZoom(1); } catch(e) {
+    const canvas = modeler.get('canvas');
+    canvas.zoom(canvas.zoom() * 1.2);
+  }
+};
+$('ctrl-zoom-out').onclick = () => {
+  try { modeler.get('zoomScroll').stepZoom(-1); } catch(e) {
+    const canvas = modeler.get('canvas');
+    canvas.zoom(canvas.zoom() / 1.2);
+  }
+};
+$('ctrl-zoom-fit').onclick = () => fitDiagram();
+$('ctrl-zoom-reset').onclick = () => {
+  try { modeler.get('canvas').zoom(1.0); } catch(e) {}
+};
+$('ctrl-minimap').onclick = () => {
+  try {
+    const minimap = modeler.get('minimap');
+    minimap.toggle();
+    $('ctrl-minimap').classList.toggle('active', minimap.isOpen());
+  } catch(e) {}
+};
+
+// Properties Panel Toggle & Collapse
+function toggleProperties() {
+  const panel = $('properties-container');
+  const isCollapsed = panel.classList.toggle('collapsed');
+  if (isCollapsed) {
+    panel.classList.add('!w-0', '!min-w-0', '!border-l-0');
+    $('resizer').classList.add('hidden');
+  } else {
+    panel.classList.remove('!w-0', '!min-w-0', '!border-l-0');
+    $('resizer').classList.remove('hidden');
+  }
+  $('toggle-properties-btn').classList.toggle('active', !isCollapsed);
+  if (modeler) {
+    try { modeler.get('canvas').resized(); } catch(e) {}
+  }
+}
+
+$('toggle-properties-btn').onclick = toggleProperties;
+$('close-properties-btn').onclick = toggleProperties;
+
+// Horizontal Resizer for Properties Panel
+const resizer = $('resizer');
+const propContainer = $('properties-container');
+if (resizer && propContainer) {
+  let isResizing = false;
+  let startX = 0;
+  let startWidth = 0;
+
+  resizer.addEventListener('pointerdown', (e) => {
+    isResizing = true;
+    startX = e.clientX;
+    startWidth = propContainer.offsetWidth;
+    resizer.classList.add('resizing');
+    try { resizer.setPointerCapture(e.pointerId); } catch (_) {}
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    e.preventDefault();
+  });
+
+  resizer.addEventListener('pointermove', (e) => {
+    if (!isResizing) return;
+    const deltaX = startX - e.clientX;
+    const newWidth = Math.max(220, Math.min(800, startWidth + deltaX));
+    propContainer.style.width = `${newWidth}px`;
+    if (modeler) {
+      try { modeler.get('canvas').resized(); } catch(err) {}
+    }
+  });
+
+  const onPointerUp = (e) => {
+    if (isResizing) {
+      isResizing = false;
+      resizer.classList.remove('resizing');
+      try { resizer.releasePointerCapture(e.pointerId); } catch (_) {}
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      if (modeler) {
+        try { modeler.get('canvas').resized(); } catch(err) {}
+      }
+    }
+  };
+
+  resizer.addEventListener('pointerup', onPointerUp);
+  resizer.addEventListener('pointercancel', onPointerUp);
+}
+
+// File Export and Import
+$('download-btn').onclick = async () => {
+  try {
+    const { xml } = await modeler.saveXML({ format: true });
+    const name = ($('workflow-name').value.trim() || 'workflow') + '.bpmn';
+    const blob = new Blob([xml], { type: 'application/xml' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch(e) {
+    alert('Failed to export XML: ' + e);
+  }
+};
+
+$('open-file-btn').onclick = () => $('file-input').click();
+$('file-input').onchange = (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async (evt) => {
+    try {
+      await modeler.importXML(evt.target.result);
+      $('workflow-name').value = file.name.replace(/\.(bpmn|xml)$/, '');
+      fitDiagram();
+    } catch(err) {
+      alert('Failed to load BPMN file: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+};
+
+// Save to Server
+$('save-btn').onclick = async () => {
+  $('save-btn').disabled = true;
+  try {
+    const res = await modeler.saveXML({ format: true });
+    const xml = res.xml;
+    const name = $('workflow-name').value.trim() || 'workflow';
+    const response = await fetch('/api/workflows/save', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name, xml }),
+    });
+    const msg = $('save-msg');
+    msg.classList.remove('hidden');
+    if (response.ok) {
+      const data = await response.json();
+      msg.className = 'mb-2 p-2 rounded-md text-xs bg-[#142823] text-accent border border-accent';
+      msg.textContent = `Saved workflow successfully to ${data.path} (Processes: ${data.process_ids.join(', ')})`;
+    } else {
+      msg.className = 'mb-2 p-2 rounded-md text-xs bg-danger-dim text-danger border border-danger-border';
+      msg.textContent = `Save failed: ${await response.text()}`;
+    }
+  } catch(e) {
+    alert('Save error: ' + e);
+  } finally {
+    $('save-btn').disabled = false;
+  }
+};
+
+
+
+function setupShortcuts() {
+  window.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+      e.preventDefault();
+      $('undo-btn').click();
+    } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) {
+      e.preventDefault();
+      $('redo-btn').click();
+    } else if (e.altKey && (e.key === 'p' || e.key === 'P')) {
+      e.preventDefault();
+      toggleProperties();
+    } else if (e.key === 'm' || e.key === 'M') {
+      $('ctrl-minimap').click();
+    } else if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+      e.preventDefault();
+      fitDiagram();
+    } else if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      e.preventDefault();
+      $('save-btn').click();
+    }
+  });
+}
+
+init();
+</script>
+{% endblock %}

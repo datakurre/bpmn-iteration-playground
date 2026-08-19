@@ -1,0 +1,33 @@
+[project]
+name="bpmn-ai-starter"
+version="0.1.0"
+requires-python=">=3.11"
+dependencies = [
+    "spiffworkflow",
+    "fastapi",
+    "uvicorn[standard]",
+    "ZODB",
+    "transaction",
+    "python-dotenv",
+    "pydantic",
+    "jinja2",
+    "httpx",
+    "ZEO",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "httpx>=0.27",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = false
+

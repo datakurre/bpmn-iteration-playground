@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_BugTriage" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="bug_triage" name="Bug Triage" isExecutable="true">
+    <bpmn:documentation>AI classifies bug severity, routes critical bugs to immediate human review and non-critical bugs to backlog triage.</bpmn:documentation>
+    <bpmn:startEvent id="Start_Bug" name="Bug Reported">
+      <bpmn:outgoing>Flow_To_Classify</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_To_Classify" sourceRef="Start_Bug" targetRef="Task_Classify" />
+    <bpmn:serviceTask id="Task_Classify" name="Classify Severity">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="bug_classifier" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_To_Classify</bpmn:incoming>
+      <bpmn:outgoing>Flow_To_Severity_GW</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_To_Severity_GW" sourceRef="Task_Classify" targetRef="GW_Severity" />
+    <bpmn:exclusiveGateway id="GW_Severity" name="Agent Success?">
+      <bpmn:incoming>Flow_To_Severity_GW</bpmn:incoming>
+      <bpmn:outgoing>Flow_Success_Sev</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Fail_Sev</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_Success_Sev" name="Success" sourceRef="GW_Severity" targetRef="Task_Critical_Review">
+      <bpmn:conditionExpression>agent_status == 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Fail_Sev" name="Failed" sourceRef="GW_Severity" targetRef="Task_Manual_Classify">
+      <bpmn:conditionExpression>agent_status != 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:userTask id="Task_Critical_Review" name="Review Classification">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="confirmed_severity" label="Confirmed Severity" type="string" />
+          <camunda:formField id="assignee" label="Assign To" type="string" />
+          <camunda:formField id="triage_notes" label="Triage Notes" type="string" />
+        </camunda:formData>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Success_Sev</bpmn:incoming>
+      <bpmn:outgoing>Flow_Review_End</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_Manual_Classify" name="Manual Classification">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="manual_severity" label="Severity Level" type="string" />
+          <camunda:formField id="manual_assignee" label="Assign To" type="string" />
+          <camunda:formField id="classification_notes" label="Notes" type="string" />
+        </camunda:formData>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Fail_Sev</bpmn:incoming>
+      <bpmn:outgoing>Flow_Manual_End</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="Flow_Review_End" sourceRef="Task_Critical_Review" targetRef="End_Bug" />
+    <bpmn:sequenceFlow id="Flow_Manual_End" sourceRef="Task_Manual_Classify" targetRef="End_Bug" />
+    <bpmn:endEvent id="End_Bug" name="Bug Triaged">
+      <bpmn:incoming>Flow_Review_End</bpmn:incoming>
+      <bpmn:incoming>Flow_Manual_End</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_BugTriage">
+    <bpmndi:BPMNPlane id="BPMNPlane_BugTriage" bpmnElement="bug_triage">
+      <bpmndi:BPMNShape id="Start_Bug_di" bpmnElement="Start_Bug">
+        <dc:Bounds x="57" y="120" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Classify_di" bpmnElement="Task_Classify">
+        <dc:Bounds x="160" y="98" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_Severity_di" bpmnElement="GW_Severity" isMarkerVisible="true">
+        <dc:Bounds x="355" y="113" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Critical_Review_di" bpmnElement="Task_Critical_Review">
+        <dc:Bounds x="475" y="30" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Manual_Classify_di" bpmnElement="Task_Manual_Classify">
+        <dc:Bounds x="475" y="190" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Bug_di" bpmnElement="End_Bug">
+        <dc:Bounds x="697" y="120" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_To_Classify_di" bpmnElement="Flow_To_Classify">
+        <di:waypoint x="93" y="138" />
+        <di:waypoint x="160" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_To_Severity_GW_di" bpmnElement="Flow_To_Severity_GW">
+        <di:waypoint x="290" y="138" />
+        <di:waypoint x="355" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Success_Sev_di" bpmnElement="Flow_Success_Sev">
+        <di:waypoint x="380" y="113" />
+        <di:waypoint x="380" y="70" />
+        <di:waypoint x="475" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Fail_Sev_di" bpmnElement="Flow_Fail_Sev">
+        <di:waypoint x="380" y="163" />
+        <di:waypoint x="380" y="230" />
+        <di:waypoint x="475" y="230" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Review_End_di" bpmnElement="Flow_Review_End">
+        <di:waypoint x="615" y="70" />
+        <di:waypoint x="715" y="70" />
+        <di:waypoint x="715" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Manual_End_di" bpmnElement="Flow_Manual_End">
+        <di:waypoint x="615" y="230" />
+        <di:waypoint x="715" y="230" />
+        <di:waypoint x="715" y="156" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

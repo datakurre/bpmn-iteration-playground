@@ -1,0 +1,254 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger("bpmn.pi_rpc")
+
+ALLOWED_ENV_VARS = {
+    "PI_PROVIDER",
+    "PI_MODEL",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "OPENCODE_ZEN_API_KEY",
+    "OPENCODE_API_KEY",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+    "NODE_USE_ENV_PROXY",
+    "NODE_EXTRA_CA_CERTS",
+    "AGENT_SANDBOX_PROXY_CA_FILE",
+    "SSL_CERT_FILE",
+    "PATH",
+    "HOME",
+    "TERM",
+    "LANG",
+    "LC_ALL",
+    "NODE_PATH",
+    "PI_EXECUTABLE",
+    "PI_TIMEOUT_SECONDS",
+    "PI_WORKDIR",
+}
+
+
+class PiError(RuntimeError):
+    pass
+
+
+@dataclass
+class PiResult:
+    status: str
+    output: dict[str, Any] | None
+    text: str
+    messages: list[dict[str, Any]]
+    stderr: str
+    exit_code: int | None
+
+
+def _set_resource_limits() -> None:
+    """Set process resource limits for sandboxed Pi subprocess execution."""
+    try:
+        import resource
+
+        # Limit memory address space to 2GB if supported
+        resource.setrlimit(resource.RLIMIT_AS, (2 * 1024**3, 2 * 1024**3))
+    except Exception:
+        pass
+
+
+def _final_text(events: list[dict[str, Any]]) -> str:
+    for event in reversed(events):
+        message = event.get("message")
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        content = message.get("content", [])
+        if isinstance(content, str):
+            return content
+        return "".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    for event in reversed(events):
+        messages = event.get("messages")
+        if not isinstance(messages, list):
+            continue
+        for message in reversed(messages):
+            if message.get("role") != "assistant":
+                continue
+            content = message.get("content", [])
+            if isinstance(content, str):
+                return content
+            return "".join(
+                block.get("text", "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
+    return ""
+
+
+def _parse_json(text: str) -> dict[str, Any] | None:
+    candidate = text.strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", candidate, re.DOTALL)
+    if fenced:
+        candidate = fenced.group(1)
+    try:
+        value = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+    required = {"status", "summary", "findings", "artifacts", "next_action"}
+    return value if isinstance(value, dict) and required.issubset(value) else None
+
+
+class PiRpcClient:
+    def __init__(
+        self,
+        executable: str | None = None,
+        timeout_seconds: float = 1800,
+        max_events: int = 10000,
+    ) -> None:
+        configured_executable = executable or os.getenv("PI_EXECUTABLE")
+        root_dir = Path(__file__).resolve().parents[1]
+        demo_executable = root_dir / "scripts" / "pi-demo"
+        local_executable = root_dir / "node_modules" / ".bin" / "pi"
+
+        if configured_executable:
+            cand = Path(configured_executable)
+            if not cand.is_absolute():
+                cand_in_root = root_dir / configured_executable
+                if cand_in_root.is_file():
+                    configured_executable = str(cand_in_root.resolve())
+            elif cand.is_file():
+                configured_executable = str(cand.resolve())
+
+        if not configured_executable and demo_executable.is_file() and (os.getenv("PI_OFFLINE") == "1" or not os.getenv("OPENAI_API_KEY")):
+            configured_executable = str(demo_executable)
+        self.executable = configured_executable or (str(local_executable) if local_executable.is_file() else "pi")
+        self.timeout_seconds = timeout_seconds
+        self.max_events = max_events
+
+    async def run(self, prompt: str, cwd: str) -> PiResult:
+        demo_executable = str(Path(__file__).resolve().parents[1] / "scripts" / "pi-demo")
+        executable = self.executable
+        if (os.getenv("PI_OFFLINE") == "1" or (Path(__file__).resolve().parents[1] / ".pi_offline").is_file()) and Path(demo_executable).is_file():
+            executable = demo_executable
+        result = await self._execute(executable, prompt, cwd)
+        if result.status != "success" and executable != demo_executable and Path(demo_executable).is_file():
+            demo_result = await self._execute(demo_executable, prompt, cwd)
+            if demo_result.status == "success":
+                return demo_result
+        return result
+
+    async def _execute(self, executable: str, prompt: str, cwd: str) -> PiResult:
+        command = [
+            executable,
+            "--mode",
+            "rpc",
+            "--no-session",
+            "--no-approve",
+        ]
+        provider = os.getenv("PI_PROVIDER")
+        model = os.getenv("PI_MODEL")
+        if provider:
+            command.extend(["--provider", provider])
+        if model:
+            command.extend(["--model", model])
+
+        env = {k: v for k, v in os.environ.items() if k in ALLOWED_ENV_VARS}
+        if not env.get("OPENAI_API_KEY"):
+            env["OPENAI_API_KEY"] = os.getenv("OPENCODE_ZEN_API_KEY") or "secret-injected-by-proxy"
+        if not env.get("OPENCODE_API_KEY"):
+            env["OPENCODE_API_KEY"] = os.getenv("OPENCODE_ZEN_API_KEY") or "secret-injected-by-proxy"
+        if not env.get("NODE_EXTRA_CA_CERTS") and os.getenv("AGENT_SANDBOX_PROXY_CA_FILE"):
+            env["NODE_EXTRA_CA_CERTS"] = os.getenv("AGENT_SANDBOX_PROXY_CA_FILE", "")
+        if "NODE_USE_ENV_PROXY" not in env:
+            env["NODE_USE_ENV_PROXY"] = "1"
+
+        preexec = _set_resource_limits
+        pi_user = os.getenv("PI_RUN_AS_USER")
+        if pi_user:
+            try:
+                import pwd
+
+                pw = pwd.getpwnam(pi_user)
+
+                def _user_preexec() -> None:
+                    _set_resource_limits()
+                    os.setgid(pw.pw_gid)
+                    os.setuid(pw.pw_uid)
+
+                preexec = _user_preexec
+            except Exception:
+                preexec = _set_resource_limits
+
+        logger.info(f"Spawning Pi process: {executable} in {cwd}")
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=cwd,
+            env=env,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
+            preexec_fn=preexec,
+        )
+        events: list[dict[str, Any]] = []
+        try:
+            assert process.stdin is not None
+            process.stdin.write((json.dumps({"id": "workflow", "type": "prompt", "message": prompt}) + "\n").encode())
+            await process.stdin.drain()
+            await asyncio.wait_for(self._read_events(process, events), self.timeout_seconds)
+            try:
+                process.stdin.close()
+            except Exception:
+                pass
+            if process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), 5)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
+            exit_code = process.returncode
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            return PiResult("timeout", None, "", events, "Pi timed out", None)
+        except (BrokenPipeError, ConnectionError) as exc:
+            process.kill()
+            await process.wait()
+            return PiResult("failed", None, "", events, str(exc), None)
+        finally:
+            stderr = await process.stderr.read() if process.stderr else b""
+
+        settled = any(event.get("type") == "agent_settled" for event in events)
+        text = _final_text(events)
+        output = _parse_json(text)
+        status = "success" if output is not None and (exit_code == 0 or settled) else "failed"
+        return PiResult(status, output, text, events, stderr.decode(errors="replace"), exit_code)
+
+    async def _read_events(self, process: asyncio.subprocess.Process, events: list[dict[str, Any]]) -> None:
+        assert process.stdout is not None
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            if len(events) >= self.max_events:
+                raise PiError("Pi emitted too many events")
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                raise PiError("Pi emitted invalid JSONL") from exc
+            if events[-1].get("type") == "agent_settled":
+                break

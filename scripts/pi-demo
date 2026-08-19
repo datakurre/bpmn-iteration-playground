@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+import json
+import sys
+import os
+
+
+def emit(value):
+    print(json.dumps(value), flush=True)
+
+
+for line in sys.stdin:
+    command = json.loads(line)
+    if command.get("type") != "prompt":
+        continue
+    emit({"type": "session", "version": 3, "id": "demo", "cwd": "."})
+    emit({"type": "agent_start"})
+
+    doc_text = """# Next-Gen AI Workflow Automation with SpiffWorkflow & Pi Agent
+
+## Executive Summary
+This technical whitepaper explores the convergence of deterministic BPMN 2.0 process orchestration with autonomous, non-deterministic Large Language Model (LLM) agents.
+
+## Core Capabilities
+1. **Durable ZODB Object Persistence**: Zero-loss state tracking across long-lived human review gates.
+2. **Deterministic Savepoint Forking**: Branching execution trees for what-if simulation and auditing.
+3. **Interactive FormJS Human Gates**: Inline markdown previews and live schema-driven user inputs.
+4. **Sandboxed Workspace Artifacts**: Compressed `.tar.zst` packages with zero-unpack metadata indexes.
+
+## Conclusion
+Combining SpiffWorkflow with sandboxed Pi agents provides enterprise reliability with autonomous AI flexibility.
+"""
+    try:
+        with open("document.md", "w") as f:
+            f.write(doc_text)
+    except Exception:
+        pass
+
+    emit({
+        "type": "message_end",
+        "message": {
+            "role": "assistant",
+            "content": [{
+                "type": "text",
+                "text": json.dumps({
+                    "status": "success",
+                    "summary": "AI Agent drafted and quality-checked the document artifact.",
+                    "document_content": doc_text,
+                    "doc_preview": doc_text,
+                    "findings": [
+                        "Executive Summary complete",
+                        "BPMN orchestration verified",
+                        "Savepoints detailed",
+                    ],
+                    "artifacts": ["document.md"],
+                    "next_action": "review",
+                }),
+            }],
+        },
+    })
+    emit({"type": "agent_settled"})
+    break

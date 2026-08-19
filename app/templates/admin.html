@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+
+{% block title %}Admin · Pi Workflow Studio{% endblock %}
+
+{% block content %}
+<main class="max-w-5xl mx-auto px-5 py-5 pb-9">
+  <header class="relative z-50 flex justify-between gap-4 items-start sm:items-end border-b border-line pb-3.5 mb-4">
+    <div class="min-w-0 flex-1 pr-2">
+      <div class="text-[10px] font-bold text-accent tracking-widest uppercase">Administrative Surface</div>
+      <h1 class="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight text-ink mt-1 mb-1">Database & Instance Management</h1>
+      <p class="text-muted text-xs sm:text-[13.5px] leading-relaxed max-w-2xl hidden sm:block">Manage persisted ZODB instances and perform database FileStorage compaction.</p>
+    </div>
+    <!-- Desktop Nav -->
+    <nav class="hidden md:flex items-center gap-1.5 shrink-0">
+      <a href="/" class="nav-link">Studio</a>
+      <a href="/history" class="nav-link">History</a>
+      <a href="/editor" class="nav-link">Editor</a>
+      <a href="/admin" class="nav-link active">Admin</a>
+      <button onclick="toggleTheme()" class="btn btn-secondary text-xs px-2 py-1 ml-1" title="Toggle Light/Dark Theme">
+        <span class="theme-toggle-icon">☀️</span>
+      </button>
+    </nav>
+    <!-- Mobile Hamburger Button & Theme -->
+    <div class="md:hidden flex items-center gap-2 shrink-0">
+      <button onclick="toggleTheme()" class="btn btn-secondary text-xs px-2 py-1" title="Toggle Light/Dark Theme">
+        <span class="theme-toggle-icon">☀️</span>
+      </button>
+      <button id="mobile-menu-btn" class="p-2 rounded-md bg-panel border border-line text-ink hover:bg-card-hover hover:border-line-highlight transition-colors" aria-label="Toggle Menu">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+      </button>
+    </div>
+    <!-- Mobile Dropdown Menu -->
+    <div id="mobile-menu" class="hidden md:hidden absolute top-full right-0 mt-1 w-44 py-2 bg-panel border border-line rounded-lg shadow-2xl z-[1000] flex flex-col gap-1 backdrop-blur-md">
+      <a href="/" class="nav-link mx-2">Studio</a>
+      <a href="/history" class="nav-link mx-2">History</a>
+      <a href="/editor" class="nav-link mx-2">Editor</a>
+      <a href="/admin" class="nav-link active mx-2">Admin</a>
+    </div>
+  </header>
+  
+  <section class="grid grid-cols-1 md:grid-cols-3 gap-3 my-4">
+    <div class="panel-box p-3.5"><div class="text-[10.5px] font-bold text-accent tracking-widest uppercase">Storage Size</div><div class="text-2xl font-bold text-sky mt-1" id="m-storage">...</div></div>
+    <div class="panel-box p-3.5"><div class="text-[10.5px] font-bold text-accent tracking-widest uppercase">Active Instances</div><div class="text-2xl font-bold text-accent mt-1" id="m-instances">...</div></div>
+    <div class="panel-box p-3.5"><div class="text-[10.5px] font-bold text-accent tracking-widest uppercase">Save Point Snapshots</div><div class="text-2xl font-bold text-amber mt-1" id="m-savepoints">...</div></div>
+  </section>
+
+  <div class="flex gap-2.5 mb-4">
+    <button id="pack" class="btn btn-secondary">Pack Database</button>
+    <button id="clear" class="btn btn-danger">Delete All Instances</button>
+  </div>
+  <div id="pack-status" class="hidden mb-3.5 p-2.5 rounded-md bg-[#142823] border border-accent text-accent text-xs"></div>
+
+  <p class="text-muted text-xs mb-2">Persisted workflow instances in ZODB storage:</p>
+  <div id="instances" class="max-h-[calc(100vh-340px)] min-h-[340px] overflow-y-auto pr-1">Loading instances...</div>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const root = document.getElementById('instances');
+const $ = id => document.getElementById(id);
+
+async function loadStorage() {
+  try {
+    const res = await fetch('/api/history/storage');
+    if (res.ok) {
+      const data = await res.json();
+      $('m-storage').textContent = data.size_human;
+      $('m-instances').textContent = data.instances_count;
+      $('m-savepoints').textContent = data.save_points_count;
+    }
+  } catch(e) {}
+}
+
+async function load() {
+  loadStorage();
+  const response = await fetch('/admin/instances');
+  if (!response.ok) {
+    root.innerHTML = '<p class="text-muted text-xs">Could not load instances (admin auth required if configured).</p>';
+    return;
+  }
+  const items = await response.json();
+  root.innerHTML = items.length ? items.map(item => `
+    <div class="flex justify-between gap-3.5 items-center bg-panel border border-line rounded-lg p-3 my-1.5 hover:border-line-highlight transition-colors shadow-md">
+      <div>
+        <strong class="block text-[13.5px] text-ink"><a href="/instance/${item.workflow_id}" class="text-inherit no-underline hover:text-accent transition-colors">${item.workflow_id}</a></strong>
+        <small class="text-muted text-[11.5px]">${item.process_id} · ${item.status} · ${item.task_count} tasks</small>
+      </div>
+      <button class="btn btn-danger text-xs px-2.5 py-1" data-delete="${item.workflow_id}">Delete</button>
+    </div>
+  `).join('') : '<p class="text-muted text-xs">No persisted instances.</p>';
+
+  document.querySelectorAll('[data-delete]').forEach(button => button.onclick = async () => {
+    if (confirm('Delete this persisted instance?')) {
+      await fetch('/admin/instances/' + button.dataset.delete, { method: 'DELETE' });
+      load();
+    }
+  });
+}
+
+$('pack').onclick = async () => {
+  $('pack').disabled = true;
+  $('pack').textContent = 'Packing...';
+  try {
+    const res = await fetch('/admin/pack', { method: 'POST' });
+    if (res.ok) {
+      const data = await res.json();
+      $('pack-status').classList.remove('hidden');
+      $('pack-status').textContent = `Compacted ZODB storage: reclaimed ${data.reclaimed_human} (current size: ${data.size_after_human})`;
+      loadStorage();
+    }
+  } finally {
+    $('pack').disabled = false;
+    $('pack').textContent = 'Pack Database (db.pack)';
+  }
+};
+
+$('clear').onclick = async () => {
+  if (confirm('Type DELETE_ALL in the next prompt to clear the database.')) {
+    const value = prompt('Confirmation');
+    if (value === 'DELETE_ALL') {
+      await fetch('/admin/instances?confirm=DELETE_ALL', { method: 'DELETE' });
+      load();
+    }
+  }
+};
+
+load();
+</script>
+{% endblock %}

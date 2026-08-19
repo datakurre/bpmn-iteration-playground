@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_Parallel" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="parallel_review" name="Parallel AI Review" isExecutable="true">
+    <bpmn:documentation>Executes code review and security audit agents concurrently via parallel gateways.</bpmn:documentation>
+    <bpmn:startEvent id="StartEvent_1" name="Receive Code">
+      <bpmn:outgoing>Flow_Start_Split</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_Start_Split" sourceRef="StartEvent_1" targetRef="Gateway_Split" />
+    <bpmn:parallelGateway id="Gateway_Split" name="Fork Agents">
+      <bpmn:incoming>Flow_Start_Split</bpmn:incoming>
+      <bpmn:outgoing>Flow_To_CodeReview</bpmn:outgoing>
+      <bpmn:outgoing>Flow_To_SecurityAudit</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="Flow_To_CodeReview" sourceRef="Gateway_Split" targetRef="Task_CodeReview" />
+    <bpmn:serviceTask id="Task_CodeReview" name="Code Review Agent">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="code_reviewer" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_To_CodeReview</bpmn:incoming>
+      <bpmn:outgoing>Flow_CodeReview_Done</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_To_SecurityAudit" sourceRef="Gateway_Split" targetRef="Task_SecurityAudit" />
+    <bpmn:serviceTask id="Task_SecurityAudit" name="Security Audit Agent">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="security_auditor" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_To_SecurityAudit</bpmn:incoming>
+      <bpmn:outgoing>Flow_SecurityAudit_Done</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_CodeReview_Done" sourceRef="Task_CodeReview" targetRef="Gateway_Join" />
+    <bpmn:sequenceFlow id="Flow_SecurityAudit_Done" sourceRef="Task_SecurityAudit" targetRef="Gateway_Join" />
+    <bpmn:parallelGateway id="Gateway_Join" name="Join Findings">
+      <bpmn:incoming>Flow_CodeReview_Done</bpmn:incoming>
+      <bpmn:incoming>Flow_SecurityAudit_Done</bpmn:incoming>
+      <bpmn:outgoing>Flow_Join_To_Review</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="Flow_Join_To_Review" sourceRef="Gateway_Join" targetRef="Task_FinalReview" />
+    <bpmn:userTask id="Task_FinalReview" name="Merge &amp; Final Review">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="decision" label="Merge Decision" type="string" />
+          <camunda:formField id="review_notes" label="Reviewer Notes" type="string" />
+        </camunda:formData>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Join_To_Review</bpmn:incoming>
+      <bpmn:outgoing>Flow_To_End</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="Flow_To_End" sourceRef="Task_FinalReview" targetRef="EndEvent_1" />
+    <bpmn:endEvent id="EndEvent_1" name="Review Complete">
+      <bpmn:incoming>Flow_To_End</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_parallel_review">
+    <bpmndi:BPMNPlane id="BPMNPlane_parallel_review" bpmnElement="parallel_review">
+      <bpmndi:BPMNShape id="StartEvent_1_di" bpmnElement="StartEvent_1">
+        <dc:Bounds x="160" y="160" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_Split_di" bpmnElement="Gateway_Split">
+        <dc:Bounds x="250" y="153" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_CodeReview_di" bpmnElement="Task_CodeReview">
+        <dc:Bounds x="360" y="80" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_SecurityAudit_di" bpmnElement="Task_SecurityAudit">
+        <dc:Bounds x="360" y="210" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_Join_di" bpmnElement="Gateway_Join">
+        <dc:Bounds x="550" y="153" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_FinalReview_di" bpmnElement="Task_FinalReview">
+        <dc:Bounds x="660" y="138" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_1_di" bpmnElement="EndEvent_1">
+        <dc:Bounds x="850" y="160" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_Start_Split_di" bpmnElement="Flow_Start_Split">
+        <di:waypoint x="196" y="178" />
+        <di:waypoint x="250" y="178" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_To_CodeReview_di" bpmnElement="Flow_To_CodeReview">
+        <di:waypoint x="275" y="153" />
+        <di:waypoint x="275" y="120" />
+        <di:waypoint x="360" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_To_SecurityAudit_di" bpmnElement="Flow_To_SecurityAudit">
+        <di:waypoint x="275" y="203" />
+        <di:waypoint x="275" y="250" />
+        <di:waypoint x="360" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_CodeReview_Done_di" bpmnElement="Flow_CodeReview_Done">
+        <di:waypoint x="490" y="120" />
+        <di:waypoint x="575" y="120" />
+        <di:waypoint x="575" y="153" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_SecurityAudit_Done_di" bpmnElement="Flow_SecurityAudit_Done">
+        <di:waypoint x="490" y="250" />
+        <di:waypoint x="575" y="250" />
+        <di:waypoint x="575" y="203" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Join_To_Review_di" bpmnElement="Flow_Join_To_Review">
+        <di:waypoint x="600" y="178" />
+        <di:waypoint x="660" y="178" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_To_End_di" bpmnElement="Flow_To_End">
+        <di:waypoint x="790" y="178" />
+        <di:waypoint x="850" y="178" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

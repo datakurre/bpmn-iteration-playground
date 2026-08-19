@@ -1,0 +1,555 @@
+{% extends "base.html" %}
+
+{% block title %}Workflow Instance · Pi Workflow Studio{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="/static/assets/diagram-js.css">
+<link rel="stylesheet" href="/static/assets/bpmn-font/css/bpmn.css">
+<link rel="stylesheet" href="/static/assets/bpmn-js.css">
+<link rel="stylesheet" href="/static/form-js/assets/form-js.css">
+<link rel="stylesheet" href="/static/form-js/assets/form-js-base.css">
+<link rel="stylesheet" href="/static/app/form-js-dark.css">
+<link rel="stylesheet" href="/static/app/diagram-js-minimap.css">
+<script src="/static/form-js/form-viewer.umd.js"></script>
+{% endblock %}
+
+{% block content %}
+<main class="max-w-[1600px] mx-auto px-5 py-4 pb-6">
+  <header class="relative z-50 flex justify-between gap-3 items-center border-b border-line pb-3 mb-3">
+    <div class="min-w-0 flex-1 pr-2">
+      <div class="text-[10px] font-bold text-accent tracking-widest uppercase">Persisted Instance View</div>
+      <h1 id="title" class="text-base sm:text-xl md:text-2xl font-bold tracking-tight text-ink mt-0.5 mb-0.5 truncate">{{ workflow_id }}</h1>
+    </div>
+    <!-- Desktop Nav -->
+    <nav class="hidden md:flex items-center gap-1.5 shrink-0">
+      <a href="/" class="nav-link">Studio</a>
+      <a href="/history" class="nav-link">History</a>
+      <a href="/editor" class="nav-link">Editor</a>
+      <a href="/admin" class="nav-link">Admin</a>
+      <button onclick="toggleTheme()" class="btn btn-secondary text-xs px-2 py-1 ml-1" title="Toggle Light/Dark Theme">
+        <span class="theme-toggle-icon">☀️</span>
+      </button>
+    </nav>
+    <!-- Mobile Hamburger Button & Theme -->
+    <div class="md:hidden flex items-center gap-2 shrink-0">
+      <button onclick="toggleTheme()" class="btn btn-secondary text-xs px-2 py-1" title="Toggle Light/Dark Theme">
+        <span class="theme-toggle-icon">☀️</span>
+      </button>
+      <button id="mobile-menu-btn" class="p-2 rounded-md bg-panel border border-line text-ink hover:bg-card-hover hover:border-line-highlight transition-colors" aria-label="Toggle Menu">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+      </button>
+    </div>
+    <!-- Mobile Dropdown Menu -->
+    <div id="mobile-menu" class="hidden md:hidden absolute top-full right-0 mt-1 w-44 py-2 bg-panel border border-line rounded-lg shadow-2xl z-[1000] flex flex-col gap-1 backdrop-blur-md">
+      <a href="/" class="nav-link mx-2">Studio</a>
+      <a href="/history" class="nav-link mx-2">History</a>
+      <a href="/editor" class="nav-link mx-2">Editor</a>
+      <a href="/admin" class="nav-link mx-2">Admin</a>
+    </div>
+  </header>
+
+  <div id="main-layout" class="flex flex-col xl:flex-row gap-3.5 xl:h-[calc(100vh-130px)] h-auto min-h-[580px]">
+    <!-- Column 1: BPMN Canvas (Spacious & Interactive) -->
+    <div id="canvas-container" class="w-full xl:flex-1 min-w-0 h-[480px] min-h-[260px] xl:h-full relative bg-white rounded-lg overflow-hidden border border-line shadow-2xl shrink-0">
+      <button id="toggle-sidebar" class="absolute top-3 left-3 z-30 bg-panel-header/90 border border-line-highlight text-ink px-2.5 py-1 text-xs font-semibold rounded-md backdrop-blur-md shadow-md hover:bg-card-hover hover:text-accent transition-colors" title="Toggle Panels (Alt+S)">◧ Toggle Panels</button>
+      <div id="canvas" class="w-full h-full bg-[#f8fafc]"></div>
+
+      <div class="diagram-controls">
+        <button class="ctrl-btn" id="ctrl-zoom-in" title="Zoom In (Ctrl +)">＋</button>
+        <button class="ctrl-btn" id="ctrl-zoom-out" title="Zoom Out (Ctrl -)">－</button>
+        <button class="ctrl-btn" id="ctrl-zoom-fit" title="Fit Diagram to Viewport (Ctrl 0)">⛶ Fit</button>
+        <button class="ctrl-btn" id="ctrl-zoom-reset" title="Reset Zoom (1:1)">1:1</button>
+        <button class="ctrl-btn" id="ctrl-minimap" title="Toggle Minimap (M)">🗺️ Map</button>
+      </div>
+    </div>
+
+    <!-- Vertical Resizer for Stacked Layouts -->
+    <div id="v-resizer-stacked" class="xl:hidden v-resizer-handle h-3.5 w-full flex items-center justify-center cursor-row-resize shrink-0 select-none group hover:bg-accent-dim active:bg-accent-dim/80 rounded transition-colors" title="Drag to resize BPMN diagram height">
+      <div class="v-resizer-pill w-12 h-1 bg-line-highlight group-hover:bg-accent rounded-full transition-colors"></div>
+    </div>
+
+    <!-- Right Panels Container (2 columns on xl, flex-row on md/lg) -->
+    <div id="sidebar" class="w-full xl:w-auto flex flex-col md:flex-row xl:flex-row gap-3.5 xl:h-full shrink-0 transition-[width,min-width,opacity] duration-200">
+      
+      <!-- Column 2: Action & Execution Panel -->
+      <aside class="w-full md:w-1/2 xl:w-[370px] xl:shrink-0 h-auto xl:h-full flex flex-col bg-panel border border-line rounded-lg overflow-hidden shadow-2xl">
+        <div class="flex justify-between items-center px-3.5 py-2.5 bg-panel-header border-b border-line shrink-0 gap-2">
+          <div class="min-w-0">
+            <div class="text-[9.5px] font-bold text-accent tracking-wider uppercase mb-0.5">Status</div>
+            <strong id="status" class="badge">loading</strong>
+          </div>
+          <div class="flex items-center gap-1.5 shrink-0">
+            <span id="parent-workflow" class="hidden"></span>
+            <a href="/instance/{{ workflow_id }}/workspace" class="btn btn-secondary text-xs px-2.5 py-1 shrink-0 whitespace-nowrap" download title="Download Workspace Archive (ZIP)" aria-label="Download Workspace Archive">⬇<span class="hidden 2xl:inline ml-1">Workspace</span></a>
+            <span class="badge truncate max-w-[130px] shrink-0" id="process" title="Process ID">...</span>
+          </div>
+        </div>
+
+        <div class="flex-1 min-h-0 overflow-y-auto p-3 pb-12 flex flex-col gap-3">
+          <!-- Review Checkpoint (Appears when user task is READY) -->
+          <div id="review-card" class="acc-card highlight hidden shrink-0">
+            <div class="acc-header" onclick="toggleAcc(this)">
+              <div class="acc-title">
+                <svg class="acc-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                <span class="text-amber">⚠️ Checkpoint</span>
+              </div>
+              <span class="badge waiting_human shrink-0 text-[9.5px]">Action Needed</span>
+            </div>
+            <div class="acc-body pb-3">
+              <p class="text-muted text-xs mb-2">Complete this persisted user task to continue process execution.</p>
+              <div id="fields" class="pb-1"></div>
+              <button id="submit" class="btn w-full mt-2.5">Submit Decision</button>
+            </div>
+          </div>
+
+          <!-- Tasks Accordion -->
+          <div class="acc-card flex flex-col shrink-0">
+            <div class="acc-header" onclick="toggleAcc(this)">
+              <div class="acc-title">
+                <svg class="acc-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                <span>Execution Tasks</span>
+              </div>
+              <span class="badge" id="tasks-badge">0</span>
+            </div>
+            <div class="acc-body p-2 pb-3">
+              <div id="tasks" class="overflow-y-auto max-h-[360px] pr-1.5 pb-2"></div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Column 3: Timeline & State Inspector -->
+      <aside class="w-full md:w-1/2 xl:w-[350px] xl:shrink-0 h-auto xl:h-full flex flex-col bg-panel border border-line rounded-lg overflow-hidden shadow-2xl">
+        <div class="flex justify-between items-center px-3.5 py-2.5 bg-panel-header border-b border-line shrink-0 gap-2">
+          <div class="min-w-0">
+            <div class="text-[9.5px] font-bold text-accent tracking-wider uppercase mb-0.5">Timeline & State</div>
+            <strong class="text-xs font-semibold text-ink truncate block">Workflow Data & Save Points</strong>
+          </div>
+          <button class="btn btn-secondary text-[10px] px-2.5 py-1 shrink-0 whitespace-nowrap" onclick="copyData()" title="Copy Workflow JSON" aria-label="Copy Workflow JSON">Copy JSON</button>
+        </div>
+
+        <div class="flex-1 min-h-0 overflow-y-auto p-3 pb-12 flex flex-col gap-3">
+          <!-- Workspace Files & Artifacts Accordion -->
+          <div id="workspace-files-card" class="acc-card flex flex-col shrink-0 hidden">
+            <div class="acc-header" onclick="toggleAcc(this)">
+              <div class="acc-title">
+                <svg class="acc-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                <span>Workspace Files</span>
+              </div>
+              <span class="badge" id="ws-files-badge">0</span>
+            </div>
+            <div class="acc-body p-2 pb-3">
+              <div id="ws-files" class="flex flex-col gap-1.5 text-xs"></div>
+            </div>
+          </div>
+
+          <!-- Workflow Data Accordion (First) -->
+          <div class="acc-card flex flex-col shrink-0">
+            <div class="acc-header" onclick="toggleAcc(this)">
+              <div class="acc-title">
+                <svg class="acc-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                <span>Workflow Data</span>
+              </div>
+              <span class="text-muted text-[10.5px]">Live Payload</span>
+            </div>
+            <div class="acc-body p-2 pb-3">
+              <pre id="data" class="overflow-y-auto max-h-[280px] xl:max-h-[320px] min-h-[140px] text-ink bg-[var(--color-code-bg)] border border-line-subtle rounded-md p-2.5 text-[11px] font-mono leading-relaxed whitespace-pre-wrap break-all"></pre>
+            </div>
+          </div>
+
+          <!-- Save Points Accordion (Second) -->
+          <div class="acc-card flex flex-col shrink-0">
+            <div class="acc-header" onclick="toggleAcc(this)">
+              <div class="acc-title">
+                <svg class="acc-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                <span>Save Points</span>
+              </div>
+              <span class="badge" id="savepoints-badge">0</span>
+            </div>
+            <div class="acc-body p-2 pb-3">
+              <div id="savepoints" class="overflow-y-auto max-h-[260px] pr-1.5 pb-2"></div>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Vertical Resizer for Desktop 3-Panel Layout (below the row) -->
+  <div id="v-resizer-desktop" class="hidden xl:flex v-resizer-handle h-3.5 w-full items-center justify-center cursor-row-resize shrink-0 select-none group hover:bg-accent-dim active:bg-accent-dim/80 rounded transition-colors mt-1.5" title="Drag to resize workspace height">
+    <div class="v-resizer-pill w-16 h-1 bg-line-highlight group-hover:bg-accent rounded-full transition-colors"></div>
+  </div>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/app/bpmn-viewer-bundle.js"></script>
+<script>
+const id = '{{ workflow_id }}';
+let state = null, reviewTask = null, viewer = null, formViewer = null, ws = null;
+const $ = x => document.getElementById(x);
+
+function toggleAcc(header) {
+  const isCollapsed = header.classList.toggle('collapsed');
+  const body = header.nextElementSibling;
+  if (body) body.classList.toggle('collapsed', isCollapsed);
+}
+
+function copyData() {
+  if (state && state.data) {
+    navigator.clipboard.writeText(JSON.stringify(state.data, null, 2));
+    alert('Workflow data JSON copied to clipboard!');
+  }
+}
+
+// Sidebar toggle
+$('toggle-sidebar').onclick = () => {
+  const sb = $('sidebar');
+  const cc = $('canvas-container');
+  const vrStacked = $('v-resizer-stacked');
+  const isCollapsed = sb.classList.toggle('!hidden');
+  if (isCollapsed) {
+    cc.classList.add('!h-[calc(100vh-130px)]', 'min-h-[520px]');
+    if (vrStacked) vrStacked.classList.add('!hidden');
+  } else {
+    cc.classList.remove('!h-[calc(100vh-130px)]');
+    if (vrStacked) vrStacked.classList.remove('!hidden');
+  }
+  if (viewer) {
+    viewer.get('canvas').resized();
+    setTimeout(fitDiagram, 150);
+  }
+};
+
+// Vertical Resizers (Mobile / Stacked BPMN Canvas & Desktop 3-Panel Workspace)
+function setupVerticalResizers() {
+  const vrStacked = $('v-resizer-stacked');
+  const vrDesktop = $('v-resizer-desktop');
+  const mainLayout = $('main-layout');
+  const canvasContainer = $('canvas-container');
+
+  function initResizer(handle, targetElem, minH, maxH, onResizeCb) {
+    if (!handle || !targetElem) return;
+    let isResizing = false;
+    let startY = 0;
+    let startH = 0;
+
+    const onStart = (e) => {
+      isResizing = true;
+      startY = e.clientY != null ? e.clientY : (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
+      startH = targetElem.offsetHeight;
+      handle.classList.add('resizing');
+      if (e.pointerId && handle.setPointerCapture) {
+        try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+      }
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'row-resize';
+      if (e.cancelable) e.preventDefault();
+    };
+
+    const onMove = (e) => {
+      if (!isResizing) return;
+      const clientY = e.clientY != null ? e.clientY : (e.touches && e.touches[0] ? e.touches[0].clientY : startY);
+      const delta = clientY - startY;
+      const newHeight = Math.max(minH, Math.min(maxH, startH + delta));
+      targetElem.style.height = `${newHeight}px`;
+      targetElem.style.minHeight = `${newHeight}px`;
+      if (onResizeCb) onResizeCb(newHeight);
+      if (viewer) {
+        try { viewer.get('canvas').resized(); } catch (_) {}
+      }
+      if (e.cancelable) e.preventDefault();
+    };
+
+    const onEnd = (e) => {
+      if (isResizing) {
+        isResizing = false;
+        handle.classList.remove('resizing');
+        if (e && e.pointerId && handle.releasePointerCapture) {
+          try { handle.releasePointerCapture(e.pointerId); } catch (_) {}
+        }
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        if (viewer) {
+          try {
+            viewer.get('canvas').resized();
+            fitDiagram();
+          } catch (_) {}
+        }
+      }
+    };
+
+    handle.addEventListener('pointerdown', onStart);
+    handle.addEventListener('mousedown', onStart);
+    handle.addEventListener('touchstart', onStart, { passive: false });
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('touchmove', onMove, { passive: false });
+
+    window.addEventListener('pointerup', onEnd);
+    window.addEventListener('mouseup', onEnd);
+    window.addEventListener('touchend', onEnd);
+    window.addEventListener('pointercancel', onEnd);
+    window.addEventListener('touchcancel', onEnd);
+  }
+
+  if (vrStacked && canvasContainer) {
+    initResizer(vrStacked, canvasContainer, 220, 1400);
+  }
+  if (vrDesktop && mainLayout) {
+    initResizer(vrDesktop, mainLayout, 380, 2200);
+  }
+}
+setupVerticalResizers();
+
+function renderState(next) {
+  state = next;
+  $('status').textContent = next.status;
+  $('status').className = `badge ${next.status}`;
+  $('process').textContent = next.process_id;
+  
+  if (next.parent_workflow_id) {
+    $('parent-workflow').classList.remove('hidden');
+    $('parent-workflow').className = 'inline-block';
+    $('parent-workflow').innerHTML = `<a href="/instance/${next.parent_workflow_id}" class="badge bg-[#2b3b51] text-white no-underline">⬑ Parent</a>`;
+  } else {
+    $('parent-workflow').classList.add('hidden');
+  }
+  
+  $('tasks-badge').textContent = next.tasks.length;
+  $('tasks').innerHTML = [...next.tasks].reverse().map(t => {
+    const isFailed = next.jobs && next.jobs[t.id]?.status === 'failed';
+    const retry = isFailed ?
+      `<button class="btn btn-danger px-2 py-0.5 text-[10px]" data-retry="${t.id}">Retry</button>` : '';
+    return `
+      <div class="p-2 rounded-md bg-card border border-line mb-1.5 text-xs hover:border-line-highlight hover:bg-card-hover transition-colors">
+        <div class="flex justify-between items-center gap-2">
+          <div class="font-semibold text-ink text-[12.5px]">${t.name || t.bpmn_id}</div>
+          <span class="badge ${t.state.toLowerCase()}">${t.state}</span>
+        </div>
+        <div class="text-muted text-[10.5px] font-mono mt-0.5">${t.id} · ${t.type || 'Task'}</div>
+        ${retry ? `<div class="mt-1.5">${retry}</div>` : ''}
+      </div>`;
+  }).join('');
+
+  document.querySelectorAll('[data-retry]').forEach(button => {
+    button.onclick = async () => {
+      button.disabled = true;
+      const response = await fetch(`/instance/${id}/retry/${button.dataset.retry}`, { method: 'POST' });
+      if (response.ok) {
+        renderState(await response.json());
+      }
+    };
+  });
+
+  const spList = [...(next.save_points || [])].reverse();
+  $('savepoints-badge').textContent = spList.length;
+  $('savepoints').innerHTML = spList.length ? spList.map(point => `
+    <div class="p-2 rounded-md bg-card border border-line mb-1.5 text-xs hover:border-line-highlight transition-colors">
+      <div class="flex justify-between items-center">
+        <strong class="font-semibold text-ink">${point.phase}</strong>
+        <button class="btn btn-secondary text-[10px] px-1.5 py-0.5" data-fork="${point.id}">Fork</button>
+      </div>
+      <div class="text-muted text-[10.5px] mt-0.5">${point.task_name} · ${new Date(point.created_at).toLocaleTimeString()}</div>
+    </div>
+  `).join('') : '<small class="text-muted text-xs">No save points recorded.</small>';
+
+  document.querySelectorAll('[data-fork]').forEach(button => {
+    button.onclick = async () => {
+      button.disabled = true;
+      const response = await fetch(`/instance/${id}/fork/${button.dataset.fork}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ variables: {} })
+      });
+      if (response.ok) {
+        location.href = `/instance/${(await response.json()).workflow_id}`;
+      }
+    };
+  });
+
+  $('data').textContent = JSON.stringify(next.data, null, 2);
+
+  // Render Workspace Files & Artifacts Manifest
+  if (next.data && next.data.workspace_metadata && next.data.workspace_metadata.files && next.data.workspace_metadata.files.length > 0) {
+    const wsMeta = next.data.workspace_metadata;
+    const wsFiles = wsMeta.files;
+    const wsCard = $('workspace-files-card');
+    if (wsCard) {
+      wsCard.classList.remove('hidden');
+      $('ws-files-badge').textContent = wsFiles.length;
+      $('ws-files').innerHTML = wsFiles.map(f => {
+        const sizeStr = f.size > 1024 ? `${(f.size / 1024).toFixed(1)} KB` : `${f.size} B`;
+        return `
+          <div class="flex items-center justify-between p-1.5 rounded bg-card border border-line hover:border-line-highlight transition-colors">
+            <div class="flex items-center gap-1.5 min-w-0">
+              <span class="text-accent text-[11px]">📄</span>
+              <span class="font-mono text-[11px] truncate text-ink" title="${f.path}">${f.name || f.path}</span>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <span class="text-muted text-[10px]">${sizeStr}</span>
+              <a href="/instance/${id}/workspace/file?path=${encodeURIComponent(f.path)}" target="_blank" class="btn btn-secondary text-[9.5px] px-1.5 py-0.5" title="View / Download file">View</a>
+            </div>
+          </div>`;
+      }).join('');
+    }
+    const wsBtn = document.querySelector("a[href*='workspace']");
+    if (wsBtn) {
+      const totalSize = wsMeta.total_size || 0;
+      const sizeStr = totalSize > 1024 ? `${(totalSize / 1024).toFixed(1)} KB` : `${totalSize} B`;
+      wsBtn.title = `Download Workspace Archive (${wsFiles.length} files, ${sizeStr})`;
+    }
+  } else {
+    const wsCard = $('workspace-files-card');
+    if (wsCard) wsCard.classList.add('hidden');
+  }
+
+  // Dynamic user task detection
+  reviewTask = next.tasks.find(t => t.state === 'READY' && (t.type === 'UserTask' || !t.type));
+  if (reviewTask) {
+    $('review-card').classList.remove('hidden');
+    loadForm();
+  } else {
+    $('review-card').classList.add('hidden');
+  }
+
+  if (viewer) {
+    const canvas = viewer.get('canvas');
+    next.tasks.filter(t => t.state === 'STARTED').forEach(t => canvas.addMarker(t.bpmn_id, 'task-active'));
+    next.tasks.filter(t => t.state === 'READY').forEach(t => canvas.addMarker(t.bpmn_id, 'task-ready'));
+    next.tasks.filter(t => t.state === 'COMPLETED').forEach(t => canvas.addMarker(t.bpmn_id, 'task-completed'));
+  }
+}
+
+async function load() {
+  const [xmlResponse, stateResponse] = await Promise.all([
+    fetch(`/instance/${id}/diagram`),
+    fetch(`/instance/${id}/state`)
+  ]);
+  const xml = await xmlResponse.text();
+  
+  const ViewerCtor = window.BpmnNavigatedViewer || window.BpmnJS;
+  viewer = new ViewerCtor({
+    container: '#canvas',
+    additionalModules: [window.minimapModule].filter(Boolean)
+  });
+
+  await viewer.importXML(xml);
+  fitDiagram();
+  renderState(await stateResponse.json());
+  initWebSocket();
+}
+
+function fitDiagram() {
+  try {
+    viewer.get('canvas').zoom('fit-viewport', 'auto');
+  } catch(e) {}
+}
+
+// Navigation Controls
+$('ctrl-zoom-in').onclick = () => {
+  try { viewer.get('zoomScroll').stepZoom(1); } catch(e) {
+    const canvas = viewer.get('canvas');
+    canvas.zoom(canvas.zoom() * 1.2);
+  }
+};
+$('ctrl-zoom-out').onclick = () => {
+  try { viewer.get('zoomScroll').stepZoom(-1); } catch(e) {
+    const canvas = viewer.get('canvas');
+    canvas.zoom(canvas.zoom() / 1.2);
+  }
+};
+$('ctrl-zoom-fit').onclick = () => fitDiagram();
+$('ctrl-zoom-reset').onclick = () => {
+  try { viewer.get('canvas').zoom(1.0); } catch(e) {}
+};
+$('ctrl-minimap').onclick = () => {
+  try {
+    const minimap = viewer.get('minimap');
+    minimap.toggle();
+    $('ctrl-minimap').classList.toggle('active', minimap.isOpen());
+  } catch(e) {}
+};
+
+function initWebSocket() {
+  try {
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${protocol}//${location.host}/ws/instance/${id}`);
+    ws.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.workflow_id === id) {
+          renderState(payload);
+        }
+      } catch(e) {}
+    };
+    ws.onclose = () => {
+      if (state && state.status === 'waiting_pi') setTimeout(refresh, 1000);
+    };
+    ws.onerror = () => {
+      if (state && state.status === 'waiting_pi') setTimeout(refresh, 1000);
+    };
+  } catch(e) {
+    if (state && state.status === 'waiting_pi') setTimeout(refresh, 500);
+  }
+}
+
+async function refresh() {
+  const response = await fetch(`/instance/${id}/state`);
+  if (response.ok) {
+    renderState(await response.json());
+    if (state.status === 'waiting_pi') setTimeout(refresh, 500);
+  }
+}
+
+async function loadForm() {
+  const response = await fetch(`/instance/${id}/form/${reviewTask.id}`);
+  if (!response.ok) return;
+  const schema = await response.json();
+  if (!formViewer) {
+    const FormCtor = (window.FormJS || window.FormViewer).Form;
+    formViewer = new FormCtor({ container: '#fields' });
+  }
+  const initialData = (state && state.data) ? { ...state.data } : {};
+  if (!initialData.document_content && state && state.data) {
+    if (state.data.document_text) {
+      initialData.document_content = state.data.document_text;
+    } else if (state.data.agent_output && state.data.agent_output.summary) {
+      initialData.document_content = state.data.agent_output.summary;
+    }
+  }
+  await formViewer.importSchema(schema, initialData);
+}
+
+$('submit').onclick = async () => {
+  if (!formViewer || !reviewTask) return;
+  const { data, errors } = formViewer._getState();
+  if (Object.keys(errors).length > 0) return;
+  const response = await fetch(`/instance/${id}/submit-task/${reviewTask.id}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ variables: data })
+  });
+  if (response.ok) {
+    $('review-card').classList.add('hidden');
+    renderState(await response.json());
+  }
+};
+
+window.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.key === 'm' || e.key === 'M') {
+    $('ctrl-minimap').click();
+  } else if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+    e.preventDefault();
+    fitDiagram();
+  } else if (e.altKey && (e.key === 's' || e.key === 'S')) {
+    e.preventDefault();
+    $('toggle-sidebar').click();
+  }
+});
+
+load();
+</script>
+{% endblock %}

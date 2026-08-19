@@ -1,0 +1,18 @@
+from app.workflow_service import CAMUNDA_TO_FORMJS_TYPE, WorkflowService
+from app.persistence import WorkflowStore
+from app.pi_rpc import PiResult
+
+
+class FormTestPi:
+    async def run(self, prompt: str, cwd: str) -> PiResult:
+        return PiResult("success", {"status": "success", "summary": "ok", "findings": [], "artifacts": [], "next_action": "continue"}, "ok", [], "", 0)
+
+
+def test_camunda_to_formjs_type_mapping() -> None:
+    assert CAMUNDA_TO_FORMJS_TYPE["string"] == "textfield"
+    assert CAMUNDA_TO_FORMJS_TYPE["text"] == "textfield"
+    assert CAMUNDA_TO_FORMJS_TYPE["long"] == "number"
+    assert CAMUNDA_TO_FORMJS_TYPE["double"] == "number"
+    assert CAMUNDA_TO_FORMJS_TYPE["boolean"] == "checkbox"
+    assert CAMUNDA_TO_FORMJS_TYPE["date"] == "textfield"
+    assert CAMUNDA_TO_FORMJS_TYPE["enum"] == "select"

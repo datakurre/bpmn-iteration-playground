@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_PRReview" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="pr_review" name="Pull Request Review" isExecutable="true">
+    <bpmn:documentation>Human opens a PR, AI analyses diff and tests, human makes merge decision based on AI findings.</bpmn:documentation>
+    <bpmn:startEvent id="Start_PR" name="PR Opened">
+      <bpmn:outgoing>Flow_To_Analyse</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_To_Analyse" sourceRef="Start_PR" targetRef="Task_Analyse" />
+    <bpmn:serviceTask id="Task_Analyse" name="Analyse Diff &amp; Tests">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="pr_reviewer" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_To_Analyse</bpmn:incoming>
+      <bpmn:outgoing>Flow_Analyse_GW</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_Analyse_GW" sourceRef="Task_Analyse" targetRef="GW_Analyse" />
+    <bpmn:exclusiveGateway id="GW_Analyse" name="Analysis OK?">
+      <bpmn:incoming>Flow_Analyse_GW</bpmn:incoming>
+      <bpmn:outgoing>Flow_Analyse_OK</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Analyse_Fail</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_Analyse_OK" name="Success" sourceRef="GW_Analyse" targetRef="Task_Merge_Decision">
+      <bpmn:conditionExpression>agent_status == 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Analyse_Fail" name="Failed" sourceRef="GW_Analyse" targetRef="Task_Manual_Review">
+      <bpmn:conditionExpression>agent_status != 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:userTask id="Task_Merge_Decision" name="Merge Decision">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="merge_action" label="Action" type="string" />
+          <camunda:formField id="review_comment" label="Review Comment" type="string" />
+          <camunda:formField id="requested_changes" label="Requested Changes" type="string" />
+        </camunda:formData>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Analyse_OK</bpmn:incoming>
+      <bpmn:outgoing>Flow_Merge_End</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_Manual_Review" name="Manual Code Review">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="manual_verdict" label="Verdict" type="string" />
+          <camunda:formField id="manual_comment" label="Comments" type="string" />
+        </camunda:formData>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Analyse_Fail</bpmn:incoming>
+      <bpmn:outgoing>Flow_Manual_End</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="Flow_Merge_End" sourceRef="Task_Merge_Decision" targetRef="End_PR" />
+    <bpmn:sequenceFlow id="Flow_Manual_End" sourceRef="Task_Manual_Review" targetRef="End_PR" />
+    <bpmn:endEvent id="End_PR" name="PR Resolved">
+      <bpmn:incoming>Flow_Merge_End</bpmn:incoming>
+      <bpmn:incoming>Flow_Manual_End</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_PRReview">
+    <bpmndi:BPMNPlane id="BPMNPlane_PRReview" bpmnElement="pr_review">
+      <bpmndi:BPMNShape id="Start_PR_di" bpmnElement="Start_PR">
+        <dc:Bounds x="57" y="120" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Analyse_di" bpmnElement="Task_Analyse">
+        <dc:Bounds x="160" y="98" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_Analyse_di" bpmnElement="GW_Analyse" isMarkerVisible="true">
+        <dc:Bounds x="365" y="113" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Merge_Decision_di" bpmnElement="Task_Merge_Decision">
+        <dc:Bounds x="485" y="30" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Manual_Review_di" bpmnElement="Task_Manual_Review">
+        <dc:Bounds x="485" y="190" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_PR_di" bpmnElement="End_PR">
+        <dc:Bounds x="707" y="120" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_To_Analyse_di" bpmnElement="Flow_To_Analyse">
+        <di:waypoint x="93" y="138" />
+        <di:waypoint x="160" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Analyse_GW_di" bpmnElement="Flow_Analyse_GW">
+        <di:waypoint x="300" y="138" />
+        <di:waypoint x="365" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Analyse_OK_di" bpmnElement="Flow_Analyse_OK">
+        <di:waypoint x="390" y="113" />
+        <di:waypoint x="390" y="70" />
+        <di:waypoint x="485" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Analyse_Fail_di" bpmnElement="Flow_Analyse_Fail">
+        <di:waypoint x="390" y="163" />
+        <di:waypoint x="390" y="230" />
+        <di:waypoint x="485" y="230" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Merge_End_di" bpmnElement="Flow_Merge_End">
+        <di:waypoint x="625" y="70" />
+        <di:waypoint x="725" y="70" />
+        <di:waypoint x="725" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Manual_End_di" bpmnElement="Flow_Manual_End">
+        <di:waypoint x="625" y="230" />
+        <di:waypoint x="725" y="230" />
+        <di:waypoint x="725" y="156" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

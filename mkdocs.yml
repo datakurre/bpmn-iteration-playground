@@ -1,0 +1,58 @@
+site_name: Pi Workflow Studio Docs
+site_description: Durable BPMN 2.0 orchestration with local Pi AI agents, ZODB persistence, save points, and FormJS human checkpoints.
+site_author: DeepMind Advanced Agentic Coding
+repo_url: https://github.com/datakurre/bpmn-ai-starter
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - attr_list
+  - md_in_html
+
+nav:
+  - Overview: index.md
+  - Features:
+      - Usage Story & Live Walkthrough: usage-story.md
+      - BPMN Orchestration & ZODB: features/orchestration.md
+      - Pi AI Agent Integration: features/ai-agent-integration.md
+      - Save Points & Timeline Forking: features/savepoints-forking.md
+      - Web Interface & FormJS: features/web-ui.md
+      - Process History & Analytics: features/history-analytics.md
+  - Developer Guide:
+      - Getting Started: development/getting-started.md
+      - Testing & Screenshot Automation: development/testing-verification.md

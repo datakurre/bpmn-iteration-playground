@@ -1,0 +1,32 @@
+# Devenv & Nix
+.devenv*
+devenv.local.nix
+devenv.local.yaml
+.direnv/
+.venv/
+
+# Pre-commit & Tooling
+.pre-commit-config.yaml
+
+# Environment & Data
+.env
+.env.local
+data/
+*.db
+*.zodb
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+
+# Temporary & Verification Outputs
+*.png
+*.log
+scratch/
+TODO.md

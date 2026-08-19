@@ -1,0 +1,82 @@
+import asyncio
+
+from app.api.server import create_app
+from app.persistence import WorkflowStore
+from app.pi_rpc import PiResult
+from app.workflow_service import WorkflowService
+
+
+class FakePi:
+    async def run(self, prompt: str, cwd: str) -> PiResult:
+        return PiResult(
+            "success",
+            {
+                "status": "success",
+                "summary": "complete",
+                "findings": [],
+                "artifacts": [],
+                "next_action": "continue",
+            },
+            "result",
+            [],
+            "",
+            0,
+        )
+
+
+def test_history_instances_and_savepoint_detail() -> None:
+    async def scenario() -> None:
+        pi = FakePi()
+        store = WorkflowStore(":memory:")
+        service = WorkflowService(store, pi)
+        app = create_app(service)
+
+        # 1. Check history instances when empty
+        assert service.history_instances() == []
+
+        # 2. Start a workflow and complete human task
+        started = await service.start("workflows/contract_review.bpmn", None, {"contract": "text"})
+        await asyncio.gather(*service.jobs.values())
+
+        review_task = next(task for task in service.state(started["workflow_id"])["tasks"] if task["bpmn_id"] == "ServiceTask_Review")
+        await service.submit_task(started["workflow_id"], review_task["id"], {"decision": "approved"})
+
+        # 3. Verify history list
+        items = service.history_instances()
+        assert len(items) == 1
+        item = items[0]
+        assert item["workflow_id"] == started["workflow_id"]
+        assert item["status"] == "completed"
+        assert item["save_point_count"] == 3
+
+        # Filter by status
+        assert len(service.history_instances(status_filter="completed")) == 1
+        assert len(service.history_instances(status_filter="failed")) == 0
+
+        # 4. Verify savepoint detail retrieval
+        save_points = service.state(started["workflow_id"])["save_points"]
+        sp_id = save_points[0]["id"]
+        detail = service.save_point_detail(started["workflow_id"], sp_id)
+        assert detail["id"] == sp_id
+        assert detail["phase"] == "before_harness"
+        assert "contract" in detail["data"]
+
+        # 5. Verify storage stats and packing
+        stats = await service.storage_stats()
+        assert stats["instances_count"] == 1
+        assert stats["save_points_count"] >= 3
+
+        pack_res = await service.pack_database()
+        assert "reclaimed_human" in pack_res
+
+        # 6. Verify deletion of historical instance
+        assert service.delete_instance(started["workflow_id"]) is True
+        assert service.history_instances() == []
+
+        # 7. Verify clear instances
+        started2 = await service.start("workflows/contract_review.bpmn", None, {"contract": "text 2"})
+        assert len(service.history_instances()) == 1
+        assert service.clear_instances() == 1
+        assert service.history_instances() == []
+
+    asyncio.run(scenario())

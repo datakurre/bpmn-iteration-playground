@@ -1,0 +1,348 @@
+/**
+ * Pi Workflow Studio - FormJS Dynamic Light & Dark Theme (WCAG 2.1 AA/AAA Compliant)
+ */
+
+/* =========================================
+   LIGHT THEME (Default)
+   ========================================= */
+.fjs-container {
+  --cds-field: #ffffff !important;
+  --cds-field-01: #ffffff !important;
+  --cds-field-hover: #f8fafc !important;
+  --cds-background: #ffffff !important;
+  --cds-layer: #ffffff !important;
+  --cds-layer-01: #ffffff !important;
+  --cds-layer-accent: #f1f5f9 !important;
+  --cds-text-primary: #0f172a !important;
+  --cds-text-secondary: #1e293b !important;
+  --cds-text-placeholder: #64748b !important;
+  --cds-text-disabled: #94a3b8 !important;
+  --cds-border-strong: #64748b !important;
+  --cds-border-strong-01: #64748b !important;
+  --cds-border-subtle: #cbd5e1 !important;
+  --cds-border-subtle-01: #cbd5e1 !important;
+  --cds-border-disabled: #e2e8f0 !important;
+  --cds-focus: #0f766e !important;
+  --cds-link-primary: #0f766e !important;
+  --cds-button-primary: #0f766e !important;
+  
+  --color-white: #ffffff !important;
+  --color-black: #0f172a !important;
+  --color-background: #ffffff !important;
+  --color-background-disabled: #f1f5f9 !important;
+  --color-background-readonly: #f1f5f9 !important;
+  --color-background-adornment: #f1f5f9 !important;
+  --color-layer: #ffffff !important;
+  --color-text: #0f172a !important;
+  --color-text-light: #1e293b !important;
+  --color-text-lighter: #334155 !important;
+  --color-text-lightest: #475569 !important;
+  --color-borders: #64748b !important;
+  --color-borders-group: #cbd5e1 !important;
+  --color-accent: #0f766e !important;
+  --color-shadow: rgba(0, 0, 0, 0.08) !important;
+  
+  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+  --font-size-base: 13px !important;
+  --font-size-input: 13px !important;
+  --font-size-label: 11px !important;
+  --form-field-height: 36px !important;
+  
+  background: transparent !important;
+  color: #0f172a !important;
+  font-family: var(--font-family) !important;
+}
+
+.fjs-container .fjs-form {
+  background: transparent !important;
+  color: #0f172a !important;
+}
+
+.fjs-container .fjs-form-field {
+  margin-bottom: 11px !important;
+}
+
+/* Light Labels: WCAG AAA 14.6:1 contrast (#1e293b on #ffffff) */
+.fjs-container .fjs-form-field-label,
+.fjs-container label.fjs-form-field-label,
+.fjs-container .cds--label {
+  display: block !important;
+  color: #1e293b !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.05em !important;
+  text-transform: uppercase !important;
+  margin-bottom: 4px !important;
+}
+
+/* Light Descriptions / Helper Text: WCAG AAA 7.6:1 contrast (#475569 on #ffffff) */
+.fjs-container .fjs-form-field-description,
+.fjs-container .cds--form__helper-text {
+  color: #475569 !important;
+  font-size: 11px !important;
+  margin-top: 3px !important;
+}
+
+/* Light Input Groups: WCAG AA UI 4.76:1 border contrast (#64748b on #ffffff) */
+.fjs-container .fjs-input-group {
+  display: flex !important;
+  align-items: center !important;
+  width: 100% !important;
+  background-color: #ffffff !important;
+  border: 1px solid #64748b !important;
+  border-radius: 6px !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+  transition: all 0.15s ease !important;
+  overflow: hidden !important;
+}
+
+.fjs-container .fjs-input-group:hover {
+  border-color: #0f172a !important;
+  background-color: #f8fafc !important;
+}
+
+.fjs-container .fjs-input-group:focus-within {
+  border-color: #0f766e !important;
+  background-color: #ffffff !important;
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.25), inset 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+}
+
+/* Inputs & Textareas: WCAG AAA 17.85:1 contrast (#0f172a on #ffffff) */
+.fjs-container input.fjs-input,
+.fjs-container .fjs-input-group .fjs-input,
+.fjs-container .fjs-input-group input,
+.fjs-container .fjs-textarea,
+.fjs-container textarea,
+.fjs-container select.fjs-select,
+.fjs-container .fjs-select {
+  width: 100% !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  color: #0f172a !important;
+  border: none !important;
+  padding: 7px 11px !important;
+  font-size: 13px !important;
+  line-height: 1.4 !important;
+  font-family: inherit !important;
+  outline: none !important;
+}
+
+.fjs-container .fjs-textarea,
+.fjs-container textarea {
+  background-color: #ffffff !important;
+  border: 1px solid #64748b !important;
+  border-radius: 6px !important;
+  padding: 8px 11px !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+}
+
+.fjs-container .fjs-textarea:focus,
+.fjs-container textarea:focus {
+  border-color: #0f766e !important;
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.25) !important;
+}
+
+.fjs-container input::placeholder,
+.fjs-container textarea::placeholder {
+  color: #64748b !important;
+}
+
+.fjs-container .fjs-input-adornment {
+  background-color: #f1f5f9 !important;
+  color: #334155 !important;
+  border-color: #64748b !important;
+  font-size: 11.5px !important;
+  padding: 0 9px !important;
+}
+
+.fjs-container input[type="checkbox"],
+.fjs-container input[type="radio"] {
+  accent-color: #0f766e !important;
+  width: 16px !important;
+  height: 16px !important;
+  background: #ffffff !important;
+  border: 1px solid #64748b !important;
+  border-radius: 4px !important;
+  cursor: pointer !important;
+}
+
+.fjs-container .fjs-checkbox-label,
+.fjs-container .fjs-radio-label {
+  color: #1e293b !important;
+  font-size: 12.5px !important;
+  font-weight: 500 !important;
+  cursor: pointer !important;
+}
+
+.fjs-container .fjs-form-field-error-message,
+.fjs-container .cds--form-requirement {
+  color: #991b1b !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  margin-top: 3.5px !important;
+}
+
+.fjs-container .fjs-has-errors .fjs-input-group {
+  border-color: #991b1b !important;
+  box-shadow: 0 0 0 1.5px rgba(153, 27, 27, 0.3) !important;
+}
+
+
+/* =========================================
+   DARK THEME OVERRIDES (when html.dark)
+   ========================================= */
+html.dark .fjs-container {
+  --cds-field: #0b1320 !important;
+  --cds-field-01: #0b1320 !important;
+  --cds-field-hover: #0e1a2c !important;
+  --cds-background: #090e17 !important;
+  --cds-layer: #0b121c !important;
+  --cds-layer-01: #0b121c !important;
+  --cds-layer-accent: #141f2e !important;
+  --cds-text-primary: #f8fafc !important;
+  --cds-text-secondary: #cbd5e1 !important;
+  --cds-text-placeholder: #94a3b8 !important;
+  --cds-text-disabled: #64748b !important;
+  --cds-border-strong: #47648b !important;
+  --cds-border-strong-01: #47648b !important;
+  --cds-border-subtle: #334e70 !important;
+  --cds-border-subtle-01: #334e70 !important;
+  --cds-border-disabled: #1c2b3d !important;
+  --cds-focus: #5eead4 !important;
+  --cds-link-primary: #5eead4 !important;
+  --cds-button-primary: #5eead4 !important;
+  
+  --color-white: #0b1320 !important;
+  --color-black: #f8fafc !important;
+  --color-background: #0b1320 !important;
+  --color-background-disabled: #070b12 !important;
+  --color-background-readonly: #070b12 !important;
+  --color-background-adornment: #141f2e !important;
+  --color-layer: #0b121c !important;
+  --color-text: #f8fafc !important;
+  --color-text-light: #cbd5e1 !important;
+  --color-text-lighter: #94a3b8 !important;
+  --color-text-lightest: #64748b !important;
+  --color-borders: #47648b !important;
+  --color-borders-group: #334e70 !important;
+  --color-accent: #5eead4 !important;
+  --color-shadow: rgba(0, 0, 0, 0.6) !important;
+  
+  color: #f8fafc !important;
+}
+
+html.dark .fjs-container .fjs-form {
+  color: #f8fafc !important;
+}
+
+html.dark .fjs-container .fjs-form-field-label,
+html.dark .fjs-container label.fjs-form-field-label,
+html.dark .fjs-container .cds--label {
+  color: #cbd5e1 !important;
+}
+
+html.dark .fjs-container .fjs-form-field-description,
+html.dark .fjs-container .cds--form__helper-text {
+  color: #94a3b8 !important;
+}
+
+html.dark .fjs-container .fjs-input-group {
+  background-color: #0b1320 !important;
+  border-color: #47648b !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4) !important;
+}
+
+html.dark .fjs-container .fjs-input-group:hover {
+  border-color: #6082ac !important;
+  background-color: #0e1a2c !important;
+}
+
+html.dark .fjs-container .fjs-input-group:focus-within {
+  border-color: #5eead4 !important;
+  background-color: #0e1a2c !important;
+  box-shadow: 0 0 0 2px rgba(94, 234, 212, 0.3), inset 0 1px 2px rgba(0, 0, 0, 0.5) !important;
+}
+
+html.dark .fjs-container input.fjs-input,
+html.dark .fjs-container .fjs-input-group .fjs-input,
+html.dark .fjs-container .fjs-input-group input,
+html.dark .fjs-container .fjs-textarea,
+html.dark .fjs-container textarea,
+html.dark .fjs-container select.fjs-select,
+html.dark .fjs-container .fjs-select {
+  color: #f8fafc !important;
+}
+
+html.dark .fjs-container .fjs-textarea,
+html.dark .fjs-container textarea {
+  background-color: #0b1320 !important;
+  border-color: #47648b !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4) !important;
+}
+
+html.dark .fjs-container .fjs-textarea:focus,
+html.dark .fjs-container textarea:focus {
+  border-color: #5eead4 !important;
+  box-shadow: 0 0 0 2px rgba(94, 234, 212, 0.3) !important;
+}
+
+html.dark .fjs-container input::placeholder,
+html.dark .fjs-container textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+html.dark .fjs-container .fjs-input-adornment {
+  background-color: #141f2e !important;
+  color: #cbd5e1 !important;
+  border-color: #47648b !important;
+}
+
+html.dark .fjs-container input[type="checkbox"],
+html.dark .fjs-container input[type="radio"] {
+  accent-color: #5eead4 !important;
+  background: #0b1320 !important;
+  border-color: #47648b !important;
+}
+
+html.dark .fjs-container .fjs-checkbox-label,
+html.dark .fjs-container .fjs-radio-label {
+  color: #e2e8f0 !important;
+}
+
+html.dark .fjs-container .fjs-form-field-error-message,
+html.dark .fjs-container .cds--form-requirement {
+  color: #f87171 !important;
+}
+
+html.dark .fjs-container .fjs-has-errors .fjs-input-group {
+  border-color: #f87171 !important;
+  box-shadow: 0 0 0 1.5px rgba(248, 113, 113, 0.4) !important;
+}
+
+/* Common resets */
+.fjs-powered-by,
+.fjs-form-field-powered-by,
+.fjs-attribution,
+.fjs-logo,
+.bjs-powered-by {
+  display: none !important;
+}
+
+.fjs-container .cds--grid {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}
+.fjs-container .cds--row {
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+}
+.fjs-container .cds--col,
+.fjs-container [class*="cds--col"] {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  flex: 0 0 100% !important;
+}

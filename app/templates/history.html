@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+
+{% block title %}Process History · Pi Workflow Studio{% endblock %}
+
+{% block content %}
+<main class="max-w-[1600px] mx-auto px-5 py-4 pb-8">
+  <header class="relative z-50 flex justify-between gap-4 items-start sm:items-end border-b border-line pb-3.5 mb-4">
+    <div class="min-w-0 flex-1 pr-2">
+      <div class="text-[10.5px] font-bold text-accent tracking-widest uppercase">Execution History & Save Points</div>
+      <h1 class="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight text-ink mt-1 mb-1">Process History</h1>
+      <p class="text-muted text-xs sm:text-[13.5px] leading-relaxed max-w-2xl hidden sm:block">Browse completed and historical workflow executions. Inspect detailed savepoint variable snapshots, fork any past savepoint, compact ZODB storage, or delete historical data.</p>
+    </div>
+    <!-- Desktop Nav -->
+    <nav class="hidden md:flex items-center gap-1.5 shrink-0">
+      <a href="/" class="nav-link">Studio</a>
+      <a href="/history" class="nav-link active">History</a>
+      <a href="/editor" class="nav-link">Editor</a>
+      <a href="/admin" class="nav-link">Admin</a>
+      <button onclick="toggleTheme()" class="btn btn-secondary text-xs px-2 py-1 ml-1" title="Toggle Light/Dark Theme">
+        <span class="theme-toggle-icon">☀️</span>
+      </button>
+    </nav>
+    <!-- Mobile Hamburger Button & Theme -->
+    <div class="md:hidden flex items-center gap-2 shrink-0">
+      <button onclick="toggleTheme()" class="btn btn-secondary text-xs px-2 py-1" title="Toggle Light/Dark Theme">
+        <span class="theme-toggle-icon">☀️</span>
+      </button>
+      <button id="mobile-menu-btn" class="p-2 rounded-md bg-panel border border-line text-ink hover:bg-card-hover hover:border-line-highlight transition-colors" aria-label="Toggle Menu">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+      </button>
+    </div>
+    <!-- Mobile Dropdown Menu -->
+    <div id="mobile-menu" class="hidden md:hidden absolute top-full right-0 mt-1 w-44 py-2 bg-panel border border-line rounded-lg shadow-2xl z-[1000] flex flex-col gap-1 backdrop-blur-md">
+      <a href="/" class="nav-link mx-2">Studio</a>
+      <a href="/history" class="nav-link active mx-2">History</a>
+      <a href="/editor" class="nav-link mx-2">Editor</a>
+      <a href="/admin" class="nav-link mx-2">Admin</a>
+    </div>
+  </header>
+
+  <section class="grid grid-cols-2 md:grid-cols-4 gap-3 my-3.5">
+    <div class="panel-box p-3.5"><div class="text-[10.5px] font-bold text-accent tracking-widest uppercase">Total Processes</div><div class="text-2xl font-bold text-ink mt-1" id="m-total">0</div></div>
+    <div class="panel-box p-3.5"><div class="text-[10.5px] font-bold text-accent tracking-widest uppercase">Completed</div><div class="text-2xl font-bold text-accent mt-1" id="m-completed">0</div></div>
+    <div class="panel-box p-3.5"><div class="text-[10.5px] font-bold text-accent tracking-widest uppercase">Total Save Points</div><div class="text-2xl font-bold text-amber mt-1" id="m-savepoints">0</div></div>
+    <div class="panel-box p-3.5"><div class="text-[10.5px] font-bold text-accent tracking-widest uppercase">Database Size</div><div class="text-2xl font-bold text-sky mt-1" id="m-storage">...</div></div>
+  </section>
+
+  <nav class="flex justify-between items-center gap-2.5 mb-3.5 border-b border-line pb-2.5 flex-wrap">
+    <div class="flex gap-2 flex-wrap items-center">
+      <button class="tab active px-3 py-1 rounded-full text-xs font-semibold border border-line text-muted transition-colors" data-filter="all">All Processes</button>
+      <button class="tab px-3 py-1 rounded-full text-xs font-semibold border border-line text-muted transition-colors" data-filter="completed">Completed</button>
+      <button class="tab px-3 py-1 rounded-full text-xs font-semibold border border-line text-muted transition-colors" data-filter="failed">Failed</button>
+      <button class="tab px-3 py-1 rounded-full text-xs font-semibold border border-line text-muted transition-colors" data-filter="waiting_human">Waiting Human</button>
+    </div>
+    <div class="flex gap-2 items-center">
+      <button id="pack-db" class="btn btn-secondary">Pack Database</button>
+      <button id="clear-all" class="btn btn-danger">Clear All History</button>
+    </div>
+  </nav>
+
+  <div id="pack-status" class="hidden mb-3.5 p-2.5 rounded-md bg-[#142823] border border-accent text-accent text-xs"></div>
+
+  <section id="list" class="flex flex-col gap-0 max-h-[calc(100vh-320px)] min-h-[360px] overflow-y-auto pr-1">Loading process history...</section>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentFilter = 'all', instances = [];
+const $ = id => document.getElementById(id);
+
+async function loadStorage() {
+  try {
+    const res = await fetch('/api/history/storage');
+    if (res.ok) {
+      const data = await res.json();
+      $('m-storage').textContent = data.size_human;
+    }
+  } catch(e) {}
+}
+
+async function loadHistory() {
+  loadStorage();
+  const res = await fetch('/api/history/instances');
+  if (res.ok) {
+    instances = await res.json();
+    render();
+  }
+}
+
+async function deleteHistory(id) {
+  if (confirm('Delete this historical instance?')) {
+    const res = await fetch('/api/history/instances/' + id, { method: 'DELETE' });
+    if (res.ok) loadHistory();
+  }
+}
+
+$('pack-db').onclick = async () => {
+  $('pack-db').disabled = true;
+  $('pack-db').textContent = 'Packing...';
+  try {
+    const res = await fetch('/api/history/pack', { method: 'POST' });
+    if (res.ok) {
+      const data = await res.json();
+      $('pack-status').classList.remove('hidden');
+      $('pack-status').textContent = `Compacted ZODB storage: reclaimed ${data.reclaimed_human} (current size: ${data.size_after_human})`;
+      loadStorage();
+    }
+  } finally {
+    $('pack-db').disabled = false;
+    $('pack-db').textContent = 'Pack Database';
+  }
+};
+
+$('clear-all').onclick = async () => {
+  if (confirm('Delete all historical workflow instances?')) {
+    const res = await fetch('/api/history/instances', { method: 'DELETE' });
+    if (res.ok) loadHistory();
+  }
+};
+
+function render() {
+  const filtered = instances.filter(item => currentFilter === 'all' || item.status === currentFilter);
+  $('m-total').textContent = instances.length;
+  $('m-completed').textContent = instances.filter(i => i.status === 'completed').length;
+  $('m-savepoints').textContent = instances.reduce((acc, i) => acc + (i.save_point_count || 0), 0);
+
+  const container = $('list');
+  if (!filtered.length) {
+    container.innerHTML = '<div class="text-muted text-center py-8 text-xs">No process instances match the selected filter.</div>';
+    return;
+  }
+
+  container.innerHTML = filtered.map(item => `
+    <article class="bg-panel border border-line rounded-lg p-3.5 mb-2 flex flex-col md:flex-row justify-between md:items-center gap-3 hover:border-line-highlight transition-colors shadow-md ${item.parent_workflow_id ? 'ml-5 border-l-4 !border-l-accent' : ''}">
+      <div>
+        <div class="text-sm font-semibold text-ink">
+          <a href="/history/${item.workflow_id}" class="text-inherit no-underline hover:text-accent transition-colors">${item.workflow_id}</a>
+          ${item.parent_workflow_id ? '<span class="badge bg-[#2b3b51] ml-2">Subprocess</span>' : ''}
+        </div>
+        <div class="text-muted text-xs mt-1 flex gap-3 flex-wrap">
+          <span>Process: <strong class="text-ink">${item.process_id}</strong></span>
+          ${item.parent_workflow_id ? `<span>Parent: <a href="/history/${item.parent_workflow_id}" class="text-accent hover:underline">${item.parent_workflow_id.slice(0,8)}</a></span>` : ''}
+          <span>Tasks: <strong class="text-ink">${item.task_count}</strong></span>
+          <span>Save Points: <strong class="text-ink">${item.save_point_count}</strong></span>
+          ${item.updated_at ? `<span>Updated: ${new Date(item.updated_at).toLocaleString()}</span>` : ''}
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="badge ${item.status}">${item.status}</span>
+        <div class="flex items-center gap-1.5">
+          <a href="/history/${item.workflow_id}" class="btn btn-secondary text-xs px-2.5 py-1">Inspect</a>
+          <a href="/instance/${item.workflow_id}" class="btn text-xs px-2.5 py-1">View</a>
+          <button class="btn btn-danger text-xs px-2.5 py-1" onclick="deleteHistory('${item.workflow_id}')">Delete</button>
+        </div>
+      </div>
+    </article>
+  `).join('');
+}
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.onclick = () => {
+    document.querySelectorAll('.tab').forEach(t => {
+      t.classList.remove('active', 'text-accent', 'bg-accent-dim', 'border-accent-border');
+      t.classList.add('text-muted', 'border-line');
+    });
+    tab.classList.add('active', 'text-accent', 'bg-accent-dim', 'border-accent-border');
+    tab.classList.remove('text-muted', 'border-line');
+    currentFilter = tab.dataset.filter;
+    render();
+  };
+});
+
+loadHistory();
+</script>
+{% endblock %}
