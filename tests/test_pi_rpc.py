@@ -115,3 +115,79 @@ sleep 2
 
     assert res.status == "timeout"
     assert "Diagnostic stderr before timeout" in res.stderr
+
+
+@pytest.mark.anyio
+async def test_pi_rpc_captures_session_id(tmp_path: Path) -> None:
+    script = tmp_path / "session_pi.py"
+    script.write_text("""#!/usr/bin/env python3
+import json, sys
+
+for line in sys.stdin:
+    print(json.dumps({"type": "session", "id": "test-session-uuid-12345"}))
+    print(json.dumps({
+        "type": "message_end",
+        "message": {"role": "assistant", "content": [{"type": "text", "text": json.dumps({
+            "status": "success",
+            "summary": "Done",
+            "findings": [],
+            "artifacts": [],
+            "next_action": "continue"
+        })}]}
+    }))
+    print(json.dumps({"type": "agent_settled"}))
+    break
+""")
+    script.chmod(0o755)
+
+    client = PiRpcClient(executable=str(script), timeout_seconds=5)
+    res = await client.run("test", cwd=str(tmp_path))
+
+    assert res.status == "success"
+    assert res.session_id == "test-session-uuid-12345"
+
+
+@pytest.mark.anyio
+async def test_pi_rpc_passes_fork_and_session_flags(tmp_path: Path) -> None:
+    script = tmp_path / "inspect_args_pi.py"
+    script.write_text("""#!/usr/bin/env python3
+import json, sys
+
+args = sys.argv[1:]
+for line in sys.stdin:
+    print(json.dumps({"type": "session", "id": "new-branch-id"}))
+    print(json.dumps({
+        "type": "message_end",
+        "message": {"role": "assistant", "content": [{"type": "text", "text": json.dumps({
+            "status": "success",
+            "summary": "Args checked",
+            "findings": args,
+            "artifacts": [],
+            "next_action": "continue"
+        })}]}
+    }))
+    print(json.dumps({"type": "agent_settled"}))
+    break
+""")
+    script.chmod(0o755)
+
+    client = PiRpcClient(executable=str(script), timeout_seconds=5)
+
+    # Test 1: Fork from existing trunk session
+    res_fork = await client.run("test", cwd=str(tmp_path), session_id="trunk-123", fork=True)
+    assert res_fork.status == "success"
+    assert res_fork.output is not None
+    assert "--fork" in res_fork.output["findings"]
+    fork_idx = res_fork.output["findings"].index("--fork")
+    assert res_fork.output["findings"][fork_idx + 1] == "trunk-123"
+    assert "--session" not in res_fork.output["findings"]
+
+    # Test 2: Resume session without fork
+    res_session = await client.run("test", cwd=str(tmp_path), session_id="trunk-123", fork=False)
+    assert res_session.status == "success"
+    assert res_session.output is not None
+    assert "--session" in res_session.output["findings"]
+    session_idx = res_session.output["findings"].index("--session")
+    assert res_session.output["findings"][session_idx + 1] == "trunk-123"
+    assert "--fork" not in res_session.output["findings"]
+

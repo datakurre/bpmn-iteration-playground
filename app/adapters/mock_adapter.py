@@ -46,4 +46,5 @@ class MockAdapter(BaseAdapter):
             messages=[],
             stderr="",
             exit_code=0 if self.status == "success" else 1,
+            session_id="mock-session-id",
         )

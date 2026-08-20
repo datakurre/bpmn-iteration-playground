@@ -22,6 +22,14 @@ path = "/zen/**"
 secret = "OPENCODE_ZEN_API_KEY"
 header = "Authorization"
 prefix = "Bearer "
+
+[[network.allowed_routes]]
+host = "opencode.ai:443"
+method = "POST"
+path = "/go/**"
+secret = "OPENCODE_GO_API_KEY"
+header = "Authorization"
+prefix = "Bearer "
 ```
 
 # Agent Guidelines & Project Insights

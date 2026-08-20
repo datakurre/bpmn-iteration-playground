@@ -17,6 +17,7 @@ ALLOWED_ENV_VARS = {
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
     "OPENCODE_ZEN_API_KEY",
+    "OPENCODE_GO_API_KEY",
     "OPENCODE_API_KEY",
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -54,6 +55,7 @@ class PiResult:
     messages: list[dict[str, Any]]
     stderr: str
     exit_code: int | None
+    session_id: str | None = None
 
 
 def _set_resource_limits() -> None:
@@ -159,6 +161,8 @@ class PiRpcClient:
         provider: str | None = None,
         model: str | None = None,
         timeout_seconds: int | None = None,
+        session_id: str | None = None,
+        fork: bool = False,
     ) -> PiResult:
         demo_executable = str(Path(__file__).resolve().parents[1] / "scripts" / "pi-demo")
         executable = self.executable
@@ -172,6 +176,8 @@ class PiRpcClient:
             provider=provider,
             model=model,
             timeout_seconds=timeout_seconds,
+            session_id=session_id,
+            fork=fork,
         )
         if (
             result.status != "success"
@@ -187,6 +193,8 @@ class PiRpcClient:
                 provider=provider,
                 model=model,
                 timeout_seconds=timeout_seconds,
+                session_id=session_id,
+                fork=fork,
             )
             if demo_result.status == "success":
                 return demo_result
@@ -201,14 +209,20 @@ class PiRpcClient:
         provider: str | None = None,
         model: str | None = None,
         timeout_seconds: int | None = None,
+        session_id: str | None = None,
+        fork: bool = False,
     ) -> PiResult:
         command = [
             executable,
             "--mode",
             "rpc",
-            "--no-session",
             "--no-approve",
         ]
+        if session_id:
+            if fork:
+                command.extend(["--fork", session_id])
+            else:
+                command.extend(["--session", session_id])
         active_provider = provider or os.getenv("PI_PROVIDER")
         active_model = model or os.getenv("PI_MODEL")
         if active_provider:
@@ -218,9 +232,9 @@ class PiRpcClient:
 
         env = {k: v for k, v in os.environ.items() if k in ALLOWED_ENV_VARS}
         if not env.get("OPENAI_API_KEY"):
-            env["OPENAI_API_KEY"] = os.getenv("OPENCODE_ZEN_API_KEY") or "secret-injected-by-proxy"
+            env["OPENAI_API_KEY"] = os.getenv("OPENCODE_GO_API_KEY") or os.getenv("OPENCODE_ZEN_API_KEY") or "secret-injected-by-proxy"
         if not env.get("OPENCODE_API_KEY"):
-            env["OPENCODE_API_KEY"] = os.getenv("OPENCODE_ZEN_API_KEY") or "secret-injected-by-proxy"
+            env["OPENCODE_API_KEY"] = os.getenv("OPENCODE_GO_API_KEY") or os.getenv("OPENCODE_ZEN_API_KEY") or "secret-injected-by-proxy"
         if not env.get("NODE_EXTRA_CA_CERTS") and os.getenv("AGENT_SANDBOX_PROXY_CA_FILE"):
             env["NODE_EXTRA_CA_CERTS"] = os.getenv("AGENT_SANDBOX_PROXY_CA_FILE", "")
         if "NODE_USE_ENV_PROXY" not in env:
@@ -315,16 +329,23 @@ class PiRpcClient:
             else:
                 stderr_text = decoded_stderr
 
+        branch_session_id = None
         if status not in ("timeout",) and not stderr_msg:
             settled = any(event.get("type") == "agent_settled" for event in events)
+            for event in events:
+                if event.get("type") == "session" and event.get("id"):
+                    branch_session_id = event["id"]
             text = _final_text(events)
             output = _parse_json(text)
             status = "success" if output is not None and (exit_code == 0 or settled) else "failed"
         else:
+            for event in events:
+                if event.get("type") == "session" and event.get("id"):
+                    branch_session_id = event["id"]
             text = _final_text(events)
             output = _parse_json(text)
 
-        return PiResult(status, output, text, events, stderr_text, exit_code)
+        return PiResult(status, output, text, events, stderr_text, exit_code, session_id=branch_session_id)
 
     async def _read_events(
         self,

@@ -138,6 +138,7 @@ class WorkflowService:
                             messages=getattr(res, "messages", []),
                             stderr=res.stderr,
                             exit_code=res.exit_code,
+                            session_id=getattr(res, "session_id", None),
                         )
 
                 self.registry.register(GenericAdapter(pi_client))
@@ -612,6 +613,17 @@ class WorkflowService:
             record = self._record(workflow_id)
             task = self.runner.find_task(record["workflow"], task_id)
             config = self.runner.pi_config(task)
+
+            wf_data = getattr(record.get("workflow"), "data", {})
+            pi_session_id = (
+                record.get("pi_session_id")
+                or record.get("data", {}).get("pi_session_id")
+                or wf_data.get("pi_session_id")
+            )
+            if pi_session_id:
+                config["session_id"] = str(pi_session_id)
+                config["fork"] = "true"
+
             harness_type = config.get("harness_type", "pi_agent")
 
             adapter = self.registry.get(harness_type) or self.registry.get("pi_agent")
@@ -743,6 +755,11 @@ class WorkflowService:
             if failure_reason:
                 task.data["failure_reason"] = failure_reason
                 task.workflow.data["failure_reason"] = failure_reason
+
+            if result.status == "success" and getattr(result, "session_id", None):
+                record["pi_session_id"] = result.session_id
+                record.setdefault("data", {})["pi_session_id"] = result.session_id
+                task.workflow.data["pi_session_id"] = result.session_id
 
             attempt = job.get("attempts", 1)
             generation = job.get("generation", 0)

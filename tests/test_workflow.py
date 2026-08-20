@@ -61,6 +61,39 @@ def test_pi_task_persists_and_waits_for_human_task() -> None:
 
     asyncio.run(scenario())
 
+def test_session_id_propagated_to_record_and_data() -> None:
+    class SessionPi:
+        calls = 0
+
+        async def run(self, prompt: str, cwd: str) -> PiResult:
+            self.calls += 1
+            return PiResult(
+                "success",
+                {"status": "success", "summary": "c", "findings": [], "artifacts": [], "next_action": "continue"},
+                "result",
+                [],
+                "",
+                0,
+                f"session-abc-{self.calls}"
+            )
+            
+    async def scenario() -> None:
+        pi = SessionPi()
+        service = WorkflowService(WorkflowStore(":memory:"), pi)
+        state = await service.start("workflows/contract_review.bpmn", None, {"contract": "text"})
+        await asyncio.gather(*service.jobs.values())
+        state = service.state(state["workflow_id"])
+        
+        # Check that session id propagated
+        assert state["data"]["pi_session_id"] == "session-abc-1"
+        
+        # Check that it survives a fork
+        after = next(point for point in state["save_points"] if point["phase"] == "after_harness")
+        after_fork = await service.fork(state["workflow_id"], after["id"])
+        assert after_fork["data"]["pi_session_id"] == "session-abc-1"
+        
+    asyncio.run(scenario())
+
 
 def test_failed_pi_state_contains_failure_reason() -> None:
     class FailedPi:

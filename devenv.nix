@@ -36,7 +36,7 @@
     PI_OFFLINE = "0";
     PI_PROVIDER = "opencode-go";
     PI_MODEL = "gpt-5.6-luna";
-    OPENAI_BASE_URL = "https://opencode.ai/zen/v1";
+    OPENAI_BASE_URL = "https://opencode.ai/go/v1";
     OPENAI_API_KEY = "secret-injected-by-proxy";
   };
 

@@ -45,7 +45,7 @@ Pi agents return a structured JSON result validated against an expected contract
 
 ## 2. Proxy Secret Injection & Provider Support (`opencode-go`)
 
-The system defaults to the `opencode-go` provider, routing requests to `https://opencode.ai/zen/v1` through the proxy sidecar where `OPENCODE_ZEN_API_KEY` is injected:
+The system defaults to the `opencode-go` provider (and optionally supports `opencode-zen`), routing requests to their respective endpoints (`https://opencode.ai/go/v1` or `https://opencode.ai/zen/v1`) through the proxy sidecar where the API key is injected:
 
 ```python
 DEFAULT_PROVIDER = "opencode-go"
@@ -56,8 +56,8 @@ To prevent client libraries from aborting before initiating HTTP requests, `PiRp
 ```python
 env = {
     **os.environ,
-    "OPENAI_API_KEY": os.environ.get("OPENCODE_ZEN_API_KEY") or "secret-injected-by-proxy",
-    "OPENAI_BASE_URL": os.environ.get("OPENAI_BASE_URL", "https://opencode.ai/zen/v1"),
+    "OPENAI_API_KEY": os.environ.get("OPENCODE_GO_API_KEY") or os.environ.get("OPENCODE_ZEN_API_KEY") or "secret-injected-by-proxy",
+    "OPENAI_BASE_URL": os.environ.get("OPENAI_BASE_URL", "https://opencode.ai/go/v1"),
     "PI_DEFAULT_PROVIDER": os.environ.get("PI_DEFAULT_PROVIDER", "opencode-go"),
 }
 ```

@@ -13,6 +13,7 @@ class AgentResult:
     messages: list[dict[str, Any]] = field(default_factory=list)
     stderr: str = ""
     exit_code: int | None = 0
+    session_id: str | None = None
 
 
 class BaseAdapter(ABC):

@@ -28,6 +28,9 @@ class PiAdapter(BaseAdapter):
         timeout_raw = config.get("timeout") or config.get("timeout_seconds")
         timeout_seconds = int(timeout_raw) if timeout_raw and timeout_raw.isdigit() else None
 
+        session_id = config.get("session_id")
+        fork = config.get("fork", "").lower() in ("true", "1", "yes")
+
         result: PiResult = await self.client.run(
             prompt,
             cwd,
@@ -35,6 +38,8 @@ class PiAdapter(BaseAdapter):
             provider=provider,
             model=model,
             timeout_seconds=timeout_seconds,
+            session_id=session_id,
+            fork=fork,
         )
         return AgentResult(
             status=result.status,
@@ -43,4 +48,5 @@ class PiAdapter(BaseAdapter):
             messages=result.messages,
             stderr=result.stderr,
             exit_code=result.exit_code,
+            session_id=result.session_id,
         )
