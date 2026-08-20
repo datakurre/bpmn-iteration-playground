@@ -44,14 +44,15 @@ This document captures operational experience and technical details for AI agent
 
 - Parses and executes **BPMN 2.0 diagrams** using [SpiffWorkflow](https://spiffworkflow.org/).
 - Persists every workflow instance and savepoint in **ZODB** (optionally distributed via ZEO).
-- Delegates `pi_agent` service tasks to a local **Pi CLI** subprocess over a JSONL RPC protocol.
+- Delegates `pi_agent` service tasks to a local **Pi CLI** subprocess using non-interactive JSON print mode (`--mode json -p <prompt>`).
 - Exposes a **FastAPI** REST + WebSocket API and a browser-based **Workflow Studio** UI (dashboard, instance viewer, history, BPMN editor).
 - Supports **FormJS** for human task forms (Camunda extension elements → FormJS JSON schema).
-- Implements fork/resume **savepoints** at every durable boundary (`before_harness`, `after_harness`, `human_wait`).
+- Implements fork/resume **savepoints** at every durable boundary (`before_harness`, `after_harness`, `human_wait`), preserving `session_id` to continue context trees.
 - Ships focused **Nix flake apps** (`pi-bpmn-json-form-builder`, `pi-text-analysis`, `pi-contract-review`) wrapping Pi with task-specific prompts.
 
 **Key capabilities:**
 - Workflow fork/branch from any saved checkpoint.
+- Step-by-step agent turn orchestration with intermediate human gates (e.g. Q&A, plan reviews).
 - Failed Pi tasks are persisted with their failure reason; a Retry button re-runs the harness.
 - CallActivity (subprocess) support with per-child workflow records synced to the ZODB store.
 - Role-based auth (`ADMIN` / `OPERATOR` / `VIEWER`) via `X-Admin-Token` / `X-Api-Key` headers.
@@ -70,7 +71,7 @@ app/
     ui.py            – Server-side HTML page renderers (inline HTML)
   adapters/
     base.py          – BaseAdapter ABC + AgentResult dataclass
-    pi_adapter.py    – PiAdapter: wraps PiRpcClient as a BaseAdapter
+    pi_adapter.py    – PiAdapter: wraps PiClient as a BaseAdapter
     mock_adapter.py  – MockAdapter: deterministic in-process stub for tests
     registry.py      – AdapterRegistry: maps harness_type → adapter
   templates/         – Jinja2-rendered HTML (dashboard, instance, history, admin, editor)
@@ -78,7 +79,7 @@ app/
   engine.py          – WorkflowRunner: loads BPMN, starts runs, task snapshots, prompt builder
   workflow_service.py – WorkflowService: orchestration, savepoints, fork, retry, jobs
   persistence.py     – WorkflowStore + WorkflowMetadata backed by ZODB / BlobStorage / ZEO
-  pi_rpc.py          – PiRpcClient: spawns Pi subprocess, streams JSONL events, parses result
+  pi_client.py       – PiClient: non-interactive CLI runner, extracts sessionId & JSON contract
   events.py          – EventBus: persists audit events + async webhook delivery (httpx, 3 retries)
   auth.py            – Role enum + require_role() FastAPI dependency
   registry.py        – WorkflowRegistry: discovers workflows/*.bpmn templates
@@ -87,9 +88,9 @@ app/
   models.py          – Pydantic models for all API request/response bodies
   logging_config.py  – Structured logging + RequestLoggingMiddleware
   ws.py              – WebSocket connection manager for /ws/instance/{id} push
-workflows/           – Executable BPMN 2.0 templates (9 bundled examples)
+workflows/           – Executable BPMN 2.0 templates (plan_and_execute, document_generation, bug_triage, contract_review, pr_review)
 scripts/
-  pi-demo            – Deterministic Pi RPC-compatible mock (no credentials needed)
+  pi-demo            – Deterministic Pi CLI-compatible mock (no credentials needed)
   verify_*.py        – Playwright-based smoke tests for UI pages
 flake.nix            – Nix flake: pi-* variant apps with role-specific prompts
 devenv.nix           – devenv: Python 3.14 + Node 22 + uvicorn process + scripts
@@ -98,10 +99,10 @@ devenv.nix           – devenv: Python 3.14 + Node 22 + uvicorn process + scrip
 **Data flow for a Pi service task:**
 1. `WorkflowService.start()` → `WorkflowRunner.start()` → `BpmnWorkflow.do_engine_steps()`
 2. READY Pi tasks discovered → savepoint `before_harness` committed to ZODB
-3. `AdapterRegistry.get("pi_agent").run(prompt, config, cwd)` → `PiRpcClient._execute()`
-4. Pi subprocess streams JSONL events; `agent_settled` breaks the read loop
+3. `AdapterRegistry.get("pi_agent").run(prompt, config, cwd)` → `PiClient._execute()`
+4. Pi executes turn non-interactively via `pi --mode json -p <prompt>` (optionally `--session <id>`)
 5. `_parse_json(text)` validates the 5-key JSON result contract
-6. On success → `task.data.update(output)` + `workflow.data.update(output)` → `do_engine_steps()` → savepoint `after_harness`
+6. On success → `task.data.update(output)` + `workflow.data.update(output)` + `session_id` recorded → `do_engine_steps()` → savepoint `after_harness`
 7. Failure persisted with `failure_reason`; client retries via `POST /instance/{id}/retry/{task_id}`
 
 **Pi result JSON contract** (required keys):

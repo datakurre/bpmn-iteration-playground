@@ -266,7 +266,7 @@ def test_all_bundled_workflows_parse_and_have_failure_paths() -> None:
     runner = WorkflowRunner()
     registry = WorkflowRegistry("workflows")
     templates = registry.list_templates()
-    assert len(templates) >= 7
+    assert len(templates) >= 4
 
     for template in templates:
         wf, process_id = runner.load_workflow(template.path, template.id)

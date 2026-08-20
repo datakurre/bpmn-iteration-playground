@@ -1,23 +1,23 @@
 # Local Pi AI Agent Integration
 
-Pi Workflow Studio executes local AI agents through a lightweight, streaming **JSONL RPC protocol** via subprocesses. This architecture enables language-agnostic integration with agent frameworks while isolating execution environments.
+Pi Workflow Studio executes local AI agents through a stateless, non-interactive **JSON print mode** (`--mode json -p <prompt>`) via subprocesses. This architecture enables BPMN to act as the external state machine, chaining agent turns and human tasks while isolating execution environments.
 
 ---
 
-## 1. JSONL RPC Protocol
+## 1. Stateless Turn Protocol
 
-The communication between the FastAPI backend and the Pi agent process is implemented in [`app/pi_rpc.py`](../../app/pi_rpc.py):
+The communication between the FastAPI backend and the Pi agent process is implemented in [`app/pi_client.py`](../../app/pi_client.py):
 
 ```
-FastAPI (PiRpcClient)                Pi Subprocess (node_modules/.bin/pi)
+FastAPI (PiClient)                      Pi Subprocess (node_modules/.bin/pi)
         |                                              |
-        |---- stdin: {"jsonrpc":"2.0", ...} ---------->|
-        |                                              | (Executes LLM / Tools)
+        |---- args: --mode json -p <prompt> ---------->|
+        |     (optional: --session <id>)               | (Executes LLM / Tools)
         |<--- stdout: {"type":"session"} --------------|
         |<--- stdout: {"type":"agent_start"} ----------|
         |<--- stdout: {"type":"message_end", ...} -----| (JSON structured findings)
         |<--- stdout: {"type":"agent_settled"} --------|
-        |                                              |
+        |                                              | (Process Exits)
 ```
 
 ### JSON Schema Output Contract

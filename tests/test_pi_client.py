@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import pytest
 
-from app.pi_rpc import PiRpcClient, _parse_json
+from app.pi_client import PiClient, _parse_json
 
 
 @pytest.mark.parametrize(
@@ -43,15 +43,15 @@ def test_parse_json_valid_variants() -> None:
 
 
 @pytest.mark.anyio
-async def test_pi_rpc_subprocess_real_execution(tmp_path: Path) -> None:
+async def test_pi_client_subprocess_real_execution(tmp_path: Path) -> None:
     demo_script = Path("scripts/pi-demo").resolve()
     assert demo_script.exists()
 
-    client = PiRpcClient(executable=str(demo_script), timeout_seconds=10)
+    client = PiClient(executable=str(demo_script), timeout_seconds=10)
     res = await client.run("Please draft a document", cwd=str(tmp_path))
 
     assert res.status == "success"
-    assert res.exit_code in (0, -15, 143)
+    assert res.exit_code == 0
     assert res.output is not None
     assert res.output["status"] == "success"
     assert res.output["summary"] != ""
@@ -60,7 +60,7 @@ async def test_pi_rpc_subprocess_real_execution(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_pi_rpc_subprocess_error_exit(tmp_path: Path) -> None:
+async def test_pi_client_subprocess_error_exit(tmp_path: Path) -> None:
     script = tmp_path / "fail_pi.sh"
     script.write_text("""#!/bin/sh
 echo "Fatal error in model process" >&2
@@ -68,7 +68,7 @@ exit 1
 """)
     script.chmod(0o755)
 
-    client = PiRpcClient(executable=str(script), timeout_seconds=5)
+    client = PiClient(executable=str(script), timeout_seconds=5)
     res = await client.run("test", cwd=str(tmp_path))
 
     assert res.status == "failed"
@@ -77,23 +77,21 @@ exit 1
 
 
 @pytest.mark.anyio
-async def test_pi_rpc_subprocess_invalid_json_output(tmp_path: Path) -> None:
+async def test_pi_client_subprocess_invalid_json_output(tmp_path: Path) -> None:
     script = tmp_path / "bad_output_pi.py"
     script.write_text("""#!/usr/bin/env python3
-import json, sys
+import json
 
-for line in sys.stdin:
-    print(json.dumps({"type": "session"}))
-    print(json.dumps({
-        "type": "message_end",
-        "message": {"role": "assistant", "content": [{"type": "text", "text": "I am not returning valid JSON."}]}
-    }))
-    print(json.dumps({"type": "agent_settled"}))
-    break
+print(json.dumps({"type": "session"}))
+print(json.dumps({
+    "type": "message_end",
+    "message": {"role": "assistant", "content": [{"type": "text", "text": "I am not returning valid JSON."}]}
+}))
+print(json.dumps({"type": "agent_settled"}))
 """)
     script.chmod(0o755)
 
-    client = PiRpcClient(executable=str(script), timeout_seconds=5)
+    client = PiClient(executable=str(script), timeout_seconds=5)
     res = await client.run("test", cwd=str(tmp_path))
 
     assert res.status == "failed"
@@ -102,7 +100,7 @@ for line in sys.stdin:
 
 
 @pytest.mark.anyio
-async def test_pi_rpc_timeout_captures_stderr(tmp_path: Path) -> None:
+async def test_pi_client_timeout_captures_stderr(tmp_path: Path) -> None:
     script_path = tmp_path / "slow_pi.sh"
     script_path.write_text("""#!/bin/sh
 echo "Diagnostic stderr before timeout" >&2
@@ -110,7 +108,7 @@ sleep 2
 """)
     script_path.chmod(0o755)
 
-    client = PiRpcClient(executable=str(script_path), timeout_seconds=0.1)
+    client = PiClient(executable=str(script_path), timeout_seconds=0.1)
     res = await client._execute(str(script_path), "test prompt", cwd=str(tmp_path))
 
     assert res.status == "timeout"
@@ -118,29 +116,27 @@ sleep 2
 
 
 @pytest.mark.anyio
-async def test_pi_rpc_captures_session_id(tmp_path: Path) -> None:
+async def test_pi_client_captures_session_id(tmp_path: Path) -> None:
     script = tmp_path / "session_pi.py"
     script.write_text("""#!/usr/bin/env python3
-import json, sys
+import json
 
-for line in sys.stdin:
-    print(json.dumps({"type": "session", "id": "test-session-uuid-12345"}))
-    print(json.dumps({
-        "type": "message_end",
-        "message": {"role": "assistant", "content": [{"type": "text", "text": json.dumps({
-            "status": "success",
-            "summary": "Done",
-            "findings": [],
-            "artifacts": [],
-            "next_action": "continue"
-        })}]}
-    }))
-    print(json.dumps({"type": "agent_settled"}))
-    break
+print(json.dumps({"type": "session", "id": "test-session-uuid-12345"}))
+print(json.dumps({
+    "type": "message_end",
+    "message": {"role": "assistant", "content": [{"type": "text", "text": json.dumps({
+        "status": "success",
+        "summary": "Done",
+        "findings": [],
+        "artifacts": [],
+        "next_action": "continue"
+    })}]}
+}))
+print(json.dumps({"type": "agent_settled"}))
 """)
     script.chmod(0o755)
 
-    client = PiRpcClient(executable=str(script), timeout_seconds=5)
+    client = PiClient(executable=str(script), timeout_seconds=5)
     res = await client.run("test", cwd=str(tmp_path))
 
     assert res.status == "success"
@@ -148,30 +144,28 @@ for line in sys.stdin:
 
 
 @pytest.mark.anyio
-async def test_pi_rpc_passes_fork_and_session_flags(tmp_path: Path) -> None:
+async def test_pi_client_passes_fork_and_session_flags(tmp_path: Path) -> None:
     script = tmp_path / "inspect_args_pi.py"
     script.write_text("""#!/usr/bin/env python3
 import json, sys
 
 args = sys.argv[1:]
-for line in sys.stdin:
-    print(json.dumps({"type": "session", "id": "new-branch-id"}))
-    print(json.dumps({
-        "type": "message_end",
-        "message": {"role": "assistant", "content": [{"type": "text", "text": json.dumps({
-            "status": "success",
-            "summary": "Args checked",
-            "findings": args,
-            "artifacts": [],
-            "next_action": "continue"
-        })}]}
-    }))
-    print(json.dumps({"type": "agent_settled"}))
-    break
+print(json.dumps({"type": "session", "id": "new-branch-id"}))
+print(json.dumps({
+    "type": "message_end",
+    "message": {"role": "assistant", "content": [{"type": "text", "text": json.dumps({
+        "status": "success",
+        "summary": "Args checked",
+        "findings": args,
+        "artifacts": [],
+        "next_action": "continue"
+    })}]}
+}))
+print(json.dumps({"type": "agent_settled"}))
 """)
     script.chmod(0o755)
 
-    client = PiRpcClient(executable=str(script), timeout_seconds=5)
+    client = PiClient(executable=str(script), timeout_seconds=5)
 
     # Test 1: Fork from existing trunk session
     res_fork = await client.run("test", cwd=str(tmp_path), session_id="trunk-123", fork=True)
@@ -190,4 +184,3 @@ for line in sys.stdin:
     session_idx = res_session.output["findings"].index("--session")
     assert res_session.output["findings"][session_idx + 1] == "trunk-123"
     assert "--fork" not in res_session.output["findings"]
-

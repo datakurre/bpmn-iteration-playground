@@ -19,7 +19,7 @@ from app.adapters.registry import AdapterRegistry
 from app.engine import WorkflowRunner
 from app.events import EventBus, WorkflowEvent
 from app.persistence import WorkflowStore
-from app.pi_rpc import PiResult, PiRpcClient
+from app.pi_client import PiClient, PiResult
 from app.workspace import cleanup_workspace, get_workspace_metadata, pack_workspace_to_bytes, unpack_workspace, duplicate_blob
 from app.ws import manager as ws_manager
 
@@ -117,8 +117,8 @@ class WorkflowService:
         if pi_client is not None:
             if isinstance(pi_client, BaseAdapter):
                 self.registry.register(pi_client)
-            elif hasattr(pi_client, "run"):
-                # Handle test FakePi or PiRpcClient
+            else:
+                import inspect
                 class GenericAdapter(BaseAdapter):
                     def __init__(self, target: Any) -> None:
                         self.target = target
@@ -128,7 +128,16 @@ class WorkflowService:
                         return "pi_agent"
 
                     async def run(self, prompt: str, config: dict[str, str], cwd: str, on_event: Any = None) -> AgentResult:
-                        res = await self.target.run(prompt, cwd)
+                        sig = inspect.signature(self.target.run)
+                        kwargs: dict[str, Any] = {}
+                        if "session_id" in sig.parameters:
+                            kwargs["session_id"] = config.get("session_id")
+                        if "fork" in sig.parameters:
+                            kwargs["fork"] = config.get("fork", "").lower() in ("true", "1", "yes")
+                        try:
+                            res = await self.target.run(prompt, cwd, **kwargs)
+                        except TypeError:
+                            res = await self.target.run(prompt, cwd)
                         if isinstance(res, AgentResult):
                             return res
                         return AgentResult(
@@ -147,7 +156,7 @@ class WorkflowService:
                 default_timeout = float(os.getenv("PI_TIMEOUT_SECONDS", "1800"))
             except (ValueError, TypeError):
                 default_timeout = 1800.0
-            self.registry.register(PiAdapter(PiRpcClient(timeout_seconds=default_timeout)))
+            self.registry.register(PiAdapter(PiClient(timeout_seconds=default_timeout)))
 
         self.jobs: dict[str, asyncio.Task[None]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
@@ -178,6 +187,7 @@ class WorkflowService:
             "tasks": record["tasks"],
             "jobs": record.get("jobs", {}),
             "failure_reason": record.get("failure_reason"),
+            "pi_session_id": record.get("pi_session_id") or record.get("data", {}).get("pi_session_id"),
             "save_points": [self._save_point_summary(point) for point in record.get("save_points", [])],
             "events": record.get("events", []),
             "parent_workflow_id": record.get("parent_workflow_id"),

@@ -1,21 +1,43 @@
 #!/usr/bin/env python3
+import argparse
 import json
-import sys
 import os
+import sys
+import uuid
 
 
 def emit(value):
     print(json.dumps(value), flush=True)
 
 
-for line in sys.stdin:
-    command = json.loads(line)
-    if command.get("type") != "prompt":
-        continue
-    emit({"type": "session", "version": 3, "id": "demo", "cwd": "."})
-    emit({"type": "agent_start"})
+parser = argparse.ArgumentParser(description="Deterministic Pi mock")
+parser.add_argument("--mode", default="json")
+parser.add_argument("-p", "--print", dest="prompt", default=None)
+parser.add_argument("--session", default=None)
+parser.add_argument("--fork", default=None)
+parser.add_argument("--provider", default=None)
+parser.add_argument("--model", default=None)
+parser.add_argument("--no-approve", action="store_true")
+args, extra = parser.parse_known_args()
 
-    doc_text = """# Next-Gen AI Workflow Automation with SpiffWorkflow & Pi Agent
+prompt = args.prompt
+if not prompt and extra:
+    prompt = " ".join(extra)
+
+if not prompt and not sys.stdin.isatty():
+    try:
+        line = sys.stdin.readline()
+        if line:
+            cmd = json.loads(line)
+            prompt = cmd.get("message") or cmd.get("prompt")
+    except Exception:
+        pass
+
+session_id = args.session or args.fork or str(uuid.uuid4())
+emit({"type": "session", "version": 3, "id": session_id, "cwd": "."})
+emit({"type": "agent_start"})
+
+doc_text = """# Next-Gen AI Workflow Automation with SpiffWorkflow & Pi Agent
 
 ## Executive Summary
 This technical whitepaper explores the convergence of deterministic BPMN 2.0 process orchestration with autonomous, non-deterministic Large Language Model (LLM) agents.
@@ -29,33 +51,34 @@ This technical whitepaper explores the convergence of deterministic BPMN 2.0 pro
 ## Conclusion
 Combining SpiffWorkflow with sandboxed Pi agents provides enterprise reliability with autonomous AI flexibility.
 """
-    try:
-        with open("document.md", "w") as f:
-            f.write(doc_text)
-    except Exception:
-        pass
+try:
+    with open("document.md", "w") as f:
+        f.write(doc_text)
+except Exception:
+    pass
 
-    emit({
-        "type": "message_end",
-        "message": {
-            "role": "assistant",
-            "content": [{
-                "type": "text",
-                "text": json.dumps({
-                    "status": "success",
-                    "summary": "AI Agent drafted and quality-checked the document artifact.",
-                    "document_content": doc_text,
-                    "doc_preview": doc_text,
-                    "findings": [
-                        "Executive Summary complete",
-                        "BPMN orchestration verified",
-                        "Savepoints detailed",
-                    ],
-                    "artifacts": ["document.md"],
-                    "next_action": "review",
-                }),
-            }],
-        },
-    })
-    emit({"type": "agent_settled"})
-    break
+emit({
+    "type": "message_end",
+    "message": {
+        "role": "assistant",
+        "content": [{
+            "type": "text",
+            "text": json.dumps({
+                "status": "success",
+                "summary": "AI Agent drafted and quality-checked the document artifact.",
+                "document_content": doc_text,
+                "doc_preview": doc_text,
+                "plan": "1. Analyze requirements\n2. Draft architecture\n3. Execute changes\n4. Verify tests",
+                "plan_preview": "### Proposed Implementation Plan\n\n1. **Analyze requirements**: Inspect schemas and variables\n2. **Draft architecture**: Establish stateless agent turns\n3. **Execute changes**: Implement approved tasks\n4. **Verify tests**: Run test suites",
+                "findings": [
+                    "Executive Summary complete",
+                    "BPMN orchestration verified",
+                    "Savepoints detailed",
+                ],
+                "artifacts": ["document.md"],
+                "next_action": "review",
+            }),
+        }],
+    },
+})
+emit({"type": "agent_settled"})

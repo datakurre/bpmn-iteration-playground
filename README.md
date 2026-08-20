@@ -1,7 +1,8 @@
 # BPMN Pi Workflow
 
-FastAPI persists SpiffWorkflow instances in ZODB and delegates AI service tasks
-to a local Pi process through Pi's JSONL RPC protocol.
+FastAPI persists SpiffWorkflow instances in ZODB and orchestrates AI service tasks
+as stateless, step-by-step turns via Pi's non-interactive JSON print mode (`--mode json -p <prompt>`),
+preserving context across turns by propagating `session_id`.
 
 ## Run
 
@@ -12,7 +13,7 @@ devenv processes wait
 
 Open `http://127.0.0.1:8000/` for the Workflow Studio dashboard. Start a
 workflow with `POST /workflow/start`, or use the dashboard. Pi tasks run in a
-local RPC subprocess and return a validated JSON result. Human tasks remain
+local non-interactive CLI subprocess and return a validated JSON contract. Human tasks remain
 waiting until `POST /workflow/{workflow_id}/submit-task/{task_id}` is called.
 Failed Pi tasks remain persisted with their failure reason until the user
 presses `Retry` in the instance UI or calls the retry endpoint.
@@ -35,7 +36,7 @@ devenv processes down
 devenv shell -- demo
 ```
 
-The demo command uses `scripts/pi-demo` as a Pi RPC-compatible process. The
+The demo command uses `scripts/pi-demo` as a deterministic CLI mock. The
 normal devenv installs the pinned Pi CLI at `node_modules/.bin/pi` and points
 `PI_EXECUTABLE` there automatically.
 

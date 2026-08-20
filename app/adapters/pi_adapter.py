@@ -3,14 +3,14 @@ from __future__ import annotations
 from typing import Any
 
 from app.adapters.base import AgentResult, BaseAdapter
-from app.pi_rpc import PiResult, PiRpcClient
+from app.pi_client import PiClient, PiResult
 
 
 class PiAdapter(BaseAdapter):
-    """Adapter invoking local Pi AI agents via JSONL RPC."""
+    """Adapter invoking local Pi AI agents via non-interactive JSON print mode."""
 
-    def __init__(self, client: PiRpcClient | None = None, **kwargs: Any) -> None:
-        self.client = client or PiRpcClient(**kwargs)
+    def __init__(self, client: PiClient | None = None, **kwargs: Any) -> None:
+        self.client = client or PiClient(**kwargs)
 
     @property
     def adapter_type(self) -> str:

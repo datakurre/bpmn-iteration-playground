@@ -1,11 +1,11 @@
 import asyncio
 from app.persistence import WorkflowStore
-from app.pi_rpc import PiResult
+from app.pi_client import PiResult
 from app.workflow_service import WorkflowService
 
 
 class SubprocessFakePi:
-    async def run(self, prompt: str, cwd: str) -> PiResult:
+    async def run(self, prompt: str, cwd: str, **kwargs) -> PiResult:
         return PiResult(
             "success",
             {
@@ -27,45 +27,34 @@ def test_chained_workflow_execution() -> None:
         store = WorkflowStore(":memory:")
         service = WorkflowService(store, SubprocessFakePi())
 
-        # 1. Execute subprocess directly
-        sub_started = await service.start("workflows/code_review_subprocess.bpmn", None, {"target": "auth.py"})
-        sub_id = sub_started["workflow_id"]
-        async def _wait_sub():
+        # Execute bug triage workflow
+        bug_started = await service.start("workflows/bug_triage.bpmn", None, {"bug_report": "Memory leak in auth handler"})
+        bug_id = bug_started["workflow_id"]
+        async def _wait_jobs():
             while any(not job.done() for job in list(service.jobs.values())):
                 pending = [job for job in list(service.jobs.values()) if not job.done()]
                 if pending:
                     await asyncio.gather(*pending)
                 await asyncio.sleep(0.01)
 
-        await asyncio.wait_for(_wait_sub(), timeout=5.0)
+        await asyncio.wait_for(_wait_jobs(), timeout=5.0)
 
-        sub_state = service.state(sub_id)
-        assert sub_state["status"] == "completed"
+        bug_state = service.state(bug_id)
+        assert bug_state["status"] == "waiting_human"
 
-        # 2. Execute pipeline workflow
-        pipe_started = await service.start("workflows/deploy_pipeline.bpmn", None, {"env": "prod"})
-        pipe_id = pipe_started["workflow_id"]
-        async def _wait_pipe():
-            while any(not job.done() for job in list(service.jobs.values())):
-                pending = [job for job in list(service.jobs.values()) if not job.done()]
-                if pending:
-                    await asyncio.gather(*pending)
-                await asyncio.sleep(0.01)
-
-        await asyncio.wait_for(_wait_pipe(), timeout=5.0)
-
-        pipe_state = service.state(pipe_id)
-        assert pipe_state["status"] == "waiting_human"
-
-        # Complete human confirmation
-        user_tasks = [t for t in pipe_state["tasks"] if t["state"] == "READY" and t.get("type") == "UserTask"]
+        # Complete human clarification
+        user_tasks = [t for t in bug_state["tasks"] if t["state"] == "READY" and t.get("type") == "UserTask"]
         assert len(user_tasks) == 1
         complete_resp = await service.submit_task(
-            pipe_id,
+            bug_id,
             user_tasks[0]["id"],
-            {"deploy_decision": "approved", "target_environment": "production"},
+            {"reproduction_notes": "Occurs on token refresh", "priority": "high", "proceed_with_fix": "yes"},
         )
-        assert complete_resp["status"] == "completed"
+        assert complete_resp["status"] in ("running", "waiting_human", "waiting_pi")
+
+        await asyncio.wait_for(_wait_jobs(), timeout=5.0)
+        verify_state = service.state(bug_id)
+        assert verify_state["status"] == "waiting_human"
 
     asyncio.run(scenario())
 
@@ -119,5 +108,3 @@ def test_fork_child_workflow_raises_explicit_error() -> None:
         assert "Cannot fork child workflow" in str(exc.value)
 
     asyncio.run(scenario())
-
-

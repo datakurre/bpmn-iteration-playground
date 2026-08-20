@@ -19,7 +19,7 @@ devenv shell -- pytest
 The test suite covers:
 - Complete workflow lifecycle execution (`tests/test_workflow.py`).
 - Save point creation, inspection, and timeline forking (`tests/test_workflow.py`).
-- Pi RPC subprocess client and fallback handling (`tests/test_pi_rpc.py`).
+- Pi client subprocess execution and fallback handling (`tests/test_pi_client.py`).
 - ZODB ACID persistence operations (`tests/test_persistence.py`).
 - Process history retrieval, filtering, and data cleanup (`tests/test_history.py`).
 
