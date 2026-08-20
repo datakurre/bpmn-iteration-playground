@@ -16,8 +16,26 @@ class PiAdapter(BaseAdapter):
     def adapter_type(self) -> str:
         return "pi_agent"
 
-    async def run(self, prompt: str, config: dict[str, str], cwd: str) -> AgentResult:
-        result: PiResult = await self.client.run(prompt, cwd)
+    async def run(
+        self,
+        prompt: str,
+        config: dict[str, str],
+        cwd: str,
+        on_event: Any = None,
+    ) -> AgentResult:
+        provider = config.get("provider") or config.get("pi_provider")
+        model = config.get("model") or config.get("pi_model")
+        timeout_raw = config.get("timeout") or config.get("timeout_seconds")
+        timeout_seconds = int(timeout_raw) if timeout_raw and timeout_raw.isdigit() else None
+
+        result: PiResult = await self.client.run(
+            prompt,
+            cwd,
+            on_event=on_event,
+            provider=provider,
+            model=model,
+            timeout_seconds=timeout_seconds,
+        )
         return AgentResult(
             status=result.status,
             output=result.output,

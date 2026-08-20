@@ -1,9 +1,11 @@
-from __future__ import annotations
-
-import xml.etree.ElementTree as ET
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, List, Optional
+
+from app.xml_utils import safe_parse_xml
+
+logger = logging.getLogger("bpmn.registry")
 
 
 @dataclass
@@ -31,19 +33,38 @@ class WorkflowRegistry:
 
     def __init__(self, workflows_dir: str = "workflows") -> None:
         self.dir = Path(workflows_dir)
+        self._cache: dict[str, tuple[float, WorkflowTemplate | None]] = {}
 
     def list_templates(self) -> List[WorkflowTemplate]:
         templates: list[WorkflowTemplate] = []
         if not self.dir.exists():
             return templates
 
+        current_paths: set[str] = set()
         for bpmn_file in sorted(self.dir.glob("*.bpmn")):
+            file_key = str(bpmn_file)
+            current_paths.add(file_key)
             try:
+                mtime = bpmn_file.stat().st_mtime
+                if file_key in self._cache and self._cache[file_key][0] == mtime:
+                    cached_template = self._cache[file_key][1]
+                    if cached_template is not None:
+                        templates.append(cached_template)
+                    continue
+
                 template = self._parse_template(bpmn_file)
+                self._cache[file_key] = (mtime, template)
                 if template is not None:
                     templates.append(template)
-            except Exception:
+            except Exception as exc:
+                logger.warning("Failed to parse BPMN template %s: %s", bpmn_file, exc, exc_info=True)
                 continue
+
+        # Evict deleted files from cache
+        stale_keys = [k for k in self._cache if k not in current_paths]
+        for k in stale_keys:
+            self._cache.pop(k, None)
+
         return templates
 
     def get_template(self, process_id: str) -> Optional[WorkflowTemplate]:
@@ -53,7 +74,9 @@ class WorkflowRegistry:
         return None
 
     def _parse_template(self, path: Path) -> Optional[WorkflowTemplate]:
-        root = ET.parse(path).getroot()
+        root = safe_parse_xml(path).getroot()
+        if root is None:
+            return None
         ns = {"bpmn": "http://www.omg.org/spec/BPMN/20100524/MODEL"}
         process = root.find(".//bpmn:process[@isExecutable='true']", ns)
         if process is None:

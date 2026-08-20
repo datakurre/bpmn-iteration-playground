@@ -64,3 +64,28 @@ def test_workspace_api_endpoints(client: TestClient) -> None:
     meta = files_resp.json()
     assert "file_count" in meta
     assert "files" in meta
+
+
+@pytest.mark.anyio
+async def test_unpack_workspace_gz_fallback() -> None:
+    import io
+    import tarfile
+    from app.workspace import unpack_workspace
+
+    # Create a tar.gz archive in memory
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        data = b"Hello from GZ archive"
+        ti = tarfile.TarInfo(name="greeting.txt")
+        ti.size = len(data)
+        tar.addfile(ti, io.BytesIO(data))
+    gz_bytes = buf.getvalue()
+
+    workdir = await unpack_workspace(gz_bytes, prefix="bpmn-test-gz-")
+    try:
+        greeting_file = Path(workdir) / "greeting.txt"
+        assert greeting_file.is_file()
+        assert greeting_file.read_text() == "Hello from GZ archive"
+    finally:
+        cleanup_workspace(workdir)
+

@@ -1,4 +1,5 @@
 import asyncio
+from typing import Any
 from app.adapters.base import AgentResult, BaseAdapter
 from app.adapters.mock_adapter import MockAdapter
 from app.adapters.registry import AdapterRegistry
@@ -11,7 +12,7 @@ class CustomSecurityAdapter(BaseAdapter):
     def adapter_type(self) -> str:
         return "custom_sec_agent"
 
-    async def run(self, prompt: str, config: dict[str, str], cwd: str) -> AgentResult:
+    async def run(self, prompt: str, config: dict[str, str], cwd: str, on_event: Any = None) -> AgentResult:
         return AgentResult(
             status="success",
             output={
@@ -46,9 +47,14 @@ def test_adapter_registry_and_custom_adapter_execution() -> None:
         started = await service.start("workflows/contract_review.bpmn", None, {"contract": "Test"})
         wf_id = started["workflow_id"]
 
-        while any(not job.done() for job in service.jobs.values()):
-            await asyncio.gather(*[job for job in service.jobs.values() if not job.done()])
-            await asyncio.sleep(0.01)
+        async def _wait():
+            while any(not job.done() for job in list(service.jobs.values())):
+                pending = [job for job in list(service.jobs.values()) if not job.done()]
+                if pending:
+                    await asyncio.gather(*pending)
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(_wait(), timeout=5.0)
 
         state = service.state(wf_id)
         assert state["status"] == "waiting_human"

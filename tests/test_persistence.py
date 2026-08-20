@@ -1,3 +1,4 @@
+import pytest
 import tempfile
 from pathlib import Path
 from app.persistence import SavePointSnapshot, WorkflowInstance, WorkflowMetadata, WorkflowStore
@@ -113,3 +114,170 @@ def test_pack_and_storage_stats() -> None:
         assert stats_after["size_bytes"] <= stats_before["size_bytes"]
 
         store.close()
+
+
+def test_save_updates_instance_in_place_preserving_persistent_identity() -> None:
+    store = WorkflowStore(":memory:")
+    store.save("wf-identity", {"status": "running", "data": {"count": 1}})
+
+    with store.db.transaction() as conn:
+        root = conn.root()
+        inst1 = root["workflows"]["wf-identity"]
+        oid1 = inst1._p_oid
+        meta1 = root["metadata"]["wf-identity"]
+        meta_oid1 = meta1._p_oid
+
+    store.save("wf-identity", {"status": "completed", "data": {"count": 2}})
+
+    with store.db.transaction() as conn:
+        root = conn.root()
+        assert len(root["workflows"]) == 1
+        assert len(root["metadata"]) == 1
+        inst2 = root["workflows"]["wf-identity"]
+        assert inst2._p_oid == oid1
+        assert inst2.status == "completed"
+        assert inst2.data["count"] == 2
+        meta2 = root["metadata"]["wf-identity"]
+        assert meta2._p_oid == meta_oid1
+        assert meta2.status == "completed"
+        assert meta2.data["count"] == 2
+
+    store.close()
+
+
+def test_update_atomic_in_single_transaction() -> None:
+    store = WorkflowStore(":memory:")
+    store.save("wf-update", {"status": "running", "data": {"a": 1}})
+
+    updated = store.update("wf-update", status="completed", data={"a": 1, "b": 2})
+    assert updated["status"] == "completed"
+    assert updated["data"] == {"a": 1, "b": 2}
+
+    loaded = store.load("wf-update")
+    assert loaded is not None
+    assert loaded["status"] == "completed"
+    assert loaded["data"] == {"a": 1, "b": 2}
+
+    meta = store.list_metadata(status_filter="completed")
+    assert len(meta) == 1
+    assert meta[0]["workflow_id"] == "wf-update"
+
+    store.close()
+
+
+def test_concurrent_store_access() -> None:
+    import concurrent.futures
+
+    store = WorkflowStore(":memory:")
+
+    def worker(worker_id: int) -> None:
+        for i in range(10):
+            wf_id = f"wf-worker-{worker_id}-{i}"
+            store.save(wf_id, {"status": "running", "data": {"iter": i}})
+            store.update(wf_id, status="completed", data={"iter": i, "done": True})
+            loaded = store.load(wf_id)
+            assert loaded is not None
+            assert loaded["status"] == "completed"
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(worker, i) for i in range(8)]
+        for f in concurrent.futures.as_completed(futures):
+            f.result()
+
+    meta = store.list_metadata()
+    assert len(meta) == 80
+    assert len(store.list()) == 80
+
+    store.close()
+
+
+def test_events_merged_on_save() -> None:
+    store = WorkflowStore(":memory:")
+    store.save("wf-events", {"status": "running", "events": [{"event_type": "ev1", "timestamp": "t1"}]})
+    store.append_event("wf-events", {"event_type": "ev2", "timestamp": "t2"})
+
+    # Caller loads dict, appends ev3, and saves dict back
+    rec = store.load("wf-events")
+    assert rec is not None
+    rec["events"].append({"event_type": "ev3", "timestamp": "t3"})
+    store.save("wf-events", rec)
+
+    events = store.get_events("wf-events")
+    event_types = [e["event_type"] for e in events]
+    assert "ev1" in event_types
+    assert "ev2" in event_types
+    store.close()
+
+
+def test_memory_storage_cleans_temp_blob_dir() -> None:
+    import os
+    store = WorkflowStore(":memory:")
+    assert hasattr(store, "_temp_blob_dir")
+    blob_dir = store._temp_blob_dir
+    assert blob_dir is not None
+    assert os.path.exists(blob_dir)
+
+    store.close()
+    assert not os.path.exists(blob_dir)
+
+
+@pytest.mark.anyio
+async def test_concurrent_async_workflow_store_operations() -> None:
+    import asyncio
+    store = WorkflowStore(":memory:")
+
+    async def workflow_worker(idx: int) -> None:
+        wf_id = f"async-wf-{idx}"
+        # Initial save
+        await asyncio.to_thread(
+            store.save,
+            wf_id,
+            {"status": "running", "process_id": f"proc_{idx}", "data": {"counter": 0}},
+        )
+        # Concurrent updates
+        for step in range(1, 6):
+            await asyncio.to_thread(store.update, wf_id, data={"counter": step})
+            await asyncio.to_thread(
+                store.append_event,
+                wf_id,
+                {"event_type": f"step_{step}", "timestamp": str(step)},
+            )
+            # Concurrent savepoint creation
+            sp = SavePointSnapshot(
+                id=f"sp-{idx}-{step}",
+                workflow_id=wf_id,
+                key=f"task-{step}",
+                phase="before_harness",
+                resume_action="continue",
+                task_id=f"t-{step}",
+                task_name=f"Task {step}",
+                status="running",
+                created_at="2026-08-20T00:00:00Z",
+                data={"step": step},
+                tasks=[],
+                workflow=None,
+            )
+            await asyncio.to_thread(store.save_save_point, sp)
+
+    await asyncio.gather(*[workflow_worker(i) for i in range(10)])
+
+    # Assert all 10 instances exist with final counter and 5 events and 5 savepoints
+    for i in range(10):
+        wf_id = f"async-wf-{i}"
+        rec = store.load(wf_id)
+        assert rec is not None
+        assert rec["data"]["counter"] == 5
+        events = store.get_events(wf_id)
+        assert len(events) == 5
+        for s in range(1, 6):
+            sp = store.load_save_point(f"sp-{i}-{s}")
+            assert sp is not None
+
+    assert len(store.list()) == 10
+    store.close()
+
+
+
+
+
+

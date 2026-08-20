@@ -44,9 +44,47 @@ def test_history_instances_listing_and_deletion(client: TestClient) -> None:
     del_missing = client.delete(f"/api/history/instances/{wf_id}")
     assert del_missing.status_code == 404
 
-    # Clear all instances
+    # Clear all instances requires confirmation guard
     client.post("/workflow/start", json={"bpmn_path": "workflows/contract_review.bpmn", "variables": {}})
-    clear_resp = client.delete("/api/history/instances")
+    unconfirmed = client.delete("/api/history/instances")
+    assert unconfirmed.status_code == 400
+
+    clear_resp = client.delete("/api/history/instances?confirm=DELETE_ALL")
     assert clear_resp.status_code == 200
     assert clear_resp.json()["deleted"] >= 1
     assert client.get("/api/history/instances").json() == []
+
+
+def test_history_instances_pagination_and_date_filtering(client: TestClient) -> None:
+    client.delete("/api/history/instances?confirm=DELETE_ALL")
+
+    # Create 5 instances
+    wf_ids = []
+    for i in range(5):
+        resp = client.post(
+            "/workflow/start",
+            json={"bpmn_path": "workflows/contract_review.bpmn", "variables": {"idx": i}},
+        )
+        wf_ids.append(resp.json()["workflow_id"])
+
+    # Test limit
+    res_limit = client.get("/api/history/instances?limit=2").json()
+    assert len(res_limit) == 2
+
+    # Test offset
+    res_offset = client.get("/api/history/instances?offset=3&limit=2").json()
+    assert len(res_offset) == 2
+
+    # Test date filtering
+    all_res = client.get("/api/history/instances").json()
+    assert len(all_res) == 5
+    created = all_res[0]["created_at"]
+    # filter since futuristic date returns 0
+    future_res = client.get("/api/history/instances?since=2099-01-01T00:00:00Z").json()
+    assert len(future_res) == 0
+
+    # filter until futuristic date returns all 5
+    past_res = client.get("/api/history/instances?until=2099-01-01T00:00:00Z").json()
+    assert len(past_res) == 5
+
+

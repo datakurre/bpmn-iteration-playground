@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+import asyncio
 import logging
 from typing import Any, Dict, Set
 from fastapi import WebSocket
@@ -31,12 +30,16 @@ class ConnectionManager:
         if not conns:
             return
 
+        conn_list = list(conns)
+        results = await asyncio.gather(
+            *(ws.send_json(data) for ws in conn_list),
+            return_exceptions=True,
+        )
+
         dead_connections = set()
-        for ws in list(conns):
-            try:
-                await ws.send_json(data)
-            except Exception as exc:
-                logger.debug(f"Failed to send WS message to client: {exc}")
+        for ws, res in zip(conn_list, results):
+            if isinstance(res, Exception):
+                logger.debug(f"Failed to send WS message to client: {res}")
                 dead_connections.add(ws)
 
         for ws in dead_connections:

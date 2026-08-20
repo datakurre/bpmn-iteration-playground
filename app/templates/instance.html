@@ -55,11 +55,11 @@
       <div id="canvas" class="w-full h-full bg-[#f8fafc]"></div>
 
       <div class="diagram-controls">
-        <button class="ctrl-btn" id="ctrl-zoom-in" title="Zoom In (Ctrl +)">＋</button>
-        <button class="ctrl-btn" id="ctrl-zoom-out" title="Zoom Out (Ctrl -)">－</button>
-        <button class="ctrl-btn" id="ctrl-zoom-fit" title="Fit Diagram to Viewport (Ctrl 0)">⛶ Fit</button>
-        <button class="ctrl-btn" id="ctrl-zoom-reset" title="Reset Zoom (1:1)">1:1</button>
-        <button class="ctrl-btn" id="ctrl-minimap" title="Toggle Minimap (M)">🗺️ Map</button>
+        <button class="ctrl-btn" id="ctrl-zoom-in" title="Zoom In (Ctrl +)" aria-label="Zoom In">＋</button>
+        <button class="ctrl-btn" id="ctrl-zoom-out" title="Zoom Out (Ctrl -)" aria-label="Zoom Out">－</button>
+        <button class="ctrl-btn" id="ctrl-zoom-fit" title="Fit Diagram to Viewport (Ctrl 0)" aria-label="Fit Diagram to Viewport">⛶ Fit</button>
+        <button class="ctrl-btn" id="ctrl-zoom-reset" title="Reset Zoom (1:1)" aria-label="Reset Zoom">1:1</button>
+        <button class="ctrl-btn" id="ctrl-minimap" title="Toggle Minimap (M)" aria-label="Toggle Minimap">🗺️ Map</button>
       </div>
     </div>
 
@@ -88,7 +88,7 @@
         <div class="flex-1 min-h-0 overflow-y-auto p-3 pb-12 flex flex-col gap-3">
           <!-- Review Checkpoint (Appears when user task is READY) -->
           <div id="review-card" class="acc-card highlight hidden shrink-0">
-            <div class="acc-header" onclick="toggleAcc(this)">
+            <div class="acc-header" role="button" tabindex="0" aria-expanded="true" onclick="toggleAcc(this)" onkeydown="handleAccKey(event, this)">
               <div class="acc-title">
                 <svg class="acc-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
                 <span class="text-amber">⚠️ Checkpoint</span>
@@ -104,7 +104,7 @@
 
           <!-- Tasks Accordion -->
           <div class="acc-card flex flex-col shrink-0">
-            <div class="acc-header" onclick="toggleAcc(this)">
+            <div class="acc-header" role="button" tabindex="0" aria-expanded="true" onclick="toggleAcc(this)" onkeydown="handleAccKey(event, this)">
               <div class="acc-title">
                 <svg class="acc-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
                 <span>Execution Tasks</span>
@@ -131,7 +131,7 @@
         <div class="flex-1 min-h-0 overflow-y-auto p-3 pb-12 flex flex-col gap-3">
           <!-- Workspace Files & Artifacts Accordion -->
           <div id="workspace-files-card" class="acc-card flex flex-col shrink-0 hidden">
-            <div class="acc-header" onclick="toggleAcc(this)">
+            <div class="acc-header" role="button" tabindex="0" aria-expanded="true" onclick="toggleAcc(this)" onkeydown="handleAccKey(event, this)">
               <div class="acc-title">
                 <svg class="acc-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
                 <span>Workspace Files</span>
@@ -145,7 +145,7 @@
 
           <!-- Workflow Data Accordion (First) -->
           <div class="acc-card flex flex-col shrink-0">
-            <div class="acc-header" onclick="toggleAcc(this)">
+            <div class="acc-header" role="button" tabindex="0" aria-expanded="true" onclick="toggleAcc(this)" onkeydown="handleAccKey(event, this)">
               <div class="acc-title">
                 <svg class="acc-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
                 <span>Workflow Data</span>
@@ -159,7 +159,7 @@
 
           <!-- Save Points Accordion (Second) -->
           <div class="acc-card flex flex-col shrink-0">
-            <div class="acc-header" onclick="toggleAcc(this)">
+            <div class="acc-header" role="button" tabindex="0" aria-expanded="true" onclick="toggleAcc(this)" onkeydown="handleAccKey(event, this)">
               <div class="acc-title">
                 <svg class="acc-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
                 <span>Save Points</span>
@@ -188,6 +188,16 @@
 const id = '{{ workflow_id }}';
 let state = null, reviewTask = null, viewer = null, formViewer = null, ws = null;
 const $ = x => document.getElementById(x);
+
+function escapeHtml(unsafe) {
+  if (unsafe === null || unsafe === undefined) return '';
+  return String(unsafe)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
 
 function toggleAcc(header) {
   const isCollapsed = header.classList.toggle('collapsed');
@@ -312,7 +322,7 @@ function renderState(next) {
   if (next.parent_workflow_id) {
     $('parent-workflow').classList.remove('hidden');
     $('parent-workflow').className = 'inline-block';
-    $('parent-workflow').innerHTML = `<a href="/instance/${next.parent_workflow_id}" class="badge bg-[#2b3b51] text-white no-underline">⬑ Parent</a>`;
+    $('parent-workflow').innerHTML = `<a href="/instance/${encodeURIComponent(next.parent_workflow_id)}" class="badge bg-[#2b3b51] text-white no-underline">⬑ Parent</a>`;
   } else {
     $('parent-workflow').classList.add('hidden');
   }
@@ -321,14 +331,14 @@ function renderState(next) {
   $('tasks').innerHTML = [...next.tasks].reverse().map(t => {
     const isFailed = next.jobs && next.jobs[t.id]?.status === 'failed';
     const retry = isFailed ?
-      `<button class="btn btn-danger px-2 py-0.5 text-[10px]" data-retry="${t.id}">Retry</button>` : '';
+      `<button class="btn btn-danger px-2 py-0.5 text-[10px]" data-retry="${escapeHtml(t.id)}">Retry</button>` : '';
     return `
       <div class="p-2 rounded-md bg-card border border-line mb-1.5 text-xs hover:border-line-highlight hover:bg-card-hover transition-colors">
         <div class="flex justify-between items-center gap-2">
-          <div class="font-semibold text-ink text-[12.5px]">${t.name || t.bpmn_id}</div>
-          <span class="badge ${t.state.toLowerCase()}">${t.state}</span>
+          <div class="font-semibold text-ink text-[12.5px]">${escapeHtml(t.name || t.bpmn_id)}</div>
+          <span class="badge ${escapeHtml(t.state.toLowerCase())}">${escapeHtml(t.state)}</span>
         </div>
-        <div class="text-muted text-[10.5px] font-mono mt-0.5">${t.id} · ${t.type || 'Task'}</div>
+        <div class="text-muted text-[10.5px] font-mono mt-0.5">${escapeHtml(t.id)} · ${escapeHtml(t.type || 'Task')}</div>
         ${retry ? `<div class="mt-1.5">${retry}</div>` : ''}
       </div>`;
   }).join('');
@@ -348,10 +358,10 @@ function renderState(next) {
   $('savepoints').innerHTML = spList.length ? spList.map(point => `
     <div class="p-2 rounded-md bg-card border border-line mb-1.5 text-xs hover:border-line-highlight transition-colors">
       <div class="flex justify-between items-center">
-        <strong class="font-semibold text-ink">${point.phase}</strong>
-        <button class="btn btn-secondary text-[10px] px-1.5 py-0.5" data-fork="${point.id}">Fork</button>
+        <strong class="font-semibold text-ink">${escapeHtml(point.phase)}</strong>
+        <button class="btn btn-secondary text-[10px] px-1.5 py-0.5" data-fork="${escapeHtml(point.id)}">Fork</button>
       </div>
-      <div class="text-muted text-[10.5px] mt-0.5">${point.task_name} · ${new Date(point.created_at).toLocaleTimeString()}</div>
+      <div class="text-muted text-[10.5px] mt-0.5">${escapeHtml(point.task_name)} · ${escapeHtml(new Date(point.created_at).toLocaleTimeString())}</div>
     </div>
   `).join('') : '<small class="text-muted text-xs">No save points recorded.</small>';
 
@@ -385,10 +395,10 @@ function renderState(next) {
           <div class="flex items-center justify-between p-1.5 rounded bg-card border border-line hover:border-line-highlight transition-colors">
             <div class="flex items-center gap-1.5 min-w-0">
               <span class="text-accent text-[11px]">📄</span>
-              <span class="font-mono text-[11px] truncate text-ink" title="${f.path}">${f.name || f.path}</span>
+              <span class="font-mono text-[11px] truncate text-ink" title="${escapeHtml(f.path)}">${escapeHtml(f.name || f.path)}</span>
             </div>
             <div class="flex items-center gap-2 shrink-0">
-              <span class="text-muted text-[10px]">${sizeStr}</span>
+              <span class="text-muted text-[10px]">${escapeHtml(sizeStr)}</span>
               <a href="/instance/${id}/workspace/file?path=${encodeURIComponent(f.path)}" target="_blank" class="btn btn-secondary text-[9.5px] px-1.5 py-0.5" title="View / Download file">View</a>
             </div>
           </div>`;
@@ -472,35 +482,60 @@ $('ctrl-minimap').onclick = () => {
   } catch(e) {}
 };
 
+let wsReconnectDelay = 1000;
+const wsMaxReconnectDelay = 30000;
+let wsReconnectTimer = null;
+
+function scheduleReconnect() {
+  if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+  wsReconnectTimer = setTimeout(() => {
+    if (state && (state.status === 'waiting_pi' || state.status === 'running')) {
+      wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, wsMaxReconnectDelay);
+      initWebSocket();
+      refresh();
+    }
+  }, wsReconnectDelay);
+}
+
 function initWebSocket() {
   try {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     ws = new WebSocket(`${protocol}//${location.host}/ws/instance/${id}`);
+    ws.onopen = () => {
+      wsReconnectDelay = 1000;
+    };
     ws.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
-        if (payload.workflow_id === id) {
+        if (payload.type === 'pi_event' && payload.workflow_id === id) {
+          const ev = payload.event || {};
+          const statusEl = $('status');
+          if (statusEl && ev.type) {
+            statusEl.innerHTML = `<span class="badge badge-running mr-1.5 animate-pulse">●</span> running (${escapeHtml(payload.task_name || 'Agent')}: ${escapeHtml(ev.type)})`;
+          }
+        } else if (payload.workflow_id === id) {
           renderState(payload);
         }
       } catch(e) {}
     };
     ws.onclose = () => {
-      if (state && state.status === 'waiting_pi') setTimeout(refresh, 1000);
+      scheduleReconnect();
     };
     ws.onerror = () => {
-      if (state && state.status === 'waiting_pi') setTimeout(refresh, 1000);
+      scheduleReconnect();
     };
   } catch(e) {
-    if (state && state.status === 'waiting_pi') setTimeout(refresh, 500);
+    scheduleReconnect();
   }
 }
 
 async function refresh() {
-  const response = await fetch(`/instance/${id}/state`);
-  if (response.ok) {
-    renderState(await response.json());
-    if (state.status === 'waiting_pi') setTimeout(refresh, 500);
-  }
+  try {
+    const response = await fetch(`/instance/${id}/state`);
+    if (response.ok) {
+      renderState(await response.json());
+    }
+  } catch (e) {}
 }
 
 async function loadForm() {

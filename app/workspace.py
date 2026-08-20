@@ -38,16 +38,39 @@ async def unpack_workspace(blob_or_bytes: Blob | bytes | None, prefix: str = "bp
         return workdir
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "tar",
-            "--zstd",
-            "-xf",
-            str(source_path),
-            "-C",
-            workdir,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await proc.communicate()
+        content_bytes = Path(source_path).read_bytes()
+        if content_bytes.startswith(b"\x28\xb5\x2f\xfd"):
+            proc = await asyncio.create_subprocess_exec(
+                "tar",
+                "--zstd",
+                "-xf",
+                str(source_path),
+                "-C",
+                workdir,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()
+        elif content_bytes.startswith(b"\x1f\x8b"):
+            import io
+            import tarfile
+
+            def _extract_gz() -> None:
+                with tarfile.open(fileobj=io.BytesIO(content_bytes), mode="r:gz") as tar:
+                    tar.extractall(workdir)
+
+            await asyncio.to_thread(_extract_gz)
+        else:
+            import io
+            import tarfile
+
+            def _extract_tar() -> None:
+                try:
+                    with tarfile.open(fileobj=io.BytesIO(content_bytes), mode="r:*") as tar:
+                        tar.extractall(workdir)
+                except Exception:
+                    pass
+
+            await asyncio.to_thread(_extract_tar)
     except Exception:
         pass
     finally:

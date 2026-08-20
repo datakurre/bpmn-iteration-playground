@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import uuid
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
@@ -10,20 +9,32 @@ from SpiffWorkflow.bpmn.parser.BpmnParser import BpmnParser
 from SpiffWorkflow.bpmn.workflow import BpmnWorkflow
 from SpiffWorkflow.task import TaskState
 
+from app.xml_utils import safe_parse_xml
+
 
 class WorkflowRunner:
     def load_workflow(self, bpmn_path: str, process_id: str | None = None) -> tuple[BpmnWorkflow, str]:
-        # First, find the primary process ID if not provided
         if not process_id:
-            temp_parser = BpmnParser()
-            temp_parser.add_bpmn_file(bpmn_path)
-            process_id = temp_parser.get_process_ids()[0]
+            root = safe_parse_xml(bpmn_path).getroot()
+            if root is not None:
+                for elem in root.iter():
+                    if elem.tag.endswith("process") and elem.get("id"):
+                        process_id = elem.get("id")
+                        break
 
-        parser = BpmnParser()
         bpmn_dir = Path(bpmn_path).parent
+        parser = BpmnParser()
+        
+        # Load all BPMN files in the same directory (enables call activities/subprocesses)
         for f in bpmn_dir.glob("*.bpmn"):
             parser.add_bpmn_file(str(f))
         
+        if not process_id:
+            process_ids = parser.get_process_ids()
+            if not process_ids:
+                raise ValueError(f"No processes found in BPMN files in {bpmn_dir}")
+            process_id = process_ids[0]
+
         workflow = BpmnWorkflow(parser.get_spec(process_id))
         
         # Load extensions for all loaded specs
@@ -33,7 +44,9 @@ class WorkflowRunner:
         return workflow, process_id
 
     def _load_extensions(self, bpmn_path: str, workflow: BpmnWorkflow) -> None:
-        root = ET.parse(bpmn_path).getroot()
+        root = safe_parse_xml(bpmn_path).getroot()
+        if root is None:
+            return
         ns = {"bpmn": "http://www.omg.org/spec/BPMN/20100524/MODEL", "camunda": "http://camunda.org/schema/1.0/bpmn"}
         for element in root.findall(".//bpmn:*", ns):
             bpmn_id = element.get("id")

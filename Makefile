@@ -31,13 +31,12 @@ demo:
 	PI_EXECUTABLE="$(CURDIR)/scripts/pi-demo" $(UV) run uvicorn app.api.server:app --reload --host $(HOST) --port $(PORT)
 
 lint:
-	nix shell nixpkgs#mypy --command mypy app/
+	devenv shell -- lint
 
 typecheck: lint
 
 test:
-	$(UV) run pytest -v
-	nix shell nixpkgs#mypy --command mypy app/
+	devenv shell -- test
 
 pack:
 	PORT=$(PORT) $(UV) run python scripts/pack_db.py

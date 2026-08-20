@@ -119,3 +119,95 @@ def test_download_workspace_endpoint(client: TestClient) -> None:
     missing_resp = client.get("/instance/nonexistent-wf/workspace")
     assert missing_resp.status_code == 404
 
+
+def test_request_logging_middleware_handles_errors() -> None:
+    import logging
+    from fastapi import FastAPI
+    from app.logging_config import RequestLoggingMiddleware
+
+    test_app = FastAPI()
+    test_app.add_middleware(RequestLoggingMiddleware)
+
+    @test_app.get("/crash")
+    def crash():
+        raise RuntimeError("Intentional crash")
+
+    test_client = TestClient(test_app, raise_server_exceptions=False)
+    resp = test_client.get("/crash")
+    assert resp.status_code == 500
+
+
+def test_configure_logging_preserves_external_handlers() -> None:
+    import logging
+    from app.logging_config import configure_logging
+
+    root = logging.getLogger()
+    custom_handler = logging.NullHandler()
+    root.addHandler(custom_handler)
+
+    try:
+        configure_logging(level="INFO", log_file=None)
+        assert custom_handler in root.handlers
+    finally:
+        if custom_handler in root.handlers:
+            root.removeHandler(custom_handler)
+
+
+def test_cancel_workflow_endpoint(client: TestClient) -> None:
+    start_resp = client.post(
+        "/workflow/start",
+        json={"bpmn_path": "workflows/contract_review.bpmn", "variables": {"contract": "Cancel Test"}},
+    )
+    wf_id = start_resp.json()["workflow_id"]
+
+    cancel_resp = client.post(f"/instance/{wf_id}/cancel")
+    assert cancel_resp.status_code == 200
+    assert cancel_resp.json()["status"] == "cancelled"
+
+    # Missing instance returns 404
+    missing_cancel = client.post("/instance/missing-wf/cancel")
+    assert missing_cancel.status_code == 404
+
+
+def test_start_workflow_invalid_bpmn_input(client: TestClient) -> None:
+    resp = client.post(
+        "/workflow/start",
+        json={"bpmn_path": "workflows/non_existent.bpmn", "variables": {}},
+    )
+    assert resp.status_code == 404
+
+
+def test_prometheus_metrics_endpoint(client: TestClient) -> None:
+    resp = client.get("/metrics")
+    assert resp.status_code == 200
+    text = resp.text
+    assert "bpmn_instances_total" in text
+    assert "bpmn_zodb_storage_bytes" in text
+    assert "bpmn_active_background_jobs" in text
+
+
+def test_sse_events_stream_endpoint(client: TestClient) -> None:
+    start_resp = client.post(
+        "/workflow/start",
+        json={"bpmn_path": "workflows/contract_review.bpmn", "variables": {"contract": "SSE Test"}},
+    )
+    wf_id = start_resp.json()["workflow_id"]
+
+    # Missing instance returns 404
+    missing = client.get("/instance/missing-id/events/stream")
+    assert missing.status_code == 404
+
+    # Valid instance stream
+    from unittest import mock
+    import asyncio
+    with mock.patch("asyncio.sleep", new_callable=mock.AsyncMock, side_effect=asyncio.CancelledError):
+        with client.stream("GET", f"/instance/{wf_id}/events/stream") as stream_resp:
+            assert stream_resp.status_code == 200
+            for chunk in stream_resp.iter_text():
+                assert "data:" in chunk
+                break
+
+
+
+
+

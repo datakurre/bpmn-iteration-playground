@@ -37,10 +37,15 @@ def test_parallel_gateway_execution() -> None:
         started = await service.start("workflows/parallel_review.bpmn", None, {"repo": "test/repo"})
         workflow_id = started["workflow_id"]
 
-        # Await both parallel agent executions
-        while any(not job.done() for job in service.jobs.values()):
-            await asyncio.gather(*[job for job in service.jobs.values() if not job.done()])
-            await asyncio.sleep(0.01)
+        # Await both parallel agent executions with timeout
+        async def _wait_jobs():
+            while any(not job.done() for job in list(service.jobs.values())):
+                pending = [job for job in list(service.jobs.values()) if not job.done()]
+                if pending:
+                    await asyncio.gather(*pending)
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(_wait_jobs(), timeout=5.0)
 
         state = service.state(workflow_id)
         assert pi.calls == 2
@@ -62,3 +67,45 @@ def test_parallel_gateway_execution() -> None:
         assert completed["data"]["decision"] == "approved"
 
     asyncio.run(scenario())
+
+
+def test_parallel_gateway_mixed_success_failure() -> None:
+    class FailingAuditPi:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def run(self, prompt: str, cwd: str) -> PiResult:
+            self.calls += 1
+            # Return failed for agent execution
+            return PiResult(
+                "failed",
+                None,
+                "Security audit found critical vulnerabilities",
+                [],
+                "Failed",
+                1,
+            )
+
+    async def scenario() -> None:
+        pi = FailingAuditPi()
+        store = WorkflowStore(":memory:")
+        service = WorkflowService(store, pi)
+
+        started = await service.start("workflows/parallel_review.bpmn", None, {"repo": "test/repo"})
+        workflow_id = started["workflow_id"]
+
+        async def _wait_jobs():
+            while any(not job.done() for job in list(service.jobs.values())):
+                pending = [job for job in list(service.jobs.values()) if not job.done()]
+                if pending:
+                    await asyncio.gather(*pending)
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(_wait_jobs(), timeout=5.0)
+
+        state = service.state(workflow_id)
+        assert pi.calls == 2
+        assert state["status"] == "failed"
+
+    asyncio.run(scenario())
+

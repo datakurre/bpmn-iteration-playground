@@ -10,7 +10,7 @@ class MockAdapter(BaseAdapter):
 
     def __init__(self, status: str = "success", output: dict[str, Any] | None = None) -> None:
         self.status = status
-        self.output = output or {
+        self.output = output if output is not None else {
             "status": "success",
             "summary": "Mock execution completed successfully",
             "findings": [],
@@ -23,8 +23,22 @@ class MockAdapter(BaseAdapter):
     def adapter_type(self) -> str:
         return "mock_agent"
 
-    async def run(self, prompt: str, config: dict[str, str], cwd: str) -> AgentResult:
+    async def run(
+        self,
+        prompt: str,
+        config: dict[str, str],
+        cwd: str,
+        on_event: Any = None,
+    ) -> AgentResult:
         self.calls += 1
+        if on_event and callable(on_event):
+            try:
+                import asyncio
+                res = on_event({"type": "message_end", "content": "mock event"})
+                if asyncio.iscoroutine(res):
+                    await res
+            except Exception:
+                pass
         return AgentResult(
             status=self.status,
             output=dict(self.output),

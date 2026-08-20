@@ -36,9 +36,20 @@
         </camunda:properties>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_Ingest_OK</bpmn:incoming>
-      <bpmn:outgoing>Flow_Transform_Validate</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Transform_GW</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:sequenceFlow id="Flow_Transform_Validate" sourceRef="Task_Transform" targetRef="Task_Validate" />
+    <bpmn:sequenceFlow id="Flow_Transform_GW" sourceRef="Task_Transform" targetRef="GW_Transform" />
+    <bpmn:exclusiveGateway id="GW_Transform" name="Transform OK?">
+      <bpmn:incoming>Flow_Transform_GW</bpmn:incoming>
+      <bpmn:outgoing>Flow_Transform_OK</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Transform_Fail</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_Transform_OK" name="Success" sourceRef="GW_Transform" targetRef="Task_Validate">
+      <bpmn:conditionExpression>agent_status == 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Transform_Fail" name="Failed" sourceRef="GW_Transform" targetRef="Task_Ingest_Fix">
+      <bpmn:conditionExpression>agent_status != 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
     <bpmn:serviceTask id="Task_Validate" name="Validate Output">
       <bpmn:extensionElements>
         <camunda:properties>
@@ -46,10 +57,21 @@
           <camunda:property name="agent_role" value="data_validator" />
         </camunda:properties>
       </bpmn:extensionElements>
-      <bpmn:incoming>Flow_Transform_Validate</bpmn:incoming>
-      <bpmn:outgoing>Flow_Validate_Signoff</bpmn:outgoing>
+      <bpmn:incoming>Flow_Transform_OK</bpmn:incoming>
+      <bpmn:outgoing>Flow_Validate_GW</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:sequenceFlow id="Flow_Validate_Signoff" sourceRef="Task_Validate" targetRef="Task_Signoff" />
+    <bpmn:sequenceFlow id="Flow_Validate_GW" sourceRef="Task_Validate" targetRef="GW_Validate" />
+    <bpmn:exclusiveGateway id="GW_Validate" name="Validate OK?">
+      <bpmn:incoming>Flow_Validate_GW</bpmn:incoming>
+      <bpmn:outgoing>Flow_Validate_OK</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Validate_Fail</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_Validate_OK" name="Success" sourceRef="GW_Validate" targetRef="Task_Signoff">
+      <bpmn:conditionExpression>agent_status == 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Validate_Fail" name="Failed" sourceRef="GW_Validate" targetRef="Task_Ingest_Fix">
+      <bpmn:conditionExpression>agent_status != 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
     <bpmn:userTask id="Task_Signoff" name="Quality Sign-off">
       <bpmn:extensionElements>
         <camunda:formData>
@@ -57,7 +79,7 @@
           <camunda:formField id="data_notes" label="Pipeline Notes" type="string" />
         </camunda:formData>
       </bpmn:extensionElements>
-      <bpmn:incoming>Flow_Validate_Signoff</bpmn:incoming>
+      <bpmn:incoming>Flow_Validate_OK</bpmn:incoming>
       <bpmn:outgoing>Flow_Signoff_End</bpmn:outgoing>
     </bpmn:userTask>
     <bpmn:userTask id="Task_Ingest_Fix" name="Fix Data Source">
@@ -68,6 +90,8 @@
         </camunda:formData>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_Ingest_Fail</bpmn:incoming>
+      <bpmn:incoming>Flow_Transform_Fail</bpmn:incoming>
+      <bpmn:incoming>Flow_Validate_Fail</bpmn:incoming>
       <bpmn:outgoing>Flow_Fix_End</bpmn:outgoing>
     </bpmn:userTask>
     <bpmn:sequenceFlow id="Flow_Signoff_End" sourceRef="Task_Signoff" targetRef="End_Data" />

@@ -1,24 +1,30 @@
+import asyncio
 import logging
 import os
 from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.api.ui import admin_page, editor_page, history_detail_page, history_page, instance_page, page
-from app.auth import Role, require_role
+from app.auth import Role, _is_require_auth, parse_auth_config, require_role
 from app.logging_config import RequestLoggingMiddleware, configure_logging
 from app.models import (
     AdminCleanupRequest,
+    ClearInstancesResponse,
+    DeleteInstanceResponse,
+    DeleteWebhookResponse,
     ForkRequest,
     PackResult,
     SavePointSummary,
+    SaveWorkflowResponse,
     StartWorkflowRequest,
     StorageStats,
     SubmitTaskRequest,
+    TemplateSummary,
     WebhookRegistration,
     WorkflowState,
 )
@@ -26,6 +32,7 @@ from app.persistence import WorkflowStore
 from app.registry import WorkflowRegistry
 from app.workflow_service import WorkflowNotFound, WorkflowService
 from app.ws import manager as ws_manager
+from app.xml_utils import safe_fromstring_xml
 
 logger = logging.getLogger("bpmn.api")
 configure_logging()
@@ -97,15 +104,25 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
 
     # UI routes
     @app.get("/", response_class=HTMLResponse, tags=["UI"], summary="Workflow Studio Dashboard")
-    async def dashboard(request: Request) -> Response:
+    async def dashboard(
+        request: Request,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
+    ) -> Response:
         return page(request)
 
     @app.get("/history", response_class=HTMLResponse, tags=["UI"], summary="Execution History UI")
-    async def history_ui(request: Request) -> Response:
+    async def history_ui(
+        request: Request,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
+    ) -> Response:
         return history_page(request)
 
     @app.get("/history/{workflow_id}", response_class=HTMLResponse, tags=["UI"], summary="Historical Instance Detail UI")
-    async def history_detail_ui(request: Request, workflow_id: str) -> Response:
+    async def history_detail_ui(
+        request: Request,
+        workflow_id: str,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
+    ) -> Response:
         try:
             get_service().state(workflow_id)
             return history_detail_page(request, workflow_id)
@@ -113,15 +130,25 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
             raise HTTPException(404, "workflow not found")
 
     @app.get("/admin", response_class=HTMLResponse, tags=["UI"], summary="Administrative Panel UI")
-    async def admin(request: Request) -> Response:
+    async def admin(
+        request: Request,
+        role: Role = require_role(Role.ADMIN),
+    ) -> Response:
         return admin_page(request)
 
     @app.get("/editor", response_class=HTMLResponse, tags=["UI"], summary="BPMN Modeler Editor UI")
-    async def editor_ui(request: Request) -> Response:
+    async def editor_ui(
+        request: Request,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
+    ) -> Response:
         return editor_page(request)
 
     @app.get("/instance/{workflow_id}", response_class=HTMLResponse, tags=["UI"], summary="Live Workflow Instance View")
-    async def instance(request: Request, workflow_id: str) -> Response:
+    async def instance(
+        request: Request,
+        workflow_id: str,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
+    ) -> Response:
         try:
             get_service().state(workflow_id)
             return instance_page(request, workflow_id)
@@ -131,6 +158,38 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
     # WebSocket Real-Time Updates (TODO 12)
     @app.websocket("/ws/instance/{workflow_id}")
     async def ws_instance(websocket: WebSocket, workflow_id: str) -> None:
+        admin_token, api_keys, auth_enabled = parse_auth_config()
+        require_auth = _is_require_auth()
+
+        if auth_enabled or require_auth:
+            x_api_key = (
+                websocket.headers.get("x-api-key")
+                or websocket.query_params.get("api_key")
+                or websocket.query_params.get("x-api-key")
+                or websocket.query_params.get("token")
+            )
+            x_admin_token = (
+                websocket.headers.get("x-admin-token")
+                or websocket.query_params.get("admin_token")
+                or websocket.query_params.get("x-admin-token")
+            )
+            role = None
+            if admin_token and x_admin_token == admin_token:
+                role = Role.ADMIN
+            elif x_api_key:
+                if admin_token and x_api_key == admin_token:
+                    role = Role.ADMIN
+                elif x_api_key in api_keys:
+                    role = api_keys[x_api_key]
+
+            if not auth_enabled and require_auth:
+                await websocket.close(code=1008, reason="Authentication required by policy")
+                return
+
+            if role is None:
+                await websocket.close(code=1008, reason="Unauthorized")
+                return
+
         await ws_manager.connect(workflow_id, websocket)
         try:
             svc = get_service()
@@ -147,29 +206,37 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
             ws_manager.disconnect(workflow_id, websocket)
 
     # Template Registry (TODO 08)
-    @app.get("/api/templates", tags=["Templates"], summary="List available BPMN templates")
-    async def list_templates() -> list[dict[str, Any]]:
+    @app.get("/api/templates", response_model=list[TemplateSummary], tags=["Templates"], summary="List available BPMN templates")
+    async def list_templates(
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
+    ) -> list[dict[str, Any]]:
         return [t.to_dict() for t in registry.list_templates()]
 
-    @app.get("/api/templates/{process_id}", tags=["Templates"], summary="Get template metadata")
-    async def get_template(process_id: str) -> dict[str, Any]:
+    @app.get("/api/templates/{process_id}", response_model=TemplateSummary, tags=["Templates"], summary="Get template metadata")
+    async def get_template(
+        process_id: str,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
+    ) -> dict[str, Any]:
         template = registry.get_template(process_id)
         if not template:
             raise HTTPException(404, "template not found")
         return template.to_dict()
 
     @app.get("/api/templates/{process_id}/xml", response_class=PlainTextResponse, tags=["Templates"], summary="Get template raw BPMN XML")
-    async def get_template_xml(process_id: str) -> PlainTextResponse:
+    async def get_template_xml(
+        process_id: str,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
+    ) -> PlainTextResponse:
         template = registry.get_template(process_id)
         if not template:
             raise HTTPException(404, "template not found")
         path = Path(template.path)
         if not path.is_file():
             raise HTTPException(404, "template file not found")
-        return PlainTextResponse(path.read_text(encoding="utf-8"), media_type="application/xml")
+        return PlainTextResponse(await asyncio.to_thread(path.read_text, encoding="utf-8"), media_type="application/xml")
 
     # Workflow Save Endpoint (TODO 20)
-    @app.post("/api/workflows/save", tags=["Templates"], summary="Save or update BPMN XML file")
+    @app.post("/api/workflows/save", response_model=SaveWorkflowResponse, tags=["Templates"], summary="Save or update BPMN XML file")
     async def save_workflow(
         body: SaveWorkflowRequest,
         role: Role = require_role(Role.ADMIN, Role.OPERATOR),
@@ -179,6 +246,7 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
 
         parser = BpmnParser()
         try:
+            safe_fromstring_xml(body.xml)
             parser.add_bpmn_io(io.BytesIO(body.xml.encode("utf-8")))
         except Exception as exc:
             raise HTTPException(400, f"Invalid BPMN XML: {exc}")
@@ -189,7 +257,7 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
         target_dir = Path("workflows")
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = target_dir / f"{safe_name}.bpmn"
-        target_path.write_text(body.xml, encoding="utf-8")
+        await asyncio.to_thread(target_path.write_text, body.xml, encoding="utf-8")
         return {"path": str(target_path), "process_ids": parser.get_process_ids()}
 
     # Webhooks & Event Notifications (TODO 03)
@@ -198,7 +266,7 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
         body: WebhookRegistration,
         role: Role = require_role(Role.ADMIN, Role.OPERATOR),
     ) -> dict[str, Any]:
-        return get_service().store.register_webhook(body.url, body.events)
+        return get_service().store.register_webhook(str(body.url), body.events)
 
     @app.get("/api/webhooks", tags=["Webhooks"], summary="List registered webhooks")
     async def list_webhooks(
@@ -206,7 +274,7 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
     ) -> list[dict[str, Any]]:
         return get_service().store.list_webhooks()
 
-    @app.delete("/api/webhooks/{webhook_id}", tags=["Webhooks"], summary="Delete a registered webhook")
+    @app.delete("/api/webhooks/{webhook_id}", response_model=DeleteWebhookResponse, tags=["Webhooks"], summary="Delete a registered webhook")
     async def delete_webhook(
         webhook_id: str,
         role: Role = require_role(Role.ADMIN, Role.OPERATOR),
@@ -235,54 +303,67 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         return await get_service().pack_database()
 
-    @app.get("/api/history/instances", tags=["History"], summary="List historical workflow instances")
+    @app.get("/api/history/instances", response_model=list[WorkflowState], tags=["History"], summary="List historical workflow instances")
     async def api_history_instances(
         status: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+        since: str | None = None,
+        until: str | None = None,
         role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
     ) -> list[dict[str, Any]]:
-        return get_service().history_instances(status_filter=status)
+        return get_service().history_instances(
+            status_filter=status,
+            limit=limit,
+            offset=offset,
+            since=since,
+            until=until,
+        )
 
-    @app.delete("/api/history/instances/{workflow_id}", tags=["History"], summary="Delete historical workflow instance")
+    @app.delete("/api/history/instances/{workflow_id}", response_model=DeleteInstanceResponse, tags=["History"], summary="Delete historical workflow instance")
     async def delete_history_instance(
         workflow_id: str,
         role: Role = require_role(Role.ADMIN),
     ) -> dict[str, object]:
-        if not get_service().delete_instance(workflow_id):
+        if not await get_service().delete_instance(workflow_id):
             raise HTTPException(404, "workflow not found")
         return {"deleted": workflow_id}
 
-    @app.delete("/api/history/instances", tags=["History"], summary="Clear all history instances")
+    @app.delete("/api/history/instances", response_model=ClearInstancesResponse, tags=["History"], summary="Clear all history instances")
     async def clear_history_instances(
+        confirm: str = "",
         role: Role = require_role(Role.ADMIN),
     ) -> dict[str, object]:
-        return {"deleted": get_service().clear_instances()}
+        if confirm != "DELETE_ALL":
+            raise HTTPException(400, "confirm=DELETE_ALL is required")
+        return {"deleted": await get_service().clear_instances()}
 
     # Admin endpoints
-    @app.get("/admin/instances", tags=["Admin"], summary="List instances for admin")
+    @app.get("/admin/instances", response_model=list[WorkflowState], tags=["Admin"], summary="List instances for admin")
     async def admin_instances(
         x_admin_token: str | None = Header(default=None),
         role: Role = require_role(Role.ADMIN),
     ) -> list[dict[str, Any]]:
         return get_service().instances()
 
-    @app.post("/admin/pack", response_model=PackResult, tags=["Admin"], summary="Admin pack database")
+    @app.post("/admin/pack", response_model=PackResult, tags=["Admin"], summary="Admin pack database", deprecated=True)
     async def admin_pack(
         x_admin_token: str | None = Header(default=None),
         role: Role = require_role(Role.ADMIN),
     ) -> dict[str, Any]:
-        return await get_service().pack_database()
+        return await api_history_pack(role=role)
 
-    @app.delete("/admin/instances/{workflow_id}", tags=["Admin"], summary="Admin delete instance")
+    @app.delete("/admin/instances/{workflow_id}", response_model=DeleteInstanceResponse, tags=["Admin"], summary="Admin delete instance")
     async def delete_instance(
         workflow_id: str,
         x_admin_token: str | None = Header(default=None),
         role: Role = require_role(Role.ADMIN),
     ) -> dict[str, object]:
-        if not get_service().delete_instance(workflow_id):
+        if not await get_service().delete_instance(workflow_id):
             raise HTTPException(404, "workflow not found")
         return {"deleted": workflow_id}
 
-    @app.delete("/admin/instances", tags=["Admin"], summary="Admin clear all instances")
+    @app.delete("/admin/instances", response_model=ClearInstancesResponse, tags=["Admin"], summary="Admin clear all instances")
     async def clear_instances(
         confirm: str = "",
         x_admin_token: str | None = Header(default=None),
@@ -290,7 +371,7 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
     ) -> dict[str, object]:
         if confirm != "DELETE_ALL":
             raise HTTPException(400, "confirm=DELETE_ALL is required")
-        return {"deleted": get_service().clear_instances()}
+        return {"deleted": await get_service().clear_instances()}
 
     # Instance endpoints
     @app.get("/instance/{workflow_id}/savepoint/{save_point_id}", tags=["Instance"], summary="Get savepoint detail")
@@ -320,7 +401,7 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
         role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
     ) -> PlainTextResponse:
         try:
-            return PlainTextResponse(get_service().diagram(workflow_id), media_type="application/xml")
+            return PlainTextResponse(await get_service().diagram(workflow_id), media_type="application/xml")
         except WorkflowNotFound:
             raise HTTPException(404, "workflow not found")
         except FileNotFoundError:
@@ -441,6 +522,8 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
             raise HTTPException(404, "workflow not found")
         except KeyError as exc:
             raise HTTPException(404, f"save point not found: {exc.args[0]}")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
 
     @app.post("/instance/{workflow_id}/submit-task/{task_id}", response_model=WorkflowState, tags=["Instance"], summary="Submit user task")
     async def instance_submit_task(
@@ -469,13 +552,88 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
         except (KeyError, ValueError) as exc:
             raise HTTPException(409, str(exc))
 
+    @app.post("/instance/{workflow_id}/cancel", response_model=WorkflowState, tags=["Instance"], summary="Cancel running workflow instance")
+    async def cancel_instance(
+        workflow_id: str,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR),
+    ) -> dict[str, Any]:
+        try:
+            return await get_service().cancel(workflow_id)
+        except WorkflowNotFound:
+            raise HTTPException(404, "workflow not found")
+        except KeyError:
+            raise HTTPException(404, "workflow not found")
+
+    @app.get("/instance/{workflow_id}/events/stream", tags=["Instance"], summary="Stream instance events via SSE")
+    async def sse_events_stream(
+        workflow_id: str,
+        request: Request,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
+    ) -> StreamingResponse:
+        svc = get_service()
+        try:
+            svc.state(workflow_id)
+        except (WorkflowNotFound, KeyError):
+            raise HTTPException(404, "workflow not found")
+
+        import json
+
+        async def event_generator():
+            initial = svc.state(workflow_id)
+            yield f"data: {json.dumps(initial)}\n\n"
+            last_status = initial.get("status")
+            for _ in range(60):
+                if await request.is_disconnected():
+                    break
+                await asyncio.sleep(0.5)
+                current = svc.state(workflow_id)
+                if current.get("status") != last_status or len(current.get("events", [])) > len(initial.get("events", [])):
+                    last_status = current.get("status")
+                    yield f"data: {json.dumps(current)}\n\n"
+                    if last_status in ("completed", "failed", "cancelled"):
+                        break
+
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+    @app.get("/metrics", response_class=PlainTextResponse, tags=["Observability"], summary="Prometheus metrics")
+    async def prometheus_metrics() -> PlainTextResponse:
+        svc = get_service()
+        stats = svc.store.storage_stats()
+        meta = svc.store.list_metadata()
+        active = sum(1 for m in meta if m.get("status") in ("waiting_pi", "waiting_human", "running"))
+        completed = sum(1 for m in meta if m.get("status") == "completed")
+        failed = sum(1 for m in meta if m.get("status") == "failed")
+        cancelled = sum(1 for m in meta if m.get("status") == "cancelled")
+        total = len(meta)
+        zodb_bytes = stats.get("data_fs_size_bytes", 0)
+
+        lines = [
+            "# HELP bpmn_instances_total Total workflow instances by status",
+            "# TYPE bpmn_instances_total gauge",
+            f'bpmn_instances_total{{status="active"}} {active}',
+            f'bpmn_instances_total{{status="completed"}} {completed}',
+            f'bpmn_instances_total{{status="failed"}} {failed}',
+            f'bpmn_instances_total{{status="cancelled"}} {cancelled}',
+            f'bpmn_instances_total{{status="all"}} {total}',
+            "# HELP bpmn_zodb_storage_bytes ZODB storage size in bytes",
+            "# TYPE bpmn_zodb_storage_bytes gauge",
+            f"bpmn_zodb_storage_bytes {zodb_bytes}",
+            "# HELP bpmn_active_background_jobs Active background worker jobs",
+            "# TYPE bpmn_active_background_jobs gauge",
+            f"bpmn_active_background_jobs {len(svc.jobs)}",
+        ]
+        return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
+
     # Workflow API
     @app.post("/workflow/start", response_model=WorkflowState, tags=["Workflow"], summary="Start a new workflow instance")
     async def start(
         request: StartWorkflowRequest,
         role: Role = require_role(Role.ADMIN, Role.OPERATOR),
     ) -> dict[str, Any]:
-        return await get_service().start(request.bpmn_path, request.process_id, request.variables)
+        try:
+            return await get_service().start(request.bpmn_path, request.process_id, request.variables)
+        except FileNotFoundError:
+            raise HTTPException(404, "BPMN file not found")
 
     @app.get("/workflow/{workflow_id}/state", response_model=WorkflowState, tags=["Workflow"], summary="Get workflow execution state")
     async def state(
@@ -487,19 +645,14 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
         except WorkflowNotFound:
             raise HTTPException(404, "workflow not found")
 
-    @app.post("/workflow/{workflow_id}/submit-task/{task_id}", response_model=WorkflowState, tags=["Workflow"], summary="Submit human task by ID")
+    @app.post("/workflow/{workflow_id}/submit-task/{task_id}", response_model=WorkflowState, tags=["Workflow"], summary="Submit human task by ID", deprecated=True)
     async def submit_task(
         workflow_id: str,
         task_id: str,
         request: SubmitTaskRequest,
         role: Role = require_role(Role.ADMIN, Role.OPERATOR),
     ) -> dict[str, Any]:
-        try:
-            return await get_service().submit_task(workflow_id, task_id, request.variables)
-        except WorkflowNotFound:
-            raise HTTPException(404, "workflow not found")
-        except (KeyError, ValueError) as exc:
-            raise HTTPException(409, str(exc))
+        return await instance_submit_task(workflow_id, task_id, request, role)
 
     @app.post("/workflow/{workflow_id}/submit-task", response_model=WorkflowState, tags=["Workflow"], summary="Submit human task via JSON body")
     async def submit_task_body(

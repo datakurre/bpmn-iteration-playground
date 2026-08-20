@@ -31,7 +31,9 @@ class FakePi:
 
 @pytest.fixture
 def store():
-    return WorkflowStore(":memory:")
+    s = WorkflowStore(":memory:")
+    yield s
+    s.close()
 
 
 @pytest.fixture

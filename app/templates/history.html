@@ -69,6 +69,16 @@
 let currentFilter = 'all', instances = [];
 const $ = id => document.getElementById(id);
 
+function escapeHtml(unsafe) {
+  if (unsafe === null || unsafe === undefined) return '';
+  return String(unsafe)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 async function loadStorage() {
   try {
     const res = await fetch('/api/history/storage');
@@ -90,7 +100,7 @@ async function loadHistory() {
 
 async function deleteHistory(id) {
   if (confirm('Delete this historical instance?')) {
-    const res = await fetch('/api/history/instances/' + id, { method: 'DELETE' });
+    const res = await fetch('/api/history/instances/' + encodeURIComponent(id), { method: 'DELETE' });
     if (res.ok) loadHistory();
   }
 }
@@ -114,7 +124,7 @@ $('pack-db').onclick = async () => {
 
 $('clear-all').onclick = async () => {
   if (confirm('Delete all historical workflow instances?')) {
-    const res = await fetch('/api/history/instances', { method: 'DELETE' });
+    const res = await fetch('/api/history/instances?confirm=DELETE_ALL', { method: 'DELETE' });
     if (res.ok) loadHistory();
   }
 };
@@ -135,23 +145,23 @@ function render() {
     <article class="bg-panel border border-line rounded-lg p-3.5 mb-2 flex flex-col md:flex-row justify-between md:items-center gap-3 hover:border-line-highlight transition-colors shadow-md ${item.parent_workflow_id ? 'ml-5 border-l-4 !border-l-accent' : ''}">
       <div>
         <div class="text-sm font-semibold text-ink">
-          <a href="/history/${item.workflow_id}" class="text-inherit no-underline hover:text-accent transition-colors">${item.workflow_id}</a>
+          <a href="/history/${encodeURIComponent(item.workflow_id)}" class="text-inherit no-underline hover:text-accent transition-colors">${escapeHtml(item.workflow_id)}</a>
           ${item.parent_workflow_id ? '<span class="badge bg-[#2b3b51] ml-2">Subprocess</span>' : ''}
         </div>
         <div class="text-muted text-xs mt-1 flex gap-3 flex-wrap">
-          <span>Process: <strong class="text-ink">${item.process_id}</strong></span>
-          ${item.parent_workflow_id ? `<span>Parent: <a href="/history/${item.parent_workflow_id}" class="text-accent hover:underline">${item.parent_workflow_id.slice(0,8)}</a></span>` : ''}
-          <span>Tasks: <strong class="text-ink">${item.task_count}</strong></span>
-          <span>Save Points: <strong class="text-ink">${item.save_point_count}</strong></span>
-          ${item.updated_at ? `<span>Updated: ${new Date(item.updated_at).toLocaleString()}</span>` : ''}
+          <span>Process: <strong class="text-ink">${escapeHtml(item.process_id)}</strong></span>
+          ${item.parent_workflow_id ? `<span>Parent: <a href="/history/${encodeURIComponent(item.parent_workflow_id)}" class="text-accent hover:underline">${escapeHtml(item.parent_workflow_id.slice(0,8))}</a></span>` : ''}
+          <span>Tasks: <strong class="text-ink">${escapeHtml(item.task_count)}</strong></span>
+          <span>Save Points: <strong class="text-ink">${escapeHtml(item.save_point_count)}</strong></span>
+          ${item.updated_at ? `<span>Updated: ${escapeHtml(new Date(item.updated_at).toLocaleString())}</span>` : ''}
         </div>
       </div>
       <div class="flex items-center gap-3">
-        <span class="badge ${item.status}">${item.status}</span>
+        <span class="badge ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span>
         <div class="flex items-center gap-1.5">
-          <a href="/history/${item.workflow_id}" class="btn btn-secondary text-xs px-2.5 py-1">Inspect</a>
-          <a href="/instance/${item.workflow_id}" class="btn text-xs px-2.5 py-1">View</a>
-          <button class="btn btn-danger text-xs px-2.5 py-1" onclick="deleteHistory('${item.workflow_id}')">Delete</button>
+          <a href="/history/${encodeURIComponent(item.workflow_id)}" class="btn btn-secondary text-xs px-2.5 py-1">Inspect</a>
+          <a href="/instance/${encodeURIComponent(item.workflow_id)}" class="btn text-xs px-2.5 py-1">View</a>
+          <button class="btn btn-danger text-xs px-2.5 py-1" onclick="deleteHistory('${escapeHtml(item.workflow_id)}')">Delete</button>
         </div>
       </div>
     </article>

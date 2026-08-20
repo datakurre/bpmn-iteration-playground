@@ -38,9 +38,20 @@
     <bpmn:parallelGateway id="Gateway_Join" name="Join Findings">
       <bpmn:incoming>Flow_CodeReview_Done</bpmn:incoming>
       <bpmn:incoming>Flow_SecurityAudit_Done</bpmn:incoming>
-      <bpmn:outgoing>Flow_Join_To_Review</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Join_To_Check</bpmn:outgoing>
     </bpmn:parallelGateway>
-    <bpmn:sequenceFlow id="Flow_Join_To_Review" sourceRef="Gateway_Join" targetRef="Task_FinalReview" />
+    <bpmn:sequenceFlow id="Flow_Join_To_Check" sourceRef="Gateway_Join" targetRef="GW_Review_Check" />
+    <bpmn:exclusiveGateway id="GW_Review_Check" name="Review Success?">
+      <bpmn:incoming>Flow_Join_To_Check</bpmn:incoming>
+      <bpmn:outgoing>Flow_Review_Check_OK</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Review_Check_Fail</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_Review_Check_OK" name="Success" sourceRef="GW_Review_Check" targetRef="Task_FinalReview">
+      <bpmn:conditionExpression>agent_status == 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Review_Check_Fail" name="Failure" sourceRef="GW_Review_Check" targetRef="EndEvent_Fail">
+      <bpmn:conditionExpression>agent_status != 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
     <bpmn:userTask id="Task_FinalReview" name="Merge &amp; Final Review">
       <bpmn:extensionElements>
         <camunda:formData>
@@ -48,12 +59,15 @@
           <camunda:formField id="review_notes" label="Reviewer Notes" type="string" />
         </camunda:formData>
       </bpmn:extensionElements>
-      <bpmn:incoming>Flow_Join_To_Review</bpmn:incoming>
+      <bpmn:incoming>Flow_Review_Check_OK</bpmn:incoming>
       <bpmn:outgoing>Flow_To_End</bpmn:outgoing>
     </bpmn:userTask>
     <bpmn:sequenceFlow id="Flow_To_End" sourceRef="Task_FinalReview" targetRef="EndEvent_1" />
     <bpmn:endEvent id="EndEvent_1" name="Review Complete">
       <bpmn:incoming>Flow_To_End</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="EndEvent_Fail" name="Review Failed">
+      <bpmn:incoming>Flow_Review_Check_Fail</bpmn:incoming>
     </bpmn:endEvent>
   </bpmn:process>
   <bpmndi:BPMNDiagram id="BPMNDiagram_parallel_review">

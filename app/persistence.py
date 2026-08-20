@@ -1,30 +1,47 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import time
 import uuid
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
-from threading import RLock
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from BTrees.OOBTree import OOBTree
 from persistent import Persistent
 from persistent.list import PersistentList
 from persistent.mapping import PersistentMapping
 from ZODB import DB
+from ZODB.blob import BlobStorage
 from ZODB.FileStorage import FileStorage
 from ZODB.MappingStorage import MappingStorage
+from ZODB.POSException import ConflictError
+
+F = TypeVar("F", bound=Callable[..., Any])
 
 
-from ZODB.blob import BlobStorage
-import tempfile
+def _retry_on_conflict(max_retries: int = 5) -> Callable[[F], F]:
+    def decorator(fn: F) -> F:
+        @wraps(fn)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            for attempt in range(max_retries):
+                try:
+                    return fn(*args, **kwargs)
+                except ConflictError:
+                    if attempt == max_retries - 1:
+                        raise
+                    time.sleep(0.02 * (2 ** attempt))
+        return wrapper  # type: ignore[return-value]
+    return decorator
 
-def _create_storage(path: str) -> Any:
+
+def _create_storage(path: str) -> tuple[Any, str | None]:
     """Create ZODB storage, supporting in-memory, FileStorage, or remote ZEO."""
     if path == ":memory:":
         blob_dir = tempfile.mkdtemp(prefix="bpmn-blobs-")
-        return BlobStorage(blob_dir, MappingStorage())
+        return BlobStorage(blob_dir, MappingStorage()), blob_dir
     zeo_address = os.getenv("ZEO_ADDRESS")
     if zeo_address:
         from ZEO import ClientStorage
@@ -32,7 +49,7 @@ def _create_storage(path: str) -> Any:
         host, port = zeo_address.rsplit(":", 1)
         for attempt in range(5):
             try:
-                return ClientStorage.ClientStorage((host, int(port)), blob_dir="data/blobs")
+                return ClientStorage.ClientStorage((host, int(port)), blob_dir="data/blobs"), None
             except Exception:
                 if attempt == 4:
                     raise
@@ -40,7 +57,7 @@ def _create_storage(path: str) -> Any:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     blob_dir = str(Path(path).parent / "blobs")
     Path(blob_dir).mkdir(parents=True, exist_ok=True)
-    return BlobStorage(blob_dir, FileStorage(path))
+    return BlobStorage(blob_dir, FileStorage(path)), None
 
 
 class WorkflowMetadata(Persistent):
@@ -223,8 +240,7 @@ class WorkflowStore:
 
     def __init__(self, path: str = "data/workflows.fs") -> None:
         self.path = path
-        self._lock = RLock()
-        storage = _create_storage(path)
+        storage, self._temp_blob_dir = _create_storage(path)
         self.db = DB(storage)
         with self.db.transaction() as connection:
             root = connection.root()
@@ -239,6 +255,9 @@ class WorkflowStore:
 
     def close(self) -> None:
         self.db.close()
+        if self._temp_blob_dir and os.path.exists(self._temp_blob_dir):
+            import shutil
+            shutil.rmtree(self._temp_blob_dir, ignore_errors=True)
 
     @staticmethod
     def _format_bytes(size: int) -> str:
@@ -249,55 +268,76 @@ class WorkflowStore:
             s /= 1024.0
         return f"{s:.1f} GB"
 
+    @_retry_on_conflict()
     def save_save_point(self, snapshot_or_dict: SavePointSnapshot | dict[str, Any]) -> SavePointSnapshot:
-        if isinstance(snapshot_or_dict, SavePointSnapshot):
-            snapshot = snapshot_or_dict
-        else:
-            snapshot = SavePointSnapshot(
-                id=snapshot_or_dict["id"],
-                workflow_id=snapshot_or_dict.get("workflow_id", ""),
-                key=snapshot_or_dict.get("key", ""),
-                phase=snapshot_or_dict.get("phase", ""),
-                resume_action=snapshot_or_dict.get("resume_action", ""),
-                task_id=snapshot_or_dict.get("task_id", ""),
-                task_name=snapshot_or_dict.get("task_name", ""),
-                status=snapshot_or_dict.get("status", "running"),
-                created_at=snapshot_or_dict.get("created_at", datetime.now(timezone.utc).isoformat()),
-                data=snapshot_or_dict.get("data", {}),
-                tasks=snapshot_or_dict.get("tasks", []),
-                workflow=snapshot_or_dict.get("workflow"),
-                parent_workflow_id=snapshot_or_dict.get("parent_workflow_id"),
-                workspace_blob=snapshot_or_dict.get("workspace_blob"),
-            )
-        with self._lock, self.db.transaction() as connection:
+        d = snapshot_or_dict.to_dict() if hasattr(snapshot_or_dict, "to_dict") else dict(snapshot_or_dict)
+        with self.db.transaction() as connection:
             root = connection.root()
+            snapshot = SavePointSnapshot(
+                id=d["id"],
+                workflow_id=d.get("workflow_id", ""),
+                key=d.get("key", ""),
+                phase=d.get("phase", ""),
+                resume_action=d.get("resume_action", ""),
+                task_id=d.get("task_id", ""),
+                task_name=d.get("task_name", ""),
+                status=d.get("status", "running"),
+                created_at=d.get("created_at", datetime.now(timezone.utc).isoformat()),
+                data=d.get("data", {}),
+                tasks=d.get("tasks", []),
+                workflow=d.get("workflow"),
+                parent_workflow_id=d.get("parent_workflow_id"),
+                workspace_blob=d.get("workspace_blob"),
+            )
             root["save_points"][snapshot.id] = snapshot
         return snapshot
 
     def load_save_point(self, save_point_id: str) -> dict[str, Any] | None:
-        with self._lock, self.db.transaction() as connection:
+        with self.db.transaction() as connection:
             root = connection.root()
             sp = root["save_points"].get(save_point_id)
             if sp is not None:
                 return sp.to_dict() if hasattr(sp, "to_dict") else dict(sp)
-            for wf in root["workflows"].values():
-                points = wf.save_points if hasattr(wf, "save_points") else wf.get("save_points", [])
-                for p in points:
-                    if (p.get("id") if isinstance(p, dict) else getattr(p, "id", None)) == save_point_id:
-                        return p if isinstance(p, dict) else p.to_dict()
             return None
 
+    @_retry_on_conflict()
     def save(self, workflow_id: str, record: dict[str, Any] | WorkflowInstance) -> None:
-        with self._lock, self.db.transaction() as connection:
+        with self.db.transaction() as connection:
             root = connection.root()
             save_points_root = root["save_points"]
             workflows_root = root["workflows"]
             metadata_root = root["metadata"]
 
+            existing = workflows_root.get(workflow_id)
+
             if isinstance(record, WorkflowInstance):
                 instance = record
                 summaries = list(instance.save_points)
                 raw_record = instance.to_dict()
+                if existing is not None and existing is not instance and isinstance(existing, WorkflowInstance):
+                    existing.process_id = instance.process_id
+                    existing.bpmn_path = instance.bpmn_path
+                    existing.status = instance.status
+                    existing.workflow = instance.workflow
+                    existing.data.clear()
+                    existing.data.update(dict(instance.data))
+                    existing.jobs.clear()
+                    existing.jobs.update(dict(instance.jobs))
+                    existing.tasks = PersistentList(list(instance.tasks))
+                    existing.save_points = PersistentList(list(instance.save_points))
+                    existing.events = PersistentList(list(instance.events))
+                    existing.failure_reason = instance.failure_reason
+                    existing.failure_history = PersistentList(list(instance.failure_history))
+                    existing.forked_from = instance.forked_from
+                    existing.forked_from_save_point = instance.forked_from_save_point
+                    existing.parent_workflow_id = getattr(instance, "parent_workflow_id", None)
+                    existing.updated_at = instance.updated_at
+                    existing.workspace_blob = instance.workspace_blob
+                    existing.workspace_archive = instance.workspace_archive
+                    existing._p_changed = True
+                    instance = existing
+                else:
+                    workflows_root[workflow_id] = instance
             else:
                 raw_record = dict(record)
                 raw_save_points = raw_record.get("save_points", [])
@@ -332,7 +372,6 @@ class WorkflowStore:
                     else:
                         summaries.append(point)
 
-                existing = workflows_root.get(workflow_id)
                 created_at = (
                     getattr(existing, "created_at", None)
                     or (existing.get("created_at") if isinstance(existing, dict) else None)
@@ -346,10 +385,15 @@ class WorkflowStore:
                     or datetime.now(timezone.utc).isoformat()
                 )
 
-                events = (
-                    list(existing.events) if existing and hasattr(existing, "events")
-                    else raw_record.get("events", [])
-                )
+                if existing and hasattr(existing, "events"):
+                    existing_events = list(existing.events)
+                    raw_events = raw_record.get("events")
+                    if raw_events:
+                        events = raw_events
+                    else:
+                        events = existing_events
+                else:
+                    events = raw_record.get("events", [])
 
                 workspace_blob = (
                     raw_record.get("workspace_blob")
@@ -360,52 +404,109 @@ class WorkflowStore:
                     or getattr(existing, "workspace_archive", None)
                 )
 
-                instance = WorkflowInstance(
-                    workflow_id=workflow_id,
-                    process_id=raw_record.get("process_id", ""),
-                    bpmn_path=raw_record.get("bpmn_path", ""),
-                    status=raw_record.get("status", "running"),
-                    workflow=raw_record.get("workflow"),
-                    data=raw_record.get("data", {}),
-                    tasks=raw_record.get("tasks", []),
-                    jobs=raw_record.get("jobs", {}),
-                    save_points=summaries,
-                    events=events,
-                    failure_reason=raw_record.get("failure_reason"),
-                    failure_history=raw_record.get("failure_history", []),
-                    forked_from=raw_record.get("forked_from"),
-                    forked_from_save_point=raw_record.get("forked_from_save_point"),
-                    parent_workflow_id=raw_record.get("parent_workflow_id"),
-                    created_at=created_at,
-                    updated_at=updated_at,
-                    workspace_blob=workspace_blob,
-                    workspace_archive=workspace_archive,
-                )
-
-            workflows_root[workflow_id] = instance
+                if existing is not None and isinstance(existing, WorkflowInstance):
+                    instance = existing
+                    instance.process_id = raw_record.get("process_id", instance.process_id)
+                    instance.bpmn_path = raw_record.get("bpmn_path", instance.bpmn_path)
+                    instance.status = raw_record.get("status", instance.status)
+                    instance.workflow = raw_record.get("workflow", instance.workflow)
+                    instance.data.clear()
+                    instance.data.update(raw_record.get("data", {}))
+                    instance.jobs.clear()
+                    instance.jobs.update(raw_record.get("jobs", {}))
+                    instance.tasks = PersistentList(raw_record.get("tasks", []))
+                    instance.save_points = PersistentList(summaries)
+                    if not hasattr(instance, "events"):
+                        instance.events = PersistentList()
+                    raw_events = raw_record.get("events", [])
+                    if raw_events:
+                        existing_events_set = {
+                            (e.get("timestamp"), e.get("event_type"), e.get("task_id"))
+                            if isinstance(e, (dict, PersistentMapping)) else (getattr(e, "timestamp", None), getattr(e, "event_type", None), getattr(e, "task_id", None))
+                            for e in instance.events
+                        }
+                        for e in raw_events:
+                            e_dict = dict(e) if isinstance(e, (dict, PersistentMapping)) else (e.to_dict() if hasattr(e, "to_dict") else vars(e))
+                            key = (e_dict.get("timestamp"), e_dict.get("event_type"), e_dict.get("task_id"))
+                            if key not in existing_events_set:
+                                instance.events.append(PersistentMapping(e_dict))
+                                existing_events_set.add(key)
+                    instance.failure_reason = raw_record.get("failure_reason")
+                    instance.failure_history = PersistentList(raw_record.get("failure_history", []))
+                    instance.forked_from = raw_record.get("forked_from", instance.forked_from)
+                    instance.forked_from_save_point = raw_record.get("forked_from_save_point", instance.forked_from_save_point)
+                    instance.parent_workflow_id = raw_record.get("parent_workflow_id", getattr(instance, "parent_workflow_id", None))
+                    instance.created_at = created_at
+                    instance.updated_at = updated_at
+                    if workspace_blob is not None:
+                        instance.workspace_blob = workspace_blob
+                    if workspace_archive is not None:
+                        instance.workspace_archive = workspace_archive
+                    instance._p_changed = True
+                else:
+                    events = [
+                        PersistentMapping(e) if isinstance(e, dict) else e
+                        for e in raw_record.get("events", [])
+                    ]
+                    instance = WorkflowInstance(
+                        workflow_id=workflow_id,
+                        process_id=raw_record.get("process_id", ""),
+                        bpmn_path=raw_record.get("bpmn_path", ""),
+                        status=raw_record.get("status", "running"),
+                        workflow=raw_record.get("workflow"),
+                        data=raw_record.get("data", {}),
+                        tasks=raw_record.get("tasks", []),
+                        jobs=raw_record.get("jobs", {}),
+                        save_points=summaries,
+                        events=events,
+                        failure_reason=raw_record.get("failure_reason"),
+                        failure_history=raw_record.get("failure_history", []),
+                        forked_from=raw_record.get("forked_from"),
+                        forked_from_save_point=raw_record.get("forked_from_save_point"),
+                        parent_workflow_id=raw_record.get("parent_workflow_id"),
+                        created_at=created_at,
+                        updated_at=updated_at,
+                        workspace_blob=workspace_blob,
+                        workspace_archive=workspace_archive,
+                    )
+                    workflows_root[workflow_id] = instance
 
             ws_meta = raw_record.get("workspace_metadata") or (raw_record.get("data", {}).get("workspace_metadata") if isinstance(raw_record.get("data"), dict) else {})
             if not ws_meta and existing is not None:
                 ws_meta = getattr(existing, "workspace_metadata", {})
 
-            metadata = WorkflowMetadata(
-                workflow_id=instance.workflow_id,
-                process_id=instance.process_id,
-                bpmn_path=instance.bpmn_path,
-                status=instance.status,
-                task_count=len(instance.tasks),
-                save_point_count=len(instance.save_points),
-                created_at=instance.created_at,
-                updated_at=instance.updated_at,
-                data=dict(instance.data),
-                failure_reason=instance.failure_reason,
-                parent_workflow_id=getattr(instance, "parent_workflow_id", None),
-                workspace_metadata=ws_meta,
-            )
-            metadata_root[workflow_id] = metadata
+            if workflow_id in metadata_root and isinstance(metadata_root[workflow_id], WorkflowMetadata):
+                metadata = metadata_root[workflow_id]
+                metadata.process_id = instance.process_id
+                metadata.bpmn_path = instance.bpmn_path
+                metadata.status = instance.status
+                metadata.task_count = len(instance.tasks)
+                metadata.save_point_count = len(instance.save_points)
+                metadata.updated_at = instance.updated_at
+                metadata.data = dict(instance.data)
+                metadata.failure_reason = instance.failure_reason
+                metadata.parent_workflow_id = getattr(instance, "parent_workflow_id", None)
+                metadata.workspace_metadata = dict(ws_meta)
+                metadata._p_changed = True
+            else:
+                metadata = WorkflowMetadata(
+                    workflow_id=instance.workflow_id,
+                    process_id=instance.process_id,
+                    bpmn_path=instance.bpmn_path,
+                    status=instance.status,
+                    task_count=len(instance.tasks),
+                    save_point_count=len(instance.save_points),
+                    created_at=instance.created_at,
+                    updated_at=instance.updated_at,
+                    data=dict(instance.data),
+                    failure_reason=instance.failure_reason,
+                    parent_workflow_id=getattr(instance, "parent_workflow_id", None),
+                    workspace_metadata=ws_meta,
+                )
+                metadata_root[workflow_id] = metadata
 
     def get_workspace_metadata(self, workflow_id: str) -> dict[str, Any]:
-        with self._lock, self.db.transaction() as connection:
+        with self.db.transaction() as connection:
             root = connection.root()
             if "metadata" in root and workflow_id in root["metadata"]:
                 meta = root["metadata"][workflow_id]
@@ -420,15 +521,16 @@ class WorkflowStore:
             return {}
 
     def load(self, workflow_id: str) -> dict[str, Any] | None:
-        with self._lock, self.db.transaction() as connection:
+        with self.db.transaction() as connection:
             root = connection.root()
             record = root["workflows"].get(workflow_id)
             if record is None:
                 return None
             return record.to_dict() if hasattr(record, "to_dict") else dict(record)
 
+    @_retry_on_conflict()
     def append_event(self, workflow_id: str, event_dict: dict[str, Any]) -> None:
-        with self._lock, self.db.transaction() as connection:
+        with self.db.transaction() as connection:
             root = connection.root()
             wf = root["workflows"].get(workflow_id)
             if wf is not None:
@@ -437,7 +539,7 @@ class WorkflowStore:
                 wf.events.append(PersistentMapping(event_dict))
 
     def get_events(self, workflow_id: str) -> list[dict[str, Any]]:
-        with self._lock, self.db.transaction() as connection:
+        with self.db.transaction() as connection:
             root = connection.root()
             wf = root["workflows"].get(workflow_id)
             if wf is None:
@@ -445,6 +547,7 @@ class WorkflowStore:
             events = getattr(wf, "events", [])
             return [dict(e) if isinstance(e, PersistentMapping) else e for e in events]
 
+    @_retry_on_conflict()
     def register_webhook(self, url: str, events: list[str] | None = None) -> dict[str, Any]:
         webhook_id = uuid.uuid4().hex
         webhook_data = {
@@ -453,7 +556,7 @@ class WorkflowStore:
             "events": list(events or []),
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
-        with self._lock, self.db.transaction() as connection:
+        with self.db.transaction() as connection:
             root = connection.root()
             if "webhooks" not in root:
                 root["webhooks"] = OOBTree()
@@ -461,22 +564,30 @@ class WorkflowStore:
         return webhook_data
 
     def list_webhooks(self) -> list[dict[str, Any]]:
-        with self._lock, self.db.transaction() as connection:
+        with self.db.transaction() as connection:
             root = connection.root()
             if "webhooks" not in root:
                 return []
             return [dict(wh) for wh in root["webhooks"].values()]
 
+    @_retry_on_conflict()
     def delete_webhook(self, webhook_id: str) -> bool:
-        with self._lock, self.db.transaction() as connection:
+        with self.db.transaction() as connection:
             root = connection.root()
             if "webhooks" in root and webhook_id in root["webhooks"]:
                 del root["webhooks"][webhook_id]
                 return True
             return False
 
-    def list_metadata(self, status_filter: str | None = None) -> list[dict[str, Any]]:
-        with self._lock, self.db.transaction() as connection:
+    def list_metadata(
+        self,
+        status_filter: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> list[dict[str, Any]]:
+        with self.db.transaction() as connection:
             root = connection.root()
             metadata_tree = root.get("metadata", {})
             workflows_tree = root.get("workflows", {})
@@ -519,20 +630,30 @@ class WorkflowStore:
                 item = meta.to_dict() if hasattr(meta, "to_dict") else dict(meta)
                 if status_filter and status_filter != "all" and item.get("status") != status_filter:
                     continue
+                created_at = item.get("created_at") or ""
+                if since and created_at < since:
+                    continue
+                if until and created_at > until:
+                    continue
                 results.append(item)
             results.sort(key=lambda x: x.get("updated_at") or "", reverse=True)
+            if offset > 0:
+                results = results[offset:]
+            if limit is not None and limit >= 0:
+                results = results[:limit]
             return results
 
     def list(self) -> list[tuple[str, dict[str, Any]]]:
-        with self._lock, self.db.transaction() as connection:
+        with self.db.transaction() as connection:
             root = connection.root()
             return [
                 (wf_id, wf.to_dict() if hasattr(wf, "to_dict") else dict(wf))
                 for wf_id, wf in root["workflows"].items()
             ]
 
+    @_retry_on_conflict()
     def delete(self, workflow_id: str) -> bool:
-        with self._lock, self.db.transaction() as connection:
+        with self.db.transaction() as connection:
             root = connection.root()
             workflows = root["workflows"]
             if workflow_id not in workflows:
@@ -548,8 +669,9 @@ class WorkflowStore:
                 del root["metadata"][workflow_id]
             return True
 
+    @_retry_on_conflict()
     def clear(self) -> int:
-        with self._lock, self.db.transaction() as connection:
+        with self.db.transaction() as connection:
             root = connection.root()
             count = len(root["workflows"])
             root["workflows"].clear()
@@ -557,51 +679,86 @@ class WorkflowStore:
             root["metadata"].clear()
             return count
 
+    @_retry_on_conflict()
     def update(self, workflow_id: str, **changes: Any) -> dict[str, Any]:
-        record = self.load(workflow_id)
-        if record is None:
-            raise KeyError(workflow_id)
-        record.update(changes)
-        self.save(workflow_id, record)
-        return record
+        with self.db.transaction() as connection:
+            root = connection.root()
+            wf = root["workflows"].get(workflow_id)
+            if wf is None:
+                raise KeyError(workflow_id)
+            if isinstance(wf, WorkflowInstance):
+                for k, v in changes.items():
+                    if k == "data" and isinstance(v, dict):
+                        wf.data.clear()
+                        wf.data.update(v)
+                    elif k == "jobs" and isinstance(v, dict):
+                        wf.jobs.clear()
+                        wf.jobs.update(v)
+                    elif k == "tasks" and isinstance(v, list):
+                        wf.tasks = PersistentList(v)
+                    elif k == "save_points" and isinstance(v, list):
+                        wf.save_points = PersistentList(v)
+                    elif k == "failure_history" and isinstance(v, list):
+                        wf.failure_history = PersistentList(v)
+                    elif hasattr(wf, k):
+                        setattr(wf, k, v)
+                    else:
+                        wf.extra[k] = v
+                wf.updated_at = datetime.now(timezone.utc).isoformat()
+                wf._p_changed = True
+
+                if workflow_id in root["metadata"]:
+                    meta = root["metadata"][workflow_id]
+                    meta.status = wf.status
+                    meta.task_count = len(wf.tasks)
+                    meta.save_point_count = len(wf.save_points)
+                    meta.updated_at = wf.updated_at
+                    meta.data = dict(wf.data)
+                    meta.failure_reason = wf.failure_reason
+                    meta._p_changed = True
+
+                return wf.to_dict()
+            else:
+                wf_dict = dict(wf)
+                wf_dict.update(changes)
+                root["workflows"][workflow_id] = wf_dict
+                return wf_dict
 
     def pack(self, days: int = 0) -> dict[str, Any]:
-        with self._lock:
-            is_file = self.path != ":memory:" and Path(self.path).is_file()
-            size_before = Path(self.path).stat().st_size if is_file else 0
-            pack_time = time.time() - (days * 86400)
-            self.db.pack(pack_time)
-            size_after = Path(self.path).stat().st_size if is_file else 0
-            reclaimed = max(0, size_before - size_after)
-            return {
-                "path": self.path,
-                "size_before_bytes": size_before,
-                "size_after_bytes": size_after,
-                "reclaimed_bytes": reclaimed,
-                "size_before_human": self._format_bytes(size_before),
-                "size_after_human": self._format_bytes(size_after),
-                "reclaimed_human": self._format_bytes(reclaimed),
-            }
+        is_file = self.path != ":memory:" and Path(self.path).is_file()
+        size_before = Path(self.path).stat().st_size if is_file else 0
+        pack_time = time.time() - (days * 86400)
+        self.db.pack(pack_time)
+        size_after = Path(self.path).stat().st_size if is_file else 0
+        reclaimed = max(0, size_before - size_after)
+        return {
+            "path": self.path,
+            "size_before_bytes": size_before,
+            "size_after_bytes": size_after,
+            "reclaimed_bytes": reclaimed,
+            "size_before_human": self._format_bytes(size_before),
+            "size_after_human": self._format_bytes(size_after),
+            "reclaimed_human": self._format_bytes(reclaimed),
+        }
 
     def storage_stats(self) -> dict[str, Any]:
-        with self._lock:
-            is_file = self.path != ":memory:" and Path(self.path).is_file()
-            size_bytes = Path(self.path).stat().st_size if is_file else 0
-            with self.db.transaction() as connection:
-                root = connection.root()
-                instances_count = len(root.get("workflows", {}))
-                save_points_count = len(root.get("save_points", {}))
-            return {
-                "storage_type": "memory" if self.path == ":memory:" else "file",
-                "path": self.path,
-                "size_bytes": size_bytes,
-                "size_human": self._format_bytes(size_bytes),
-                "instances_count": instances_count,
-                "save_points_count": save_points_count,
-            }
+        is_file = self.path != ":memory:" and Path(self.path).is_file()
+        size_bytes = Path(self.path).stat().st_size if is_file else 0
+        with self.db.transaction() as connection:
+            root = connection.root()
+            instances_count = len(root.get("workflows", {}))
+            save_points_count = len(root.get("save_points", {}))
+        return {
+            "storage_type": "memory" if self.path == ":memory:" else "file",
+            "path": self.path,
+            "size_bytes": size_bytes,
+            "size_human": self._format_bytes(size_bytes),
+            "instances_count": instances_count,
+            "save_points_count": save_points_count,
+        }
 
     def get_workspace(self, workflow_id: str) -> Any | None:
-        with self._lock, self.db.transaction() as connection:
+        with self.db.transaction() as connection:
             root = connection.root()
             instance = root["workflows"].get(workflow_id)
             if instance is not None:
@@ -616,8 +773,9 @@ class WorkflowStore:
                         return None
             return None
 
+    @_retry_on_conflict()
     def set_workspace(self, workflow_id: str, blob_or_bytes: Any) -> None:
-        with self._lock, self.db.transaction() as connection:
+        with self.db.transaction() as connection:
             root = connection.root()
             instance = root["workflows"].get(workflow_id)
             if instance is not None:

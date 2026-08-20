@@ -16,3 +16,7 @@ def test_camunda_to_formjs_type_mapping() -> None:
     assert CAMUNDA_TO_FORMJS_TYPE["boolean"] == "checkbox"
     assert CAMUNDA_TO_FORMJS_TYPE["date"] == "textfield"
     assert CAMUNDA_TO_FORMJS_TYPE["enum"] == "select"
+    # Unknown types fallback to textfield
+    assert CAMUNDA_TO_FORMJS_TYPE.get("unknown_type", "textfield") == "textfield"
+    assert CAMUNDA_TO_FORMJS_TYPE.get("custom_widget", "textfield") == "textfield"
+

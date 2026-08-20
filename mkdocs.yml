@@ -46,6 +46,8 @@ markdown_extensions:
 
 nav:
   - Overview: index.md
+  - Architecture: architecture.md
+  - API Reference: api-reference.md
   - Features:
       - Usage Story & Live Walkthrough: usage-story.md
       - BPMN Orchestration & ZODB: features/orchestration.md
@@ -53,6 +55,9 @@ nav:
       - Save Points & Timeline Forking: features/savepoints-forking.md
       - Web Interface & FormJS: features/web-ui.md
       - Process History & Analytics: features/history-analytics.md
+  - Guides:
+      - Authoring Workflows: authoring-workflows.md
+      - Extending Adapters: extending-adapters.md
   - Developer Guide:
       - Getting Started: development/getting-started.md
       - Testing & Screenshot Automation: development/testing-verification.md

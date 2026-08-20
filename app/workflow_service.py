@@ -20,7 +20,7 @@ from app.engine import WorkflowRunner
 from app.events import EventBus, WorkflowEvent
 from app.persistence import WorkflowStore
 from app.pi_rpc import PiResult, PiRpcClient
-from app.workspace import cleanup_workspace, get_workspace_metadata, pack_workspace, pack_workspace_to_bytes, unpack_workspace, duplicate_blob
+from app.workspace import cleanup_workspace, get_workspace_metadata, pack_workspace_to_bytes, unpack_workspace, duplicate_blob
 from app.ws import manager as ws_manager
 
 logger = logging.getLogger("bpmn.workflow")
@@ -42,24 +42,71 @@ class WorkflowNotFound(KeyError):
     pass
 
 
+def _sanitize(value: Any, max_length: int = 50_000, depth: int = 0, max_depth: int = 10) -> Any:
+    if depth > max_depth:
+        return "[nested too deep]"
+    if isinstance(value, str) and len(value) > max_length:
+        return value[:max_length] + "...[truncated]"
+    if isinstance(value, dict):
+        return {str(k): _sanitize(v, max_length, depth + 1, max_depth) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize(v, max_length, depth + 1, max_depth) for v in value]
+    return value
+
+
 def _sanitize_output(output: dict[str, Any] | None) -> dict[str, Any]:
-    """Sanitize agent output values to prevent memory bloat and unbounded data injection."""
+    """Sanitize agent output values recursively to prevent memory bloat and unbounded data injection."""
     if not output:
         return {}
-    max_length = 50_000
-    sanitized: dict[str, Any] = {}
-    for key, val in output.items():
-        if isinstance(val, str) and len(val) > max_length:
-            val = val[:max_length] + "...[truncated]"
-        sanitized[key] = val
-    return sanitized
+    res = _sanitize(output)
+    return res if isinstance(res, dict) else {}
+
+
+def _process_workspace_artifacts(
+    cwd: str,
+    workdir: str,
+    result_output: Any,
+    result_text: str,
+    document_content: Any,
+) -> tuple[list[str], dict[str, Any]]:
+    artifacts_list: list[str] = []
+    if result_output and isinstance(result_output, dict):
+        raw_artifacts = result_output.get("artifacts", [])
+        if isinstance(raw_artifacts, list):
+            for art in raw_artifacts:
+                if isinstance(art, str):
+                    artifacts_list.append(art)
+                    src_file = Path(cwd) / art
+                    dst_file = Path(workdir) / art
+                    if src_file.is_file() and str(src_file.resolve()) != str(dst_file.resolve()):
+                        dst_file.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src_file, dst_file)
+                    elif not dst_file.is_file():
+                        doc_content = (
+                            result_output.get("document_text")
+                            or result_output.get("summary")
+                            or result_text
+                        )
+                        if doc_content:
+                            dst_file.parent.mkdir(parents=True, exist_ok=True)
+                            dst_file.write_text(doc_content)
+
+    if document_content:
+        doc_file = Path(workdir) / "document.md"
+        if not doc_file.exists():
+            doc_file.write_text(str(document_content))
+        if "document.md" not in artifacts_list:
+            artifacts_list.append("document.md")
+
+    ws_meta = get_workspace_metadata(workdir, artifacts=artifacts_list)
+    return artifacts_list, ws_meta
 
 
 class WorkflowService:
     def __init__(
         self,
         store: WorkflowStore,
-        pi_client: PiRpcClient | BaseAdapter | None = None,
+        pi_client: Any = None,
         adapter_registry: AdapterRegistry | None = None,
     ) -> None:
         self.store = store
@@ -80,7 +127,7 @@ class WorkflowService:
                     def adapter_type(self) -> str:
                         return "pi_agent"
 
-                    async def run(self, prompt: str, config: dict[str, str], cwd: str) -> AgentResult:
+                    async def run(self, prompt: str, config: dict[str, str], cwd: str, on_event: Any = None) -> AgentResult:
                         res = await self.target.run(prompt, cwd)
                         if isinstance(res, AgentResult):
                             return res
@@ -95,7 +142,10 @@ class WorkflowService:
 
                 self.registry.register(GenericAdapter(pi_client))
         else:
-            default_timeout = float(os.getenv("PI_TIMEOUT_SECONDS", "1800"))
+            try:
+                default_timeout = float(os.getenv("PI_TIMEOUT_SECONDS", "1800"))
+            except (ValueError, TypeError):
+                default_timeout = 1800.0
             self.registry.register(PiAdapter(PiRpcClient(timeout_seconds=default_timeout)))
 
         self.jobs: dict[str, asyncio.Task[None]] = {}
@@ -130,6 +180,8 @@ class WorkflowService:
             "save_points": [self._save_point_summary(point) for point in record.get("save_points", [])],
             "events": record.get("events", []),
             "parent_workflow_id": record.get("parent_workflow_id"),
+            "forked_from": record.get("forked_from"),
+            "forked_from_save_point": record.get("forked_from_save_point"),
         }
 
     @staticmethod
@@ -258,8 +310,21 @@ class WorkflowService:
             for item in self.store.list_metadata()
         ]
 
-    def history_instances(self, status_filter: str | None = None) -> list[dict[str, Any]]:
-        return self.store.list_metadata(status_filter=status_filter)
+    def history_instances(
+        self,
+        status_filter: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self.store.list_metadata(
+            status_filter=status_filter,
+            limit=limit,
+            offset=offset,
+            since=since,
+            until=until,
+        )
 
     def save_point_detail(self, workflow_id: str, save_point_id: str) -> dict[str, Any]:
         point = self.store.load_save_point(save_point_id)
@@ -301,29 +366,49 @@ class WorkflowService:
     async def storage_stats(self) -> dict[str, Any]:
         return await asyncio.to_thread(self.store.storage_stats)
 
-    def delete_instance(self, workflow_id: str) -> bool:
-        for task_id, job in list(self.jobs.items()):
-            if self._job_workflow(task_id, workflow_id) and not job.done():
-                job.cancel()
-        return self.store.delete(workflow_id)
+    async def delete_instance(self, workflow_id: str) -> bool:
+        async with self._lock(workflow_id):
+            for task_id, job in list(self.jobs.items()):
+                if self._job_workflow(task_id, workflow_id) and not job.done():
+                    job.cancel()
+            deleted = self.store.delete(workflow_id)
+        self._locks.pop(workflow_id, None)
+        return deleted
 
-    def clear_instances(self) -> int:
+    async def clear_instances(self) -> int:
         for job in self.jobs.values():
             if not job.done():
                 job.cancel()
-        return self.store.clear()
+        count = self.store.clear()
+        self._locks.clear()
+        return count
 
-    def diagram(self, workflow_id: str) -> str:
+    async def cancel(self, workflow_id: str) -> dict[str, Any]:
+        async with self._lock(workflow_id):
+            record = self._record(workflow_id)
+            if record["status"] in ("completed", "cancelled"):
+                return self.state(workflow_id)
+            for task_id, job in list(self.jobs.items()):
+                if self._job_workflow(task_id, workflow_id) and not job.done():
+                    job.cancel()
+            self.store.update(workflow_id, status="cancelled")
+            self.events.emit("workflow_cancelled", workflow_id)
+            return self.state(workflow_id)
+
+    async def diagram(self, workflow_id: str) -> str:
         record = self._record(workflow_id)
         path = Path(record["bpmn_path"]).resolve()
         if path.suffix != ".bpmn" or not path.is_file():
             raise FileNotFoundError(path)
-        return path.read_text(encoding="utf-8")
+        return await asyncio.to_thread(path.read_text, encoding="utf-8")
 
     async def fork(self, workflow_id: str, save_point_id: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
-        workflow_id = self._get_root_workflow_id(workflow_id)
-        logger.info("Forking workflow from savepoint", extra={"workflow_id": workflow_id, "save_point_id": save_point_id})
         source = self._record(workflow_id)
+        if source.get("parent_workflow_id"):
+            raise ValueError(
+                f"Cannot fork child workflow '{workflow_id}' directly; fork root workflow '{source['parent_workflow_id']}' instead"
+            )
+        logger.info("Forking workflow from savepoint", extra={"workflow_id": workflow_id, "save_point_id": save_point_id})
         point = self.store.load_save_point(save_point_id)
         if point is None:
             point = next(
@@ -488,7 +573,11 @@ class WorkflowService:
                         task_name=task_name,
                         data={"attempt": attempts, "generation": generation},
                     )
-                    self.jobs[task_key] = asyncio.create_task(self._run_pi(workflow_id, task_key))
+                    task = asyncio.create_task(self._run_pi(workflow_id, task_key))
+                    def _on_done(_t: asyncio.Task[None], k: str = task_key) -> None:
+                        self.jobs.pop(k, None)
+                    task.add_done_callback(_on_done)
+                    self.jobs[task_key] = task
             else:
                 record["status"] = self._status(workflow)
                 for task in workflow.get_tasks(state=TaskState.READY):
@@ -536,42 +625,32 @@ class WorkflowService:
             cwd = configured_cwd if configured_cwd else workdir
 
             prompt = self.runner.prompt(workflow_id, task, record["workflow"])
-            result = await adapter.run(prompt, config, cwd)
+
+            async def _on_event(ev: dict[str, Any]) -> None:
+                try:
+                    from app.ws import manager
+                    await manager.broadcast(workflow_id, {
+                        "type": "pi_event",
+                        "workflow_id": workflow_id,
+                        "task_id": task_id,
+                        "task_name": getattr(task, "name", task_id),
+                        "event": ev,
+                    })
+                except Exception:
+                    pass
+
+            result = await adapter.run(prompt, config, cwd, on_event=_on_event)
 
             # Capture generated artifacts and documents into the isolated instance workspace
-            artifacts_list: list[str] = []
-            if result.output and isinstance(result.output, dict):
-                raw_artifacts = result.output.get("artifacts", [])
-                if isinstance(raw_artifacts, list):
-                    for art in raw_artifacts:
-                        if isinstance(art, str):
-                            artifacts_list.append(art)
-                            src_file = Path(cwd) / art
-                            dst_file = Path(workdir) / art
-                            if src_file.is_file() and str(src_file.resolve()) != str(dst_file.resolve()):
-                                dst_file.parent.mkdir(parents=True, exist_ok=True)
-                                shutil.copy2(src_file, dst_file)
-                            elif not dst_file.is_file():
-                                doc_content = (
-                                    result.output.get("document_text")
-                                    or result.output.get("summary")
-                                    or result.text
-                                )
-                                if doc_content:
-                                    dst_file.parent.mkdir(parents=True, exist_ok=True)
-                                    dst_file.write_text(doc_content)
-
-            # If workflow data contains document content or markdown, ensure saved to file in workspace
             wf_data = record["workflow"].data
-            if "document_content" in wf_data and wf_data["document_content"]:
-                doc_file = Path(workdir) / "document.md"
-                if not doc_file.exists():
-                    doc_file.write_text(str(wf_data["document_content"]))
-                if "document.md" not in artifacts_list:
-                    artifacts_list.append("document.md")
-
-            # Compute lightweight workspace manifest metadata
-            ws_meta = get_workspace_metadata(workdir, artifacts=artifacts_list)
+            artifacts_list, ws_meta = await asyncio.to_thread(
+                _process_workspace_artifacts,
+                cwd,
+                workdir,
+                result.output,
+                result.text,
+                wf_data.get("document_content"),
+            )
             record["workspace_metadata"] = ws_meta
             record["workflow"].data["workspace_metadata"] = ws_meta
 
@@ -580,6 +659,9 @@ class WorkflowService:
                 archive_bytes = await pack_workspace_to_bytes(workdir)
                 self.store.set_workspace(workflow_id, archive_bytes)
                 record["workspace_archive"] = archive_bytes
+        except asyncio.CancelledError:
+            logger.info(f"Agent task {task_id} was cancelled")
+            result = AgentResult("cancelled", None, "", [], "Task was cancelled", 1)
         except Exception as exc:
             logger.exception(f"Error running agent task {task_id}: {exc}")
             result = AgentResult("failed", None, "", [], str(exc), 1)
@@ -636,8 +718,11 @@ class WorkflowService:
                 )
 
             sanitized_output = _sanitize_output(result.output)
+            # Map result.status to both 'agent_status' (used by BPMN exclusive gateway conditions)
+            # and 'status' for resilience and consistency.
             task_data = {
                 "agent_status": result.status,
+                "status": result.status,
                 "agent_output": sanitized_output,
                 "agent_text": result.text,
             }
@@ -653,7 +738,7 @@ class WorkflowService:
                         source_key = source_expr[2:-1]
                         task.workflow.data[target_var] = sanitized_output.get(source_key)
                     else:
-                        task.workflow.data[target_var] = sanitized_output.get(source_expr, source_expr)
+                        task.workflow.data[target_var] = sanitized_output.get(source_expr)
 
             if failure_reason:
                 task.data["failure_reason"] = failure_reason
@@ -684,6 +769,16 @@ class WorkflowService:
                     task_name=getattr(task.task_spec, "bpmn_name", task.task_spec.name),
                     data=sanitized_output,
                 )
+            elif result.status == "cancelled":
+                job["status"] = "cancelled"
+                job["failure_reason"] = failure_reason
+                self.events.emit(
+                    "pi_cancelled",
+                    workflow_id,
+                    task_id=task_id,
+                    task_name=getattr(task.task_spec, "bpmn_name", task.task_spec.name),
+                    data={"failure_reason": failure_reason},
+                )
             else:
                 self.events.emit(
                     "pi_failed",
@@ -693,10 +788,16 @@ class WorkflowService:
                     data={"failure_reason": failure_reason, "exit_code": result.exit_code},
                 )
 
-            status = self._status(workflow) if result.status == "success" else "failed"
+            status = self._status(workflow) if result.status == "success" else ("cancelled" if result.status == "cancelled" else "failed")
             if status == "failed":
                 self.events.emit(
                     "workflow_failed",
+                    workflow_id,
+                    data={"failure_reason": failure_reason},
+                )
+            elif status == "cancelled":
+                self.events.emit(
+                    "workflow_cancelled",
                     workflow_id,
                     data={"failure_reason": failure_reason},
                 )
@@ -787,6 +888,6 @@ class WorkflowService:
                         if j.get("status") == "running":
                             j["status"] = "failed"
                             j["failure_reason"] = "Process terminated unexpectedly"
-                    self.store.save(item["workflow_id"], record)
+                    await asyncio.to_thread(self.store.save, item["workflow_id"], record)
                     recovered += 1
         return recovered

@@ -70,13 +70,13 @@ def test_history_instances_and_savepoint_detail() -> None:
         assert "reclaimed_human" in pack_res
 
         # 6. Verify deletion of historical instance
-        assert service.delete_instance(started["workflow_id"]) is True
+        assert await service.delete_instance(started["workflow_id"]) is True
         assert service.history_instances() == []
 
         # 7. Verify clear instances
         started2 = await service.start("workflows/contract_review.bpmn", None, {"contract": "text 2"})
         assert len(service.history_instances()) == 1
-        assert service.clear_instances() == 1
+        assert await service.clear_instances() == 1
         assert service.history_instances() == []
 
     asyncio.run(scenario())

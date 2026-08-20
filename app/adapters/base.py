@@ -19,8 +19,14 @@ class BaseAdapter(ABC):
     """Abstract base class for AI agent and execution backends."""
 
     @abstractmethod
-    async def run(self, prompt: str, config: dict[str, str], cwd: str) -> AgentResult:
-        """Execute an agent task with the given prompt and task configuration."""
+    async def run(
+        self,
+        prompt: str,
+        config: dict[str, str],
+        cwd: str,
+        on_event: Any = None,
+    ) -> AgentResult:
+        """Execute an agent task with the given prompt, configuration, and event callback."""
         ...
 
     @property

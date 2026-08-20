@@ -50,8 +50,13 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(log_entry, default=str)
 
 
+_configured_handlers: list[logging.Handler] = []
+
+
 def configure_logging(level: str = "INFO", log_file: str | None = None) -> None:
     """Configure root logger with structured JSON formatting and file output."""
+    global _configured_handlers
+
     if log_file is None:
         log_file = os.getenv("LOG_FILE", "app.log")
 
@@ -62,14 +67,20 @@ def configure_logging(level: str = "INFO", log_file: str | None = None) -> None:
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
 
-    # Remove existing handlers to avoid duplicate log lines
-    root.handlers.clear()
+    # Remove only previously configured handlers to avoid duplicate log lines while preserving external handlers
+    for handler in _configured_handlers:
+        if handler in root.handlers:
+            root.removeHandler(handler)
+    _configured_handlers.clear()
+
     root.addHandler(stream_handler)
+    _configured_handlers.append(stream_handler)
 
     if log_file:
         file_handler = logging.FileHandler(log_file, encoding="utf-8")
         file_handler.setFormatter(formatter)
         root.addHandler(file_handler)
+        _configured_handlers.append(file_handler)
 
     # Suppress verbose third-party logs
     logging.getLogger("ZODB").setLevel(logging.WARNING)
@@ -82,7 +93,23 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: Any) -> Response:
         start_time = time.monotonic()
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            duration_ms = round((time.monotonic() - start_time) * 1000, 2)
+            logger.error(
+                f"{request.method} {request.url.path} 500 ({duration_ms}ms) - {exc}",
+                extra={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": 500,
+                    "duration_ms": duration_ms,
+                    "error": str(exc),
+                },
+                exc_info=True,
+            )
+            raise
+
         duration_ms = round((time.monotonic() - start_time) * 1000, 2)
 
         # Log requests (skip noisy static asset logs if desired, or log all)

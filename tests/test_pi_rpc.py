@@ -1,17 +1,117 @@
 import json
+from pathlib import Path
+import pytest
 
-from app.pi_rpc import _parse_json
+from app.pi_rpc import PiRpcClient, _parse_json
 
 
-def test_parse_pi_json_result() -> None:
-    result = {
+@pytest.mark.parametrize(
+    "invalid_input",
+    [
+        "",
+        "   ",
+        "not json at all",
+        "{invalid json",
+        json.dumps({"status": "success"}),  # missing keys
+        json.dumps({"status": "success", "summary": "s", "findings": [], "artifacts": []}),  # missing next_action
+        json.dumps({"status": 123, "summary": "s", "findings": [], "artifacts": [], "next_action": "c"}),  # status not str
+        json.dumps({"status": "s", "summary": 123, "findings": [], "artifacts": [], "next_action": "c"}),  # summary not str
+        json.dumps({"status": "s", "summary": "s", "findings": "not list", "artifacts": [], "next_action": "c"}),  # findings not list
+        json.dumps({"status": "s", "summary": "s", "findings": [], "artifacts": "not list", "next_action": "c"}),  # artifacts not list
+        json.dumps({"status": "s", "summary": "s", "findings": [], "artifacts": [], "next_action": 123}),  # next_action not str
+    ],
+)
+def test_parse_json_invalid_edge_cases(invalid_input: str) -> None:
+    assert _parse_json(invalid_input) is None
+
+
+def test_parse_json_valid_variants() -> None:
+    valid = {
         "status": "success",
-        "summary": "ok",
-        "findings": [],
-        "artifacts": [],
+        "summary": "Valid summary",
+        "findings": ["f1"],
+        "artifacts": ["a1"],
         "next_action": "continue",
+        "extra_key": "custom_value",
     }
-    assert _parse_json(json.dumps(result)) == result
-    assert _parse_json("```json\n" + json.dumps(result) + "\n```") == result
-    assert _parse_json('{"status":"success"}') is None
-    assert _parse_json("not json") is None
+    # Raw JSON
+    assert _parse_json(json.dumps(valid)) == valid
+    # Fenced JSON with ```json
+    assert _parse_json(f"```json\n{json.dumps(valid)}\n```") == valid
+    # Fenced JSON with ```
+    assert _parse_json(f"```\n{json.dumps(valid)}\n```") == valid
+
+
+@pytest.mark.anyio
+async def test_pi_rpc_subprocess_real_execution(tmp_path: Path) -> None:
+    demo_script = Path("scripts/pi-demo").resolve()
+    assert demo_script.exists()
+
+    client = PiRpcClient(executable=str(demo_script), timeout_seconds=10)
+    res = await client.run("Please draft a document", cwd=str(tmp_path))
+
+    assert res.status == "success"
+    assert res.exit_code in (0, -15, 143)
+    assert res.output is not None
+    assert res.output["status"] == "success"
+    assert res.output["summary"] != ""
+    assert isinstance(res.output["findings"], list)
+    assert (tmp_path / "document.md").exists()
+
+
+@pytest.mark.anyio
+async def test_pi_rpc_subprocess_error_exit(tmp_path: Path) -> None:
+    script = tmp_path / "fail_pi.sh"
+    script.write_text("""#!/bin/sh
+echo "Fatal error in model process" >&2
+exit 1
+""")
+    script.chmod(0o755)
+
+    client = PiRpcClient(executable=str(script), timeout_seconds=5)
+    res = await client.run("test", cwd=str(tmp_path))
+
+    assert res.status == "failed"
+    assert res.exit_code == 1
+    assert "Fatal error in model process" in res.stderr
+
+
+@pytest.mark.anyio
+async def test_pi_rpc_subprocess_invalid_json_output(tmp_path: Path) -> None:
+    script = tmp_path / "bad_output_pi.py"
+    script.write_text("""#!/usr/bin/env python3
+import json, sys
+
+for line in sys.stdin:
+    print(json.dumps({"type": "session"}))
+    print(json.dumps({
+        "type": "message_end",
+        "message": {"role": "assistant", "content": [{"type": "text", "text": "I am not returning valid JSON."}]}
+    }))
+    print(json.dumps({"type": "agent_settled"}))
+    break
+""")
+    script.chmod(0o755)
+
+    client = PiRpcClient(executable=str(script), timeout_seconds=5)
+    res = await client.run("test", cwd=str(tmp_path))
+
+    assert res.status == "failed"
+    assert res.output is None
+    assert "I am not returning valid JSON." in res.text
+
+
+@pytest.mark.anyio
+async def test_pi_rpc_timeout_captures_stderr(tmp_path: Path) -> None:
+    script_path = tmp_path / "slow_pi.sh"
+    script_path.write_text("""#!/bin/sh
+echo "Diagnostic stderr before timeout" >&2
+sleep 2
+""")
+    script_path.chmod(0o755)
+
+    client = PiRpcClient(executable=str(script_path), timeout_seconds=0.1)
+    res = await client._execute(str(script_path), "test prompt", cwd=str(tmp_path))
+
+    assert res.status == "timeout"
+    assert "Diagnostic stderr before timeout" in res.stderr

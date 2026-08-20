@@ -99,16 +99,28 @@ def _final_text(events: list[dict[str, Any]]) -> str:
 
 
 def _parse_json(text: str) -> dict[str, Any] | None:
+    if not text or not isinstance(text, str):
+        return None
     candidate = text.strip()
+    if not candidate:
+        return None
     fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", candidate, re.DOTALL)
     if fenced:
-        candidate = fenced.group(1)
+        candidate = fenced.group(1).strip()
     try:
         value = json.loads(candidate)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if not isinstance(value, dict):
         return None
     required = {"status", "summary", "findings", "artifacts", "next_action"}
-    return value if isinstance(value, dict) and required.issubset(value) else None
+    if not required.issubset(value):
+        return None
+    if not isinstance(value["status"], str) or not isinstance(value["summary"], str) or not isinstance(value["next_action"], str):
+        return None
+    if not isinstance(value["findings"], list) or not isinstance(value["artifacts"], list):
+        return None
+    return value
 
 
 class PiRpcClient:
@@ -118,6 +130,7 @@ class PiRpcClient:
         timeout_seconds: float = 1800,
         max_events: int = 10000,
     ) -> None:
+        self._explicit_executable = executable is not None
         configured_executable = executable or os.getenv("PI_EXECUTABLE")
         root_dir = Path(__file__).resolve().parents[1]
         demo_executable = root_dir / "scripts" / "pi-demo"
@@ -138,19 +151,57 @@ class PiRpcClient:
         self.timeout_seconds = timeout_seconds
         self.max_events = max_events
 
-    async def run(self, prompt: str, cwd: str) -> PiResult:
+    async def run(
+        self,
+        prompt: str,
+        cwd: str,
+        on_event: Any = None,
+        provider: str | None = None,
+        model: str | None = None,
+        timeout_seconds: int | None = None,
+    ) -> PiResult:
         demo_executable = str(Path(__file__).resolve().parents[1] / "scripts" / "pi-demo")
         executable = self.executable
-        if (os.getenv("PI_OFFLINE") == "1" or (Path(__file__).resolve().parents[1] / ".pi_offline").is_file()) and Path(demo_executable).is_file():
+        if not self._explicit_executable and (os.getenv("PI_OFFLINE") == "1" or (Path(__file__).resolve().parents[1] / ".pi_offline").is_file()) and Path(demo_executable).is_file():
             executable = demo_executable
-        result = await self._execute(executable, prompt, cwd)
-        if result.status != "success" and executable != demo_executable and Path(demo_executable).is_file():
-            demo_result = await self._execute(demo_executable, prompt, cwd)
+        result = await self._execute(
+            executable,
+            prompt,
+            cwd,
+            on_event=on_event,
+            provider=provider,
+            model=model,
+            timeout_seconds=timeout_seconds,
+        )
+        if (
+            result.status != "success"
+            and not self._explicit_executable
+            and executable != demo_executable
+            and Path(demo_executable).is_file()
+        ):
+            demo_result = await self._execute(
+                demo_executable,
+                prompt,
+                cwd,
+                on_event=on_event,
+                provider=provider,
+                model=model,
+                timeout_seconds=timeout_seconds,
+            )
             if demo_result.status == "success":
                 return demo_result
         return result
 
-    async def _execute(self, executable: str, prompt: str, cwd: str) -> PiResult:
+    async def _execute(
+        self,
+        executable: str,
+        prompt: str,
+        cwd: str,
+        on_event: Any = None,
+        provider: str | None = None,
+        model: str | None = None,
+        timeout_seconds: int | None = None,
+    ) -> PiResult:
         command = [
             executable,
             "--mode",
@@ -158,12 +209,12 @@ class PiRpcClient:
             "--no-session",
             "--no-approve",
         ]
-        provider = os.getenv("PI_PROVIDER")
-        model = os.getenv("PI_MODEL")
-        if provider:
-            command.extend(["--provider", provider])
-        if model:
-            command.extend(["--model", model])
+        active_provider = provider or os.getenv("PI_PROVIDER")
+        active_model = model or os.getenv("PI_MODEL")
+        if active_provider:
+            command.extend(["--provider", active_provider])
+        if active_model:
+            command.extend(["--model", active_model])
 
         env = {k: v for k, v in os.environ.items() if k in ALLOWED_ENV_VARS}
         if not env.get("OPENAI_API_KEY"):
@@ -204,41 +255,83 @@ class PiRpcClient:
             preexec_fn=preexec,
         )
         events: list[dict[str, Any]] = []
+        stderr_msg = ""
+        exit_code = None
+        status = "failed"
+
+        active_timeout = timeout_seconds or self.timeout_seconds
         try:
             assert process.stdin is not None
             process.stdin.write((json.dumps({"id": "workflow", "type": "prompt", "message": prompt}) + "\n").encode())
             await process.stdin.drain()
-            await asyncio.wait_for(self._read_events(process, events), self.timeout_seconds)
+            await asyncio.wait_for(self._read_events(process, events, on_event=on_event), active_timeout)
             try:
                 process.stdin.close()
             except Exception:
                 pass
             if process.returncode is None:
-                process.terminate()
+                try:
+                    process.terminate()
+                except ProcessLookupError:
+                    pass
                 try:
                     await asyncio.wait_for(process.wait(), 5)
                 except asyncio.TimeoutError:
-                    process.kill()
-                    await process.wait()
+                    if process.returncode is None:
+                        try:
+                            process.kill()
+                        except ProcessLookupError:
+                            pass
+                        await process.wait()
             exit_code = process.returncode
         except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
-            return PiResult("timeout", None, "", events, "Pi timed out", None)
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                await process.wait()
+            status = "timeout"
+            stderr_msg = "Pi timed out"
         except (BrokenPipeError, ConnectionError) as exc:
-            process.kill()
-            await process.wait()
-            return PiResult("failed", None, "", events, str(exc), None)
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                await process.wait()
+            status = "failed"
+            stderr_msg = str(exc)
         finally:
-            stderr = await process.stderr.read() if process.stderr else b""
+            raw_stderr = b""
+            if process.stderr:
+                try:
+                    raw_stderr = await process.stderr.read()
+                except Exception:
+                    pass
+            decoded_stderr = raw_stderr.decode(errors="replace")
+            if stderr_msg:
+                stderr_text = f"{stderr_msg}\n{decoded_stderr}".strip() if decoded_stderr else stderr_msg
+            else:
+                stderr_text = decoded_stderr
 
-        settled = any(event.get("type") == "agent_settled" for event in events)
-        text = _final_text(events)
-        output = _parse_json(text)
-        status = "success" if output is not None and (exit_code == 0 or settled) else "failed"
-        return PiResult(status, output, text, events, stderr.decode(errors="replace"), exit_code)
+        if status not in ("timeout",) and not stderr_msg:
+            settled = any(event.get("type") == "agent_settled" for event in events)
+            text = _final_text(events)
+            output = _parse_json(text)
+            status = "success" if output is not None and (exit_code == 0 or settled) else "failed"
+        else:
+            text = _final_text(events)
+            output = _parse_json(text)
 
-    async def _read_events(self, process: asyncio.subprocess.Process, events: list[dict[str, Any]]) -> None:
+        return PiResult(status, output, text, events, stderr_text, exit_code)
+
+    async def _read_events(
+        self,
+        process: asyncio.subprocess.Process,
+        events: list[dict[str, Any]],
+        on_event: Any = None,
+    ) -> None:
         assert process.stdout is not None
         while True:
             line = await process.stdout.readline()
@@ -247,7 +340,15 @@ class PiRpcClient:
             if len(events) >= self.max_events:
                 raise PiError("Pi emitted too many events")
             try:
-                events.append(json.loads(line))
+                parsed = json.loads(line)
+                events.append(parsed)
+                if on_event and callable(on_event):
+                    try:
+                        res = on_event(parsed)
+                        if asyncio.iscoroutine(res):
+                            await res
+                    except Exception:
+                        pass
             except json.JSONDecodeError as exc:
                 raise PiError("Pi emitted invalid JSONL") from exc
             if events[-1].get("type") == "agent_settled":

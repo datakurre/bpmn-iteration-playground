@@ -60,6 +60,16 @@
 const root = document.getElementById('instances');
 const $ = id => document.getElementById(id);
 
+function escapeHtml(unsafe) {
+  if (unsafe === null || unsafe === undefined) return '';
+  return String(unsafe)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 async function loadStorage() {
   try {
     const res = await fetch('/api/history/storage');
@@ -83,10 +93,10 @@ async function load() {
   root.innerHTML = items.length ? items.map(item => `
     <div class="flex justify-between gap-3.5 items-center bg-panel border border-line rounded-lg p-3 my-1.5 hover:border-line-highlight transition-colors shadow-md">
       <div>
-        <strong class="block text-[13.5px] text-ink"><a href="/instance/${item.workflow_id}" class="text-inherit no-underline hover:text-accent transition-colors">${item.workflow_id}</a></strong>
-        <small class="text-muted text-[11.5px]">${item.process_id} · ${item.status} · ${item.task_count} tasks</small>
+        <strong class="block text-[13.5px] text-ink"><a href="/instance/${encodeURIComponent(item.workflow_id)}" class="text-inherit no-underline hover:text-accent transition-colors">${escapeHtml(item.workflow_id)}</a></strong>
+        <small class="text-muted text-[11.5px]">${escapeHtml(item.process_id)} · ${escapeHtml(item.status)} · ${escapeHtml(item.task_count)} tasks</small>
       </div>
-      <button class="btn btn-danger text-xs px-2.5 py-1" data-delete="${item.workflow_id}">Delete</button>
+      <button class="btn btn-danger text-xs px-2.5 py-1" data-delete="${escapeHtml(item.workflow_id)}">Delete</button>
     </div>
   `).join('') : '<p class="text-muted text-xs">No persisted instances.</p>';
 

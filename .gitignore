@@ -24,9 +24,14 @@ htmlcov/
 
 # Node
 node_modules/
+app/static/bpmn-modeler-bundle.js
+app/static/bpmn-viewer-bundle.js
 
 # Temporary & Verification Outputs
-*.png
 *.log
 scratch/
+.mypy_cache/
+site/
+result
+result-*
 TODO.md
