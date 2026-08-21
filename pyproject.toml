@@ -3,7 +3,7 @@ name="bpmn-ai-starter"
 version="0.1.0"
 requires-python=">=3.11"
 dependencies = [
-    "spiffworkflow",
+    "spiffworkflow==3.2.0",
     "fastapi",
     "uvicorn[standard]",
     "ZODB",

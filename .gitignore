@@ -37,6 +37,7 @@ app/static/properties-panel.css
 *.log
 scratch/
 plans/
+todos/
 .mypy_cache/
 site/
 result
