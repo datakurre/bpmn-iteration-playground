@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -91,7 +91,7 @@ def configure_logging(level: str = "INFO", log_file: str | None = None) -> None:
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """FastAPI/Starlette middleware logging incoming HTTP requests with latency."""
 
-    async def dispatch(self, request: Request, call_next: Any) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         start_time = time.monotonic()
         try:
             response = await call_next(request)

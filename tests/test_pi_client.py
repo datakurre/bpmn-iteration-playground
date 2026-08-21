@@ -184,3 +184,161 @@ print(json.dumps({"type": "agent_settled"}))
     session_idx = res_session.output["findings"].index("--session")
     assert res_session.output["findings"][session_idx + 1] == "trunk-123"
     assert "--fork" not in res_session.output["findings"]
+
+
+def test_parse_json_rejects_non_dict_json() -> None:
+    assert _parse_json(json.dumps(["not", "an", "object"])) is None
+    assert _parse_json(json.dumps("just a string")) is None
+
+
+def test_final_text_from_string_content() -> None:
+    from app.pi_client import _final_text
+
+    events = [{"message": {"role": "assistant", "content": "plain string content"}}]
+    assert _final_text(events) == "plain string content"
+
+
+def test_final_text_from_legacy_messages_list_format() -> None:
+    from app.pi_client import _final_text
+
+    events = [
+        {
+            "messages": [
+                {"role": "user", "content": "ignored"},
+                {"role": "assistant", "content": [{"type": "text", "text": "legacy format reply"}]},
+            ]
+        }
+    ]
+    assert _final_text(events) == "legacy format reply"
+
+
+def test_final_text_from_legacy_messages_list_string_content() -> None:
+    from app.pi_client import _final_text
+
+    events = [{"messages": [{"role": "assistant", "content": "legacy plain string"}]}]
+    assert _final_text(events) == "legacy plain string"
+
+
+def test_final_text_returns_empty_for_no_assistant_events() -> None:
+    from app.pi_client import _final_text
+
+    assert _final_text([]) == ""
+    assert _final_text([{"message": {"role": "user", "content": "hi"}}]) == ""
+
+
+def test_set_resource_limits_does_not_raise() -> None:
+    from app.pi_client import _set_resource_limits
+
+    _set_resource_limits()
+
+
+@pytest.mark.anyio
+async def test_kill_process_group_noop_when_already_exited() -> None:
+    from app.pi_client import _kill_process_group
+
+    class FakeProcess:
+        returncode = 0
+
+    await _kill_process_group(FakeProcess())  # type: ignore[arg-type]
+
+
+@pytest.mark.anyio
+async def test_kill_process_group_kills_running_process(tmp_path: Path) -> None:
+    import asyncio
+    from app.pi_client import _kill_process_group
+
+    proc = await asyncio.create_subprocess_exec("sleep", "30", start_new_session=True)
+    await _kill_process_group(proc)
+    assert proc.returncode is not None
+
+
+def test_pi_client_resolves_relative_executable_against_repo_root() -> None:
+    client = PiClient(executable="scripts/pi-demo")
+    assert client.executable.endswith("scripts/pi-demo")
+    assert Path(client.executable).is_absolute()
+
+
+def test_pi_client_resolves_absolute_executable_path() -> None:
+    demo_script = Path("scripts/pi-demo").resolve()
+    client = PiClient(executable=str(demo_script))
+    assert client.executable == str(demo_script)
+
+
+@pytest.mark.anyio
+async def test_pi_client_max_events_raises_pi_error(tmp_path: Path) -> None:
+    script = tmp_path / "chatty_pi.py"
+    script.write_text("""#!/usr/bin/env python3
+import json
+print(json.dumps({"type": "event_one"}))
+print(json.dumps({"type": "event_two"}))
+print(json.dumps({"type": "event_three"}))
+""")
+    script.chmod(0o755)
+
+    client = PiClient(executable=str(script), timeout_seconds=5, max_events=1)
+    res = await client.run("test", cwd=str(tmp_path))
+    assert res.status == "failed"
+
+
+@pytest.mark.anyio
+async def test_pi_client_on_event_exception_is_swallowed(tmp_path: Path) -> None:
+    script = tmp_path / "event_pi.py"
+    script.write_text("""#!/usr/bin/env python3
+import json
+print(json.dumps({"type": "agent_settled"}))
+""")
+    script.chmod(0o755)
+
+    def failing_on_event(ev: dict) -> None:
+        raise RuntimeError("listener boom")
+
+    client = PiClient(executable=str(script), timeout_seconds=5)
+    res = await client.run("test", cwd=str(tmp_path), on_event=failing_on_event)
+    assert res.exit_code == 0
+
+
+@pytest.mark.anyio
+async def test_pi_client_env_defaults_api_key_from_opencode_go(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENCODE_GO_API_KEY", "go-secret-token")
+
+    script = tmp_path / "env_pi.py"
+    script.write_text("""#!/usr/bin/env python3
+import json, os
+print(json.dumps({
+    "type": "message_end",
+    "message": {"role": "assistant", "content": [{"type": "text", "text": json.dumps({
+        "status": "success",
+        "summary": os.environ.get("OPENAI_API_KEY", ""),
+        "findings": [],
+        "artifacts": [],
+        "next_action": "continue"
+    })}]}
+}))
+print(json.dumps({"type": "agent_settled"}))
+""")
+    script.chmod(0o755)
+
+    client = PiClient(executable=str(script), timeout_seconds=5)
+    res = await client.run("test", cwd=str(tmp_path))
+    assert res.output is not None
+    assert res.output["summary"] == "go-secret-token"
+
+
+@pytest.mark.anyio
+async def test_pi_client_demo_fallback_on_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PI_ALLOW_DEMO_FALLBACK", "1")
+
+    script = tmp_path / "failing_pi.sh"
+    script.write_text("""#!/bin/sh
+echo "boom" >&2
+exit 1
+""")
+    script.chmod(0o755)
+
+    # executable=None (not explicit) so the fallback-eligibility check passes;
+    # PI_EXECUTABLE env var stands in for the "configured" executable instead.
+    monkeypatch.setenv("PI_EXECUTABLE", str(script))
+    client = PiClient(timeout_seconds=5)
+    res = await client.run("test", cwd=str(tmp_path))
+    assert res.status == "success"

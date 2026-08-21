@@ -36,3 +36,18 @@ def test_safe_fromstring_blocks_xxe() -> None:
     <root>&xxe;</root>"""
     with pytest.raises(Exception):
         safe_fromstring_xml(xxe_xml)
+
+
+def test_safe_xml_blocks_internal_entity_declaration() -> None:
+    # Not an external-entity read: a plain internal entity declaration, the kind
+    # entity-expansion ("billion laughs") attacks rely on. The old hand-rolled
+    # EntityDeclHandler was meant to catch this but was never actually installed
+    # (ET.XMLParser()'s C-accelerated implementation has no .parser attribute to
+    # hook); defusedxml rejects it outright regardless of internal/external.
+    bomb_xml = b"""<?xml version="1.0"?>
+    <!DOCTYPE root [
+        <!ENTITY foo "bar">
+    ]>
+    <root>&foo;</root>"""
+    with pytest.raises(Exception):
+        safe_parse_xml(io.BytesIO(bomb_xml))

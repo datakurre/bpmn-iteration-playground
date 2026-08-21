@@ -60,7 +60,7 @@ def _create_storage(path: str) -> tuple[Any, str | None]:
     return BlobStorage(blob_dir, FileStorage(path)), None
 
 
-class WorkflowMetadata(Persistent):
+class WorkflowMetadata(Persistent):  # type: ignore[misc]  # persistent ships no type stubs
     """Lightweight metadata for fast listing and indexing."""
 
     def __init__(
@@ -108,7 +108,7 @@ class WorkflowMetadata(Persistent):
         }
 
 
-class SavePointSnapshot(Persistent):
+class SavePointSnapshot(Persistent):  # type: ignore[misc]  # persistent ships no type stubs
     """Independent persistent snapshot holding a deepcopied SpiffWorkflow object graph."""
 
     def __init__(
@@ -165,7 +165,7 @@ class SavePointSnapshot(Persistent):
         return result
 
 
-class WorkflowInstance(Persistent):
+class WorkflowInstance(Persistent):  # type: ignore[misc]  # persistent ships no type stubs
     """Active persistent workflow execution entity."""
 
     def __init__(

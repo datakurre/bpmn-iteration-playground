@@ -13,12 +13,15 @@ dependencies = [
     "jinja2",
     "httpx",
     "ZEO",
+    "defusedxml>=0.7.1",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
     "httpx>=0.27",
+    "mypy>=1.14",
+    "pytest-cov>=6.0",
 ]
 
 [tool.pytest.ini_options]
@@ -27,7 +30,20 @@ pythonpath = ["."]
 [tool.mypy]
 python_version = "3.11"
 ignore_missing_imports = true
-check_untyped_defs = true
-warn_redundant_casts = true
-warn_unused_ignores = false
+strict = true
+plugins = ["pydantic.mypy"]
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = ["app/main.py", "app/handlers/base.py"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 83
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
 

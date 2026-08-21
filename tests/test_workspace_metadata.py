@@ -89,3 +89,152 @@ async def test_unpack_workspace_gz_fallback() -> None:
     finally:
         cleanup_workspace(workdir)
 
+
+
+@pytest.mark.anyio
+async def test_unpack_workspace_plain_tar_no_compression() -> None:
+    import io
+    import tarfile
+    from app.workspace import unpack_workspace
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        data = b"plain tar content"
+        ti = tarfile.TarInfo(name="plain.txt")
+        ti.size = len(data)
+        tar.addfile(ti, io.BytesIO(data))
+
+    workdir = await unpack_workspace(buf.getvalue(), prefix="bpmn-test-plain-")
+    try:
+        plain_file = Path(workdir) / "plain.txt"
+        assert plain_file.is_file()
+        assert plain_file.read_text() == "plain tar content"
+    finally:
+        cleanup_workspace(workdir)
+
+
+@pytest.mark.anyio
+async def test_unpack_workspace_empty_blob_returns_bare_workdir() -> None:
+    from ZODB.blob import Blob
+    from app.workspace import unpack_workspace
+
+    blob = Blob()
+    with blob.open("w") as f:
+        f.write(b"")
+
+    workdir = await unpack_workspace(blob, prefix="bpmn-test-empty-")
+    try:
+        assert Path(workdir).is_dir()
+        assert list(Path(workdir).iterdir()) == []
+    finally:
+        cleanup_workspace(workdir)
+
+
+@pytest.mark.anyio
+async def test_unpack_workspace_unopenable_blob_returns_bare_workdir() -> None:
+    from ZODB.blob import Blob
+    from app.workspace import unpack_workspace
+
+    # A freshly-constructed Blob has no committed data yet, so .open("r") raises.
+    blob = Blob()
+    workdir = await unpack_workspace(blob, prefix="bpmn-test-unopenable-")
+    try:
+        assert Path(workdir).is_dir()
+    finally:
+        cleanup_workspace(workdir)
+
+
+@pytest.mark.anyio
+async def test_pack_workspace_falls_back_to_gzip_when_tar_subprocess_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+    from app.workspace import pack_workspace
+
+    async def boom(*args, **kwargs):
+        raise FileNotFoundError("no tar binary")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", boom)
+
+    workdir = tempfile.mkdtemp(prefix="bpmn-test-fallback-")
+    try:
+        (Path(workdir) / "file.txt").write_text("fallback content")
+        blob = await pack_workspace(workdir)
+        with blob.open("r") as f:
+            data = f.read()
+        assert data.startswith(b"\x1f\x8b")  # gzip magic bytes
+    finally:
+        cleanup_workspace(workdir)
+
+
+@pytest.mark.anyio
+async def test_pack_workspace_to_bytes_falls_back_to_gzip_when_tar_subprocess_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+    from app.workspace import pack_workspace_to_bytes
+
+    async def boom(*args, **kwargs):
+        raise FileNotFoundError("no tar binary")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", boom)
+
+    workdir = tempfile.mkdtemp(prefix="bpmn-test-fallback-bytes-")
+    try:
+        (Path(workdir) / "file.txt").write_text("fallback content")
+        data = await pack_workspace_to_bytes(workdir)
+        assert data.startswith(b"\x1f\x8b")
+    finally:
+        cleanup_workspace(workdir)
+
+
+def test_get_workspace_metadata_on_missing_directory() -> None:
+    meta = get_workspace_metadata("/no/such/workspace/dir")
+    assert meta == {"file_count": 0, "total_size": 0, "files": [], "artifacts": []}
+
+
+@pytest.mark.anyio
+async def test_extract_workspace_file_blocks_path_traversal() -> None:
+    from app.workspace import extract_workspace_file
+
+    workdir = tempfile.mkdtemp(prefix="bpmn-test-traversal-")
+    try:
+        (Path(workdir) / "safe.txt").write_text("safe content")
+        blob = await pack_workspace(workdir)
+        result = await extract_workspace_file(blob, "../../../etc/passwd")
+        assert result is None
+    finally:
+        cleanup_workspace(workdir)
+
+
+@pytest.mark.anyio
+async def test_duplicate_blob() -> None:
+    import transaction
+    from app.persistence import WorkflowStore
+    from app.workspace import duplicate_blob
+
+    assert duplicate_blob(None) is None
+
+    workdir = tempfile.mkdtemp(prefix="bpmn-test-dup-")
+    store = WorkflowStore(":memory:")
+    try:
+        (Path(workdir) / "file.txt").write_text("dup me")
+        blob = await pack_workspace(workdir)
+
+        # duplicate_blob() reads blob.committed(), which requires the blob to have
+        # gone through a real ZODB transaction commit first.
+        conn = store.db.open()
+        conn.root()["test_blob"] = blob
+        transaction.commit()
+
+        dup = duplicate_blob(blob)
+        assert dup is not None
+        with blob.open("r") as f_orig, dup.open("r") as f_dup:
+            assert f_orig.read() == f_dup.read()
+        conn.close()
+    finally:
+        store.close()
+        cleanup_workspace(workdir)
+
+
+def test_cleanup_workspace_ignores_non_bpmn_and_missing_paths() -> None:
+    # Neither call should raise, and neither should touch anything real.
+    cleanup_workspace("")
+    cleanup_workspace("/tmp/not-a-bpmn-prefixed-dir")
+    cleanup_workspace("/no/such/bpmn-directory-at-all")

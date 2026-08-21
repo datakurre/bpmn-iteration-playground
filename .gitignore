@@ -21,15 +21,22 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+coverage.xml
+coverage/
 
 # Node
 node_modules/
 app/static/bpmn-modeler-bundle.js
 app/static/bpmn-viewer-bundle.js
+app/static/pages/
+app/static/tailwind.css
+app/static/diagram-js-minimap.css
+app/static/properties-panel.css
 
 # Temporary & Verification Outputs
 *.log
 scratch/
+plans/
 .mypy_cache/
 site/
 result

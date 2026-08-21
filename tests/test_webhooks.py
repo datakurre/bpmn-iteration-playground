@@ -155,3 +155,68 @@ async def test_webhook_hmac_signature(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 
+
+
+def test_event_bus_swallows_append_event_errors() -> None:
+    class FailingAppendStore:
+        def append_event(self, wf_id: str, ev: dict) -> None:
+            raise RuntimeError("store unavailable")
+
+    bus = EventBus(store=FailingAppendStore())
+    event = bus.emit("test_event", "wf-123")  # must not raise
+    assert event.event_type == "test_event"
+
+
+def test_event_bus_swallows_list_webhooks_errors() -> None:
+    class FailingListStore:
+        def append_event(self, wf_id: str, ev: dict) -> None:
+            pass
+
+        def list_webhooks(self):
+            raise RuntimeError("webhook store unavailable")
+
+    bus = EventBus(store=FailingListStore())
+    event = bus.emit("test_event", "wf-123")  # must not raise
+    assert event.event_type == "test_event"
+
+
+def test_event_bus_skips_webhooks_not_subscribed_to_event_type() -> None:
+    class FilteredStore:
+        def append_event(self, wf_id: str, ev: dict) -> None:
+            pass
+
+        def list_webhooks(self):
+            return [{"url": "http://127.0.0.1:9999/hook", "events": ["other_event"]}]
+
+    async def scenario() -> None:
+        bus = EventBus(store=FilteredStore())
+        bus.emit("test_event", "wf-123")
+        # No matching webhook subscription -> no delivery task scheduled
+        assert len(bus._pending_tasks) == 0
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.anyio
+async def test_webhook_delivery_retries_on_non_2xx_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    bus = EventBus(store=None)
+    event = WorkflowEvent(event_type="workflow_completed", workflow_id="wf-status")
+
+    error_resp = MagicMock()
+    error_resp.status_code = 500
+
+    call_count = 0
+
+    async def error_status_post(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return error_resp
+
+    monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(httpx.AsyncClient, "post", error_status_post)
+
+    success = await bus._deliver_webhook("http://example.com/webhook", event, retries=3)
+    assert success is False
+    assert call_count == 3

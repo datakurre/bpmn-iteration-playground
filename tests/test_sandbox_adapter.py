@@ -263,3 +263,89 @@ print(json.dumps({{
     assert "--session" in entries[1]["args"]
     idx = entries[1]["args"].index("--session")
     assert entries[1]["args"][idx + 1] == "session-turn-1"
+
+
+@pytest.mark.anyio
+async def test_sandbox_adapter_spawn_failure(tmp_path: Path) -> None:
+    adapter = SandboxPiAdapter(executable=str(tmp_path / "does-not-exist-binary"))
+    res = await adapter.run(prompt="Execute task", config={}, cwd=str(tmp_path))
+    assert res.status == "failed"
+    assert res.exit_code == 1
+    assert res.policy_error is not None
+    assert "Failed to spawn agent-sandbox" in (res.stderr or "")
+
+
+@pytest.mark.anyio
+async def test_sandbox_adapter_timeout(tmp_path: Path) -> None:
+    mock_sandbox = tmp_path / "mock-slow-sandbox.py"
+    mock_sandbox.write_text("""#!/usr/bin/env python3
+import sys, time
+sys.stdin.read()
+time.sleep(5)
+""")
+    mock_sandbox.chmod(mock_sandbox.stat().st_mode | stat.S_IEXEC)
+
+    adapter = SandboxPiAdapter(executable=str(mock_sandbox), timeout_seconds=0.2)
+    res = await adapter.run(prompt="Execute task", config={}, cwd=str(tmp_path))
+    assert res.status == "timeout"
+    assert res.exit_code == 1
+
+
+@pytest.mark.anyio
+async def test_sandbox_adapter_non_envelope_stdout_treated_as_inner_stdout(tmp_path: Path) -> None:
+    # Some plain-JSON-lines stdout that isn't wrapped in the agent-sandbox
+    # {"status", "stdout", "stderr"} envelope: falls back to using stdout as-is.
+    mock_sandbox = tmp_path / "mock-no-envelope.py"
+    mock_sandbox.write_text("""#!/usr/bin/env python3
+import json, sys
+sys.stdin.read()
+events = [
+    json.dumps({"type": "agent_settled"}),
+]
+print("\\n".join(events))
+""")
+    mock_sandbox.chmod(mock_sandbox.stat().st_mode | stat.S_IEXEC)
+
+    adapter = SandboxPiAdapter(executable=str(mock_sandbox))
+    res = await adapter.run(prompt="Execute task", config={}, cwd=str(tmp_path))
+    assert res.status == "failed"  # settled but no parseable Pi JSON result contract
+    assert res.output is None
+
+
+@pytest.mark.anyio
+async def test_sandbox_adapter_provider_and_timeout_config(tmp_path: Path) -> None:
+    mock_sandbox = tmp_path / "mock-args-sandbox.py"
+    mock_sandbox.write_text("""#!/usr/bin/env python3
+import json, sys
+sys.stdin.read()
+args = sys.argv[1:]
+print(json.dumps({"status": 0, "stdout": json.dumps({"type": "agent_settled", "args": args}), "stderr": ""}))
+""")
+    mock_sandbox.chmod(mock_sandbox.stat().st_mode | stat.S_IEXEC)
+
+    adapter = SandboxPiAdapter(executable=str(mock_sandbox), timeout_seconds=10)
+    res = await adapter.run(
+        prompt="Execute task",
+        config={"provider": "opencode-go", "timeout": "5"},
+        cwd=str(tmp_path),
+    )
+    assert res.exit_code == 0
+
+
+@pytest.mark.anyio
+async def test_sandbox_adapter_on_event_exception_is_swallowed(tmp_path: Path) -> None:
+    mock_sandbox = tmp_path / "mock-event-sandbox.py"
+    mock_sandbox.write_text("""#!/usr/bin/env python3
+import json, sys
+sys.stdin.read()
+events = [json.dumps({"type": "message_end"})]
+print(json.dumps({"status": 0, "stdout": "\\n".join(events), "stderr": ""}))
+""")
+    mock_sandbox.chmod(mock_sandbox.stat().st_mode | stat.S_IEXEC)
+
+    def failing_on_event(ev: dict) -> None:
+        raise RuntimeError("listener boom")
+
+    adapter = SandboxPiAdapter(executable=str(mock_sandbox))
+    res = await adapter.run(prompt="Execute task", config={}, cwd=str(tmp_path), on_event=failing_on_event)
+    assert res.exit_code == 0

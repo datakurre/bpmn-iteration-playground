@@ -13,45 +13,11 @@
     }
   </script>
   <link rel="stylesheet" href="/static/app/tailwind.css?v=4">
-  <script src="/static/app/common.js"></script>
   {% block extra_head %}{% endblock %}
 </head>
 <body class="bg-bg text-ink font-sans antialiased min-h-screen overflow-x-hidden">
   {% block content %}{% endblock %}
-  <script>
-  function toggleTheme() {
-    const isDark = document.documentElement.classList.toggle('dark');
-    localStorage.theme = isDark ? 'dark' : 'light';
-    updateThemeIcons();
-  }
-
-  function updateThemeIcons() {
-    const isDark = document.documentElement.classList.contains('dark');
-    document.querySelectorAll('.theme-toggle-icon').forEach(el => {
-      el.textContent = isDark ? '☀️' : '🌙';
-    });
-    document.querySelectorAll('.theme-toggle-text').forEach(el => {
-      el.textContent = isDark ? 'Light' : 'Dark';
-    });
-  }
-
-  document.addEventListener('DOMContentLoaded', () => {
-    updateThemeIcons();
-    const btn = document.getElementById('mobile-menu-btn');
-    const menu = document.getElementById('mobile-menu');
-    if (btn && menu) {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        menu.classList.toggle('hidden');
-      });
-      document.addEventListener('click', (e) => {
-        if (!menu.contains(e.target) && !btn.contains(e.target)) {
-          menu.classList.add('hidden');
-        }
-      });
-    }
-  });
-  </script>
+  <script src="/static/app/pages/base.js" defer></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

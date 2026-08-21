@@ -48,6 +48,8 @@ checkpoints (FormJS forms), and branchable history (savepoint fork, for design-v
 exploration). The adapter registry decouples orchestration from the agent runtime
 (`harness_type` → `BaseAdapter`), so the platform is not LLM-specific — non-LLM tools
 (slicers, CAM, simulation) can be wrapped as adapters and orchestrated the same way as Pi.
+Track-specific design notes (not committed) live in `plans/` — see `plans/README.md` for
+current status per track.
 
 It:
 
@@ -135,8 +137,8 @@ vendor/agent-sandbox – git submodule: Rust CLI + Podman sandbox, isolates Pi's
 - **Wait for Readiness**: Run `devenv processes wait` to block until readiness probes pass (`http://127.0.0.1:8000/health`).
 - **Process Status**: Run `devenv processes list` to check process status (`api ready restarts: 0`).
 - **Process Cleanup**: Use `devenv processes down` to terminate running process compose instances.
-- **Tests**: `devenv shell -- test` runs `pytest -q && mypy app/`.
-- **Lint only**: `devenv shell -- lint` runs `mypy app/`.
+- **Tests**: `devenv shell -- test` runs `pytest --cov=app` (mypy --strict, `tsc --noEmit`, and `vitest` follow).
+- **Lint only**: `devenv shell -- lint` runs `mypy app/` (`--strict`) and `tsc --noEmit`.
 - **Offline demo**: `devenv shell -- demo` runs uvicorn with `PI_EXECUTABLE=scripts/pi-demo`.
 
 ## 2. Local Pi Agent & Deterministic Demo

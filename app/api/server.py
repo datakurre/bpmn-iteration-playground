@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncGenerator, AsyncIterator
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response, StreamingResponse
@@ -57,7 +57,7 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
         return _service
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI):
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         configure_logging(os.getenv("LOG_LEVEL", "INFO"))
         try:
             svc = get_service()
@@ -613,7 +613,7 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
 
         import json
 
-        async def event_generator():
+        async def event_generator() -> AsyncGenerator[str, None]:
             initial = svc.state(workflow_id)
             yield f"data: {json.dumps(initial)}\n\n"
             last_status = initial.get("status")

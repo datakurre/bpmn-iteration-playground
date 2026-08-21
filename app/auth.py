@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import Depends, HTTPException, Header, Request
 
@@ -92,7 +92,8 @@ def get_current_role(
     return None
 
 
-def require_role(*allowed_roles: Role):
+def require_role(*allowed_roles: Role) -> Any:
+    # Depends() is itself typed `-> Any`, so this stays assignable as a Role-typed default.
     def checker(role: Role | None = Depends(get_current_role)) -> Role:
         admin_token, api_keys, auth_enabled = parse_auth_config()
         require_auth = _is_require_auth()
