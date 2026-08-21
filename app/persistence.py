@@ -14,7 +14,7 @@ from persistent import Persistent
 from persistent.list import PersistentList
 from persistent.mapping import PersistentMapping
 from ZODB import DB
-from ZODB.blob import BlobStorage
+from ZODB.blob import Blob, BlobStorage
 from ZODB.FileStorage import FileStorage
 from ZODB.MappingStorage import MappingStorage
 from ZODB.POSException import ConflictError
@@ -814,8 +814,11 @@ class WorkflowStore:
             instance = root["workflows"].get(workflow_id)
             if instance is not None:
                 if isinstance(blob_or_bytes, bytes):
-                    instance.workspace_archive = blob_or_bytes
-                    instance.workspace_blob = None
+                    blob = Blob()
+                    with blob.open("w") as f:
+                        f.write(blob_or_bytes)
+                    instance.workspace_blob = blob
+                    instance.workspace_archive = None
                 else:
                     instance.workspace_blob = blob_or_bytes
                     instance.workspace_archive = None

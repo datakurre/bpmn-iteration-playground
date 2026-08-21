@@ -1,7 +1,13 @@
 import pytest
 import tempfile
 from pathlib import Path
+from ZODB.blob import Blob
 from app.persistence import SavePointSnapshot, WorkflowInstance, WorkflowMetadata, WorkflowStore
+from app.workspace import cleanup_workspace, pack_workspace_to_bytes, unpack_workspace
+
+
+def _minimal_record() -> dict:
+    return {"status": "running", "process_id": "proc1"}
 
 
 def test_workflow_store_lists_and_cleans_instances() -> None:
@@ -277,7 +283,63 @@ async def test_concurrent_async_workflow_store_operations() -> None:
     store.close()
 
 
+def test_set_workspace_bytes_are_stored_as_blob() -> None:
+    store = WorkflowStore(":memory:")
+    store.save("wf1", _minimal_record())
+    store.set_workspace("wf1", b"fake-tar-bytes")
 
+    with store.db.transaction() as conn:
+        inst = conn.root()["workflows"]["wf1"]
+        assert inst.workspace_blob is not None, "bytes must be wrapped in a ZODB Blob"
+        assert inst.workspace_archive is None, "raw bytes must not be kept on the object"
+
+    assert store.get_workspace("wf1") == b"fake-tar-bytes"
+    store.close()
+
+
+def test_set_workspace_accepts_a_blob_unchanged() -> None:
+    store = WorkflowStore(":memory:")
+    store.save("wf1", _minimal_record())
+    blob = Blob()
+    with blob.open("w") as f:
+        f.write(b"already-a-blob")
+    store.set_workspace("wf1", blob)
+
+    with store.db.transaction() as conn:
+        inst = conn.root()["workflows"]["wf1"]
+        assert inst.workspace_blob is blob
+        assert inst.workspace_archive is None
+
+    assert store.get_workspace("wf1") == b"already-a-blob"
+    store.close()
+
+
+def test_get_workspace_reads_legacy_archive_attribute() -> None:
+    store = WorkflowStore(":memory:")
+    store.save("wf1", _minimal_record())
+    with store.db.transaction() as conn:  # simulate a pre-migration write
+        inst = conn.root()["workflows"]["wf1"]
+        inst.workspace_archive = b"legacy-bytes"
+        inst.workspace_blob = None
+        inst._p_changed = True
+    assert store.get_workspace("wf1") == b"legacy-bytes"
+    store.close()
+
+
+@pytest.mark.anyio
+async def test_workspace_blob_round_trips_real_archive(tmp_path: Path) -> None:
+    store = WorkflowStore(":memory:")
+    (tmp_path / "hello.txt").write_text("agent output")
+    archive = await pack_workspace_to_bytes(str(tmp_path))
+    store.save("wf1", _minimal_record())
+    store.set_workspace("wf1", archive)
+
+    workdir = await unpack_workspace(store.get_workspace("wf1"), prefix="bpmn-test-")
+    try:
+        assert (Path(workdir) / "hello.txt").read_text() == "agent output"
+    finally:
+        cleanup_workspace(workdir)
+    store.close()
 
 
 
