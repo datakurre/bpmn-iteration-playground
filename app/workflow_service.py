@@ -24,12 +24,20 @@ from app.adapters.sandbox_adapter import SandboxPiAdapter
 from app.adapters.registry import AdapterRegistry
 from app.engine import WorkflowRunner
 from app.events import EventBus, WorkflowEvent
-from app.persistence import WorkflowStore
+from app.persistence import WorkflowStore, WorkspaceConflict
 from app.pi_client import PiClient, PiResult
 from app.workspace import cleanup_workspace, get_workspace_metadata, pack_workspace_to_bytes, unpack_workspace
 from app.ws import manager as ws_manager
 
 logger = logging.getLogger("bpmn.workflow")
+
+# Sentinel failure_reason for a workspace version conflict (see WorkflowStore.set_workspace).
+# _complete_pi tags the job with "conflict" when it sees this message, and _dispatch's
+# STARTED-task sweep skips relaunching a conflicted job -- otherwise a sibling branch's
+# success re-triggers _dispatch instance-wide and silently re-runs the agent against a
+# workspace it never actually agreed on, defeating the whole point of the conflict check.
+# Only an explicit retry_task() call clears the flag.
+WORKSPACE_CONFLICT_MESSAGE = "workspace changed during this turn; re-run against current state"
 
 CAMUNDA_TO_FORMJS_TYPE: dict[str, str] = {
     "string": "textfield",
@@ -719,6 +727,7 @@ class WorkflowService:
             job["status"] = "retry_requested"
             job["attempts"] = 0
             job["generation"] = int(job.get("generation", 0)) + 1
+            job.pop("conflict", None)
             record["status"] = "retry_requested"
             self._add_save_point(
                 workflow_id,
@@ -921,7 +930,11 @@ class WorkflowService:
                     continue
                 task_key = str(task.id)
                 existing_job = jobs.get(task_key)
-                if (existing_job and existing_job.get("status") == "running") or (task_key in self.jobs and not self.jobs[task_key].done()):
+                if existing_job and (
+                    existing_job.get("status") == "running" or existing_job.get("conflict")
+                ):
+                    continue
+                if task_key in self.jobs and not self.jobs[task_key].done():
                     continue
                 attempts = int(existing_job.get("attempts", 0)) if existing_job else 0
                 attempts += 1
@@ -1044,6 +1057,7 @@ class WorkflowService:
 
             # Unpack per-instance workspace archive (TODO 05)
             blob_or_bytes = self.store.get_workspace(workflow_id)
+            workspace_version = self.store.get_workspace_version(workflow_id)
             workdir = await unpack_workspace(blob_or_bytes, prefix=f"bpmn-{workflow_id[:8]}-")
             if not blob_or_bytes:
                 await asyncio.to_thread(_seed_workspace, workdir)
@@ -1080,14 +1094,26 @@ class WorkflowService:
             )
             record["workspace_metadata"] = ws_meta
 
-            # Repack modified workspace back into storage
+            # Repack modified workspace back into storage. This is an interim
+            # optimistic-concurrency guard, not the real fix: concurrent turns on the same
+            # instance still share one workspace and cannot merge their changes. The real
+            # fix is a workspace per branch (git worktree model), not yet designed -- see
+            # plans/data.md "Not a backlog item: the worktree model". Until then, refuse to
+            # silently overwrite a workspace another concurrent turn has already moved on
+            # from; expected_version turns that into a loud, retryable failure instead.
             if workdir and Path(workdir).exists():
                 archive_bytes = await pack_workspace_to_bytes(workdir)
-                self.store.set_workspace(workflow_id, archive_bytes)
-                record["workspace_archive"] = archive_bytes
+                self.store.set_workspace(workflow_id, archive_bytes, expected_version=workspace_version)
         except asyncio.CancelledError:
             logger.info(f"Agent task {task_id} was cancelled")
             result = AgentResult("cancelled", None, "", [], "Task was cancelled", 1)
+        except WorkspaceConflict:
+            logger.warning(
+                "Workspace conflict repacking task %s on %s; another turn already wrote a newer workspace",
+                task_id,
+                workflow_id,
+            )
+            result = AgentResult("failed", None, "", [], WORKSPACE_CONFLICT_MESSAGE, 1)
         except Exception as exc:
             logger.exception(f"Error running agent task {task_id}: {exc}")
             result = AgentResult("failed", None, "", [], str(exc), 1)
@@ -1154,6 +1180,7 @@ class WorkflowService:
             if failure_reason:
                 job["failure_reason"] = failure_reason
                 record["failure_reason"] = failure_reason
+                job["conflict"] = failure_reason == WORKSPACE_CONFLICT_MESSAGE
                 record.setdefault("failure_history", []).append(
                     {
                         "task_id": task_id,

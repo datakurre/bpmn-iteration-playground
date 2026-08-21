@@ -24,6 +24,17 @@ from app.migrations import migrate_workflow_object
 F = TypeVar("F", bound=Callable[..., Any])
 
 
+class WorkspaceConflict(Exception):
+    """Raised by set_workspace when expected_version no longer matches the stored version.
+
+    Interim optimistic-concurrency guard: two concurrent agent turns on the same instance
+    still share one workspace and cannot merge their changes. The real fix is a workspace
+    per branch (git worktree model), not yet designed -- see plans/data.md "Not a backlog
+    item: the worktree model". This only turns a silent overwrite into a loud, retryable
+    failure; it is deliberately not retried automatically here.
+    """
+
+
 def _retry_on_conflict(max_retries: int = 5) -> Callable[[F], F]:
     def decorator(fn: F) -> F:
         @wraps(fn)
@@ -191,6 +202,7 @@ class WorkflowInstance(Persistent):  # type: ignore[misc]  # persistent ships no
         created_at: str | None = None,
         updated_at: str | None = None,
         workspace_blob: Any = None,
+        workspace_version: int = 0,
         **extra: Any,
     ) -> None:
         self.workflow_id = workflow_id
@@ -213,6 +225,7 @@ class WorkflowInstance(Persistent):  # type: ignore[misc]  # persistent ships no
         self.updated_at = updated_at or now
         self.workspace_blob = workspace_blob
         self.workspace_archive: bytes | None = extra.pop("workspace_archive", None)
+        self.workspace_version = workspace_version
         self.extra = PersistentMapping(extra)
 
     def to_dict(self) -> dict[str, Any]:
@@ -245,7 +258,7 @@ _INSTANCE_FIELDS = frozenset({
     "workflow_id", "process_id", "bpmn_path", "status", "workflow", "data", "jobs",
     "tasks", "save_points", "events", "failure_reason", "failure_history", "forked_from",
     "forked_from_save_point", "parent_workflow_id", "created_at", "updated_at",
-    "workspace_blob", "workspace_archive",
+    "workspace_blob", "workspace_archive", "workspace_version",
 })
 
 
@@ -372,6 +385,7 @@ class WorkflowStore:
                     existing.updated_at = instance.updated_at
                     existing.workspace_blob = instance.workspace_blob
                     existing.workspace_archive = instance.workspace_archive
+                    existing.workspace_version = getattr(instance, "workspace_version", 0)
                     existing._p_changed = True
                     instance = existing
                 else:
@@ -441,6 +455,12 @@ class WorkflowStore:
                     raw_record.get("workspace_archive")
                     or getattr(existing, "workspace_archive", None)
                 )
+                raw_workspace_version = raw_record.get("workspace_version")
+                workspace_version = (
+                    raw_workspace_version
+                    if raw_workspace_version is not None
+                    else getattr(existing, "workspace_version", 0)
+                )
 
                 if existing is not None and isinstance(existing, WorkflowInstance):
                     instance = existing
@@ -480,6 +500,7 @@ class WorkflowStore:
                         instance.workspace_blob = workspace_blob
                     if workspace_archive is not None:
                         instance.workspace_archive = workspace_archive
+                    instance.workspace_version = workspace_version
                     if not hasattr(instance, "extra"):
                         instance.extra = PersistentMapping()
                     for extra_key, extra_value in raw_record.items():
@@ -511,6 +532,7 @@ class WorkflowStore:
                         updated_at=updated_at,
                         workspace_blob=workspace_blob,
                         workspace_archive=workspace_archive,
+                        workspace_version=workspace_version,
                         **{k: v for k, v in raw_record.items() if k not in _INSTANCE_FIELDS},
                     )
                     workflows_root[workflow_id] = instance
@@ -820,12 +842,26 @@ class WorkflowStore:
                         return None
             return None
 
-    @_retry_on_conflict()
-    def set_workspace(self, workflow_id: str, blob_or_bytes: Any) -> None:
+    def get_workspace_version(self, workflow_id: str) -> int:
         with self.db.transaction() as connection:
             root = connection.root()
             instance = root["workflows"].get(workflow_id)
             if instance is not None:
+                return int(getattr(instance, "workspace_version", 0))
+            return 0
+
+    @_retry_on_conflict()
+    def set_workspace(self, workflow_id: str, blob_or_bytes: Any, expected_version: int | None = None) -> None:
+        with self.db.transaction() as connection:
+            root = connection.root()
+            instance = root["workflows"].get(workflow_id)
+            if instance is not None:
+                current_version = int(getattr(instance, "workspace_version", 0))
+                if expected_version is not None and expected_version != current_version:
+                    raise WorkspaceConflict(
+                        f"workspace for {workflow_id} was modified by another turn "
+                        f"(expected version {expected_version}, found {current_version})"
+                    )
                 if isinstance(blob_or_bytes, bytes):
                     blob = Blob()
                     with blob.open("w") as f:
@@ -835,5 +871,6 @@ class WorkflowStore:
                 else:
                     instance.workspace_blob = blob_or_bytes
                     instance.workspace_archive = None
+                instance.workspace_version = current_version + 1
                 instance._p_changed = True
 

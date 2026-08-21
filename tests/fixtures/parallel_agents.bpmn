@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_ParallelAgents" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="parallel_agents" name="Parallel Agents" isExecutable="true">
+    <bpmn:documentation>Fixture: two ServiceTasks run concurrently on one instance, sharing one workspace -- used to prove concurrent turns cannot silently clobber each other's files (todo 04).</bpmn:documentation>
+    <bpmn:startEvent id="Start_Parallel"><bpmn:outgoing>Flow_Fork</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_Fork" sourceRef="Start_Parallel" targetRef="Gateway_Fork" />
+    <bpmn:parallelGateway id="Gateway_Fork">
+      <bpmn:incoming>Flow_Fork</bpmn:incoming>
+      <bpmn:outgoing>Flow_To_A</bpmn:outgoing>
+      <bpmn:outgoing>Flow_To_B</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="Flow_To_A" sourceRef="Gateway_Fork" targetRef="Task_A" />
+    <bpmn:sequenceFlow id="Flow_To_B" sourceRef="Gateway_Fork" targetRef="Task_B" />
+    <bpmn:serviceTask id="Task_A" name="Agent A">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="output_file" value="file_a.txt" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_To_A</bpmn:incoming>
+      <bpmn:outgoing>Flow_From_A</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_B" name="Agent B">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="output_file" value="file_b.txt" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_To_B</bpmn:incoming>
+      <bpmn:outgoing>Flow_From_B</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_From_A" sourceRef="Task_A" targetRef="Gateway_Join" />
+    <bpmn:sequenceFlow id="Flow_From_B" sourceRef="Task_B" targetRef="Gateway_Join" />
+    <bpmn:parallelGateway id="Gateway_Join">
+      <bpmn:incoming>Flow_From_A</bpmn:incoming>
+      <bpmn:incoming>Flow_From_B</bpmn:incoming>
+      <bpmn:outgoing>Flow_End</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="Flow_End" sourceRef="Gateway_Join" targetRef="End_Parallel" />
+    <bpmn:endEvent id="End_Parallel"><bpmn:incoming>Flow_End</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
