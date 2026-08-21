@@ -19,6 +19,8 @@ from ZODB.FileStorage import FileStorage
 from ZODB.MappingStorage import MappingStorage
 from ZODB.POSException import ConflictError
 
+from app.migrations import migrate_workflow_object
+
 F = TypeVar("F", bound=Callable[..., Any])
 
 
@@ -317,7 +319,10 @@ class WorkflowStore:
             root = connection.root()
             sp = root["save_points"].get(save_point_id)
             if sp is not None:
-                return sp.to_dict() if hasattr(sp, "to_dict") else dict(sp)
+                result = sp.to_dict() if hasattr(sp, "to_dict") else dict(sp)
+                if result.get("workflow") is not None:
+                    migrate_workflow_object(result["workflow"])
+                return result
             return None
 
     @_retry_on_conflict()
@@ -552,7 +557,10 @@ class WorkflowStore:
             record = root["workflows"].get(workflow_id)
             if record is None:
                 return None
-            return record.to_dict() if hasattr(record, "to_dict") else dict(record)
+            result = record.to_dict() if hasattr(record, "to_dict") else dict(record)
+            if result.get("workflow") is not None:
+                migrate_workflow_object(result["workflow"])
+            return result
 
     @_retry_on_conflict()
     def append_event(self, workflow_id: str, event_dict: dict[str, Any]) -> None:

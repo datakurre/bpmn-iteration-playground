@@ -812,7 +812,7 @@ class WorkflowService:
                 record = self._record(workflow_id)
                 workflow = record["workflow"]
                 before = self.runner.task_snapshot(workflow)
-                workflow.refresh_waiting_tasks()
+                workflow.refresh_timers()
                 workflow.do_engine_steps()
                 if self.runner.task_snapshot(workflow) == before:
                     continue
@@ -838,7 +838,7 @@ class WorkflowService:
     def start_timer_loop(self, interval: float | None = None) -> None:
         """Start the background ticker that fires due BPMN timer events.
 
-        SpiffWorkflow only advances a timer when refresh_waiting_tasks() is called, so
+        SpiffWorkflow only advances a timer when refresh_timers() is called, so
         without this loop timer events never fire at all.
         """
         if self._timer_task is not None and not self._timer_task.done():
