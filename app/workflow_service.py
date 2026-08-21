@@ -870,7 +870,16 @@ class WorkflowService:
             if not definitions:
                 raise KeyError(f"no waiting event named {message_name!r}")
 
+            existing_subprocess_ids = set(workflow.subprocesses.keys())
             workflow.catch(BpmnEvent(definitions[0], payload=payload))
+            # A message matching an event-subprocess trigger spawns a brand new subprocess
+            # whose own workflow.data starts empty: BpmnEvent.payload only lands on the
+            # triggering task's *task* data, which runner.prompt() (and thus the child's own
+            # agent turns) never reads -- only the subprocess's own workflow.data is. Without
+            # this, the payload stays invisible to the child until it completes, at which
+            # point SpiffWorkflow's terminal-task data merge finally surfaces it externally.
+            for spawned_id in set(workflow.subprocesses.keys()) - existing_subprocess_ids:
+                workflow.subprocesses[spawned_id].data.update(payload)
             workflow.do_engine_steps()
             self.events.emit(
                 "message_received",

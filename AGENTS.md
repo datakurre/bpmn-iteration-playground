@@ -105,7 +105,7 @@ app/
   ws.py              – WebSocket connection manager for /ws/instance/{id} push
 workflows/           – Executable BPMN 2.0 templates (plan_and_execute, document_generation,
                        bug_triage, contract_review, pr_review, external_gate,
-                       composed_delivery + its callable child agent_review_cycle)
+                       composed_delivery + its callable child agent_review_cycle, project)
 scripts/
   pi-demo            – Deterministic Pi CLI-compatible mock (no credentials needed)
   verify_*.py        – Playwright-based smoke tests for UI pages
@@ -186,9 +186,12 @@ vendor/agent-sandbox – git submodule: Rust CLI + Podman sandbox, isolates Pi's
 - **Inbound events**: `POST /instance/{id}/message/{name}` delivers an external message to
   a waiting message catch event (payload merges into task data);
   `GET /instance/{id}/events/pending` lists what an instance is parked on. Timer events
-  only advance when `refresh_waiting_tasks()` is called, which the background ticker does
+  only advance when `refresh_timers()` is called, which the background ticker does
   every `TIMER_TICK_SECONDS` (default 10, `0` disables). Instances parked on an event
-  report status `waiting_event`.
+  report status `waiting_event`. A message matching an event-subprocess trigger spawns a
+  new child instead of resuming a waiting task (see Event Subprocess Children below); for
+  that case only, `send_message` also copies the payload onto the new subprocess's own
+  `workflow.data`, not just the triggering task's task data — see the next bullet for why.
 - **FormJS Schema Compatibility**: FormJS UMD bundle (`form-viewer.umd.js`) requires schemas formatted with `"type": "default"` and `"components": [...]` (mapping string fields to `"type": "textfield"`). Type mapping lives in `CAMUNDA_TO_FORMJS_TYPE` in `workflow_service.py`.
 - **Static Assets Routing**: Specific static mounts (`/static/form-js`) must be mounted in FastAPI before general prefix mounts (`/static`) to ensure correct resolution.
 - **Harness Type Dispatch**: Tasks declare their adapter via a `harness_type` Camunda property (default `pi_agent`). `AdapterRegistry` resolves the correct `BaseAdapter`.
@@ -196,6 +199,33 @@ vendor/agent-sandbox – git submodule: Rust CLI + Podman sandbox, isolates Pi's
 - **Forking**: `POST /instance/{id}/fork/{save_point_id}` duplicates the ZODB record and workspace blob, then resumes from the savepoint.
 - **BPMN Extensions**: `engine.py` reads `camunda:properties`, `camunda:formData`, and `camunda:inputOutput`. Input parameters support `${variable}` expression syntax.
 - **CallActivity Children**: Child workflows tracked in `data["__children"]`, synced as separate ZODB records with `parent_workflow_id` back-references.
+- **Event Subprocess Children**: `_sync_children` also syncs children spawned by a native
+  `triggeredByEvent="true"` event subprocess (`workflows/project.bpmn`), the same way as
+  CallActivity children, keyed the same way in `data["__children"]`. Two SpiffWorkflow 3.2.0
+  quirks this depends on, both verified by running the mechanism rather than assumed:
+  - A `triggeredByEvent` subprocess never actually gets classed as `EventSubprocess` at
+    parse time (`SubWorkflowParser.create_task()`'s `triggeredByEvent` check reads the
+    BPMN-namespaced attribute, but the attribute is always unprefixed on a standard
+    `<bpmn:subProcess>` element, so it never matches) — it parses as the plain
+    `SubWorkflowTask` class instead. `_sync_children` and `_catching_definitions` both
+    check `isinstance(x, SubWorkflowTaskMixin)` (`SpiffWorkflow.bpmn.specs.mixins.
+    subworkflow_task`), the shared base, not the specific subclass.
+  - `send_message()`'s payload lands on the *triggering task's* task data by default
+    (`BpmnEvent.payload`), not on the newly spawned subprocess's own `workflow.data` — but
+    `runner.prompt()` (and so every agent turn) reads `${var}` input parameters from
+    `workflow.data`. Without `send_message` also copying the payload onto the new
+    subprocess directly, a spawned child's own agent turn cannot see what it was spawned to
+    do; the payload only surfaces in the child's record after it completes (SpiffWorkflow's
+    terminal-task data merge).
+- **Project template** (`workflows/project.bpmn`): a long-running Project that never
+  completes on its own — main flow parks on a `Project Open` user task (submit it to close
+  the Project) while an event subprocess spawns a new child for every
+  `POST /instance/{id}/message/spawn_requested` with a `{"task_brief": "..."}` payload. Each
+  spawn is a fresh child (SpiffWorkflow reuses a subprocess only if it's still WAITING at its
+  own start event, which a spawned child never is once dispatched — don't design around
+  reuse). The template shape (park-and-spawn) is convention, not enforced by
+  `WorkflowRegistry`; nothing currently validates that a template calling itself a Project
+  actually has a trigger spec.
 
 ## 4b. Agent Sandbox Integration
 
