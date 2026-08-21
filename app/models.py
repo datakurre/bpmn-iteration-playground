@@ -96,6 +96,23 @@ class ForkRequest(BaseModel):
         return _validate_variables(v)
 
 
+class PurgeSavePointsRequest(BaseModel):
+    before: str | None = Field(
+        default=None,
+        description="ISO-8601 timestamp anchor; savepoints created strictly before this are purged. The anchor itself is not required to exist as a savepoint.",
+        json_schema_extra={"example": "2026-08-21T00:00:00+00:00"},
+    )
+    before_task_id: str | None = Field(
+        default=None,
+        description="Element anchor: purge every savepoint older than this task's newest savepoint. That savepoint is kept.",
+    )
+
+
+class PurgeSavePointsResponse(BaseModel):
+    purged: int
+    remaining: int
+
+
 class WebhookRegistration(BaseModel):
     url: HttpUrl = Field(
         description="HTTP webhook target URL",

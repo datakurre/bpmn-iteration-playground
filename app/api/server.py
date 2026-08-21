@@ -24,6 +24,8 @@ from app.models import (
     StartWorkflowRequest,
     StorageStats,
     MessageRequest,
+    PurgeSavePointsRequest,
+    PurgeSavePointsResponse,
     SubmitTaskRequest,
     TemplateSummary,
     WebhookRegistration,
@@ -395,6 +397,21 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
             return get_service().save_point_detail(workflow_id, save_point_id)
         except (WorkflowNotFound, KeyError) as exc:
             raise HTTPException(404, f"save point not found: {exc.args[0]}")
+
+    @app.delete("/instance/{workflow_id}/savepoints", response_model=PurgeSavePointsResponse, tags=["Instance"], summary="Purge savepoints older than an anchor")
+    async def purge_instance_savepoints(
+        workflow_id: str,
+        request: PurgeSavePointsRequest,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR),
+    ) -> dict[str, int]:
+        try:
+            return await get_service().purge_save_points(
+                workflow_id, before=request.before, before_task_id=request.before_task_id
+            )
+        except WorkflowNotFound:
+            raise HTTPException(404, "workflow not found")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
 
     @app.get("/instance/{workflow_id}/state", response_model=WorkflowState, tags=["Instance"], summary="Get instance state")
     async def instance_state(

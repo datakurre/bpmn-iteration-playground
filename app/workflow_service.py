@@ -574,6 +574,53 @@ class WorkflowService:
                 }
         raise KeyError(save_point_id)
 
+    async def purge_save_points(
+        self,
+        workflow_id: str,
+        before: str | None = None,
+        before_task_id: str | None = None,
+    ) -> dict[str, int]:
+        """Delete every savepoint older than an anchor, releasing its workspace blob.
+
+        Deliberately manual-only, per plans/concepts.md "Savepoint retention is a manual
+        purge" -- an age/count policy can't judge which past states are still worth forking
+        from, only the user can. Exactly one anchor is required: `before` (an ISO-8601
+        timestamp) or `before_task_id` (resolved to the newest savepoint carrying that task,
+        whose created_at becomes the cutoff). The savepoint at the cutoff itself is kept.
+        """
+        if bool(before) == bool(before_task_id):
+            raise ValueError("purge requires exactly one of 'before' or 'before_task_id'")
+
+        workflow_id = self._get_root_workflow_id(workflow_id)
+        async with self._lock(workflow_id):
+            record = self._record(workflow_id)
+            points = record.get("save_points", [])
+
+            if before_task_id is not None:
+                task_points = [p for p in points if p.get("task_id") == before_task_id]
+                if not task_points:
+                    raise ValueError(f"no savepoints found for task {before_task_id!r}")
+                cutoff = max(p["created_at"] for p in task_points)
+            else:
+                cutoff = before
+
+            purge_ids = {p["id"] for p in points if p.get("created_at") < cutoff and p.get("id")}
+            if purge_ids:
+                record["save_points"] = [p for p in points if p.get("id") not in purge_ids]
+                for save_point_id in purge_ids:
+                    try:
+                        self.store.delete_save_point(save_point_id)
+                    except Exception as exc:
+                        logger.warning("Failed to delete purged savepoint %s: %s", save_point_id, exc)
+                await asyncio.to_thread(self.store.save, workflow_id, record)
+
+            remaining = len(record.get("save_points", []))
+            logger.info(
+                "Purged savepoints",
+                extra={"workflow_id": workflow_id, "purged": len(purge_ids), "remaining": remaining},
+            )
+            return {"purged": len(purge_ids), "remaining": remaining}
+
     async def pack_database(self, days: int = 0) -> dict[str, Any]:
         return await asyncio.to_thread(self.store.pack, days)
 
