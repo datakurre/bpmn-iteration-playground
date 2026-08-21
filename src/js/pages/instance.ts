@@ -4,6 +4,7 @@ import { initResizer } from "../lib/resizer";
 import { fitDiagram, wireZoomControls } from "../lib/bpmn-viewer-controls";
 import { withDocumentContentFallback } from "../lib/form-data-fallback";
 import { createBackoffScheduler } from "../lib/websocket";
+import { buildPurgeRequest, describePurge } from "../lib/savepoint-purge";
 import type { BpmnDiagramInstance } from "../lib/bpmn-types";
 import type { FormInstance } from "../types/globals";
 
@@ -23,6 +24,7 @@ interface TaskSummary {
 interface SavePointSummary {
   id: string;
   phase: string;
+  task_id: string;
   task_name: string;
   created_at: string;
 }
@@ -217,7 +219,10 @@ function renderState(next: WorkflowState): void {
     <div class="p-2 rounded-md bg-card border border-line mb-1.5 text-xs hover:border-line-highlight transition-colors">
       <div class="flex justify-between items-center">
         <strong class="font-semibold text-ink">${escapeHtml(point.phase)}</strong>
-        <button class="btn btn-secondary text-[10px] px-1.5 py-0.5" data-fork="${escapeHtml(point.id)}">Fork</button>
+        <div class="flex items-center gap-1">
+          <button class="btn btn-secondary text-[10px] px-1.5 py-0.5" data-fork="${escapeHtml(point.id)}">Fork</button>
+          <button class="btn btn-danger text-[10px] px-1.5 py-0.5 opacity-60 hover:opacity-100" data-purge="${escapeHtml(point.id)}" title="Delete every savepoint recorded before this one">Purge</button>
+        </div>
       </div>
       <div class="text-muted text-[10.5px] mt-0.5">${escapeHtml(point.task_name)} · ${escapeHtml(new Date(point.created_at).toLocaleTimeString())}</div>
     </div>
@@ -237,6 +242,35 @@ function renderState(next: WorkflowState): void {
       });
       if (response.ok) {
         location.href = `/instance/${(await response.json()).workflow_id}`;
+      }
+    };
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-purge]").forEach((button) => {
+    button.onclick = async () => {
+      const anchorId = button.dataset.purge;
+      if (!anchorId) return;
+      const point = spList.find((p) => p.id === anchorId);
+      if (!point) return;
+      if (!window.confirm(describePurge(spList, anchorId))) return;
+
+      button.disabled = true;
+      try {
+        const response = await fetch(`/instance/${id}/savepoints`, {
+          method: "DELETE",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(buildPurgeRequest(point)),
+        });
+        if (response.ok) {
+          await refresh();
+        } else {
+          const body = await response.json().catch(() => null);
+          alert(`Purge failed: ${body?.detail || response.statusText}`);
+          button.disabled = false;
+        }
+      } catch (e) {
+        alert(`Purge failed: ${e}`);
+        button.disabled = false;
       }
     };
   });

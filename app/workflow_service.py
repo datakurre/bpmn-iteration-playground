@@ -1049,6 +1049,12 @@ class WorkflowService:
                 record["data"] = dict(workflow.data)
                 await asyncio.to_thread(self.store.save, workflow_id, record)
                 self._sync_children(workflow_id, record)
+                # Unlike the tasks_to_launch branch above, nothing else broadcasts this
+                # transition: _complete_pi() pushes state for the completed task *before*
+                # calling _dispatch(), so a ServiceTask advancing straight into a UserTask
+                # (status -> waiting_human, human_wait savepoint added) would otherwise never
+                # reach a connected client until its next reconnect/poll.
+                await ws_manager.broadcast(workflow_id, self.state(workflow_id))
                 if record["status"] == "completed":
                     self.events.emit("workflow_completed", workflow_id, data=record["data"])
 
