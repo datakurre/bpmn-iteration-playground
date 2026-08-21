@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from SpiffWorkflow.bpmn.specs.mixins.events.event_types import CatchingEvent
+from SpiffWorkflow.bpmn.specs.mixins.subworkflow_task import CallActivity as CallActivityMixin
+from SpiffWorkflow.bpmn.specs.mixins.subworkflow_task import SubWorkflowTask as SubWorkflowTaskMixin
 from SpiffWorkflow.bpmn.util import BpmnEvent
 from SpiffWorkflow.task import TaskState
 from ZODB.blob import Blob
@@ -440,13 +442,23 @@ class WorkflowService:
         # was silently discarded and every sync minted a fresh child record.
         children_map = root_workflow.data.setdefault("__children", {})
 
-        def _sync(parent_id: str, parent_wf: Any) -> None:
+        def _sync(parent_id: str, parent_wf: Any, parent_bpmn_path: str) -> None:
             # One level at a time: the iterator descends into subprocesses by default,
             # which would attribute grandchildren to the root instead of their parent.
             for task in parent_wf.get_tasks(state=TaskState.ANY_MASK, skip_subprocesses=True):
-                if type(task.task_spec).__name__ != "CallActivity":
+                # isinstance, not name matching: this must also catch event/ad-hoc/transaction
+                # subprocesses, not just CallActivity. Note SpiffWorkflow 3.2.0 does not
+                # actually construct these as the EventSubprocess class its own parser table
+                # names for that purpose (SubWorkflowParser.create_task()'s triggeredByEvent
+                # check reads the BPMN-namespaced attribute, but the attribute is always
+                # unprefixed on a standard <bpmn:subProcess triggeredByEvent="true">, so it
+                # never matches) -- every triggeredByEvent subprocess is actually the plain
+                # SubWorkflowTask class. isinstance against the shared base is what actually
+                # works here, and is the same check SpiffWorkflow's own BpmnParser uses
+                # internally for "does this task launch a subworkflow".
+                if not isinstance(task.task_spec, SubWorkflowTaskMixin):
                     continue
-                # `task.workflow` is the workflow *containing* the call activity; the
+                # `task.workflow` is the workflow *containing* the launching task; the
                 # subprocess it launched lives in top_workflow.subprocesses.
                 child_wf = self.runner.subprocess_of(root_workflow, task)
                 if child_wf is None:
@@ -458,7 +470,13 @@ class WorkflowService:
                 child_id = children_map[task_id]
 
                 called = getattr(task.task_spec, "spec", "") or getattr(task.task_spec, "calledElement", "")
-                bpmn_path = f"workflows/{called}.bpmn" if called else "unknown"
+                if isinstance(task.task_spec, CallActivityMixin):
+                    bpmn_path = f"workflows/{called}.bpmn" if called else "unknown"
+                else:
+                    # Inline subprocess (event subprocess, ad-hoc, transaction): there is no
+                    # separate called file -- the child's diagram genuinely is the file that
+                    # contains it.
+                    bpmn_path = parent_bpmn_path or "unknown"
 
                 child_record = self.store.load(child_id)
                 if not child_record:
@@ -483,9 +501,9 @@ class WorkflowService:
                     child_record["parent_workflow_id"] = parent_id
 
                 self.store.save(child_id, child_record)
-                _sync(child_id, child_wf)
+                _sync(child_id, child_wf, bpmn_path)
 
-        _sync(root_workflow_id, root_workflow)
+        _sync(root_workflow_id, root_workflow, record.get("bpmn_path", "unknown"))
         self.store.save(root_workflow_id, record)
 
     async def start(
@@ -802,6 +820,22 @@ class WorkflowService:
                 continue
             if name is None or getattr(definition, "name", None) == name:
                 definitions.append(definition)
+
+        # An event subprocess's start event is never a WAITING task in the tree -- it is
+        # perpetually armed to spawn a new subprocess instance, tracked on
+        # workflow.spec.start.trigger_specs instead. Without this, send_message() can never
+        # deliver the message that spawns the *first* child (there is nothing "waiting" yet),
+        # and workflow.waiting_events() doesn't list it either.
+        for spec_name in getattr(workflow.spec.start, "trigger_specs", []):
+            sp_spec = workflow.subprocess_specs.get(spec_name)
+            if sp_spec is None:
+                continue
+            for start_task_spec in getattr(sp_spec, "bpmn_start_events", []):
+                definition = getattr(start_task_spec, "event_definition", None)
+                if definition is None:
+                    continue
+                if name is None or getattr(definition, "name", None) == name:
+                    definitions.append(definition)
         return definitions
 
     def pending_events(self, workflow_id: str) -> list[dict[str, Any]]:

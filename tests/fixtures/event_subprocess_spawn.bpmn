@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_EventSubprocessSpawn" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Msg_Spawn" name="spawn_requested" />
+  <bpmn:process id="event_subprocess_spawn" name="Event Subprocess Spawn" isExecutable="true">
+    <bpmn:documentation>Fixture: an event subprocess (triggeredByEvent) spawns one child per "spawn_requested" message while the main flow parks on a user task -- proves SpiffWorkflow 3.2.0's native event-subprocess spawning is live (todo 07).</bpmn:documentation>
+    <bpmn:startEvent id="Start_Main">
+      <bpmn:outgoing>Flow_Main_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_Main_1" sourceRef="Start_Main" targetRef="Task_Main" />
+    <bpmn:userTask id="Task_Main" name="Stay Parked">
+      <bpmn:incoming>Flow_Main_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_Main_2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="Flow_Main_2" sourceRef="Task_Main" targetRef="End_Main" />
+    <bpmn:endEvent id="End_Main">
+      <bpmn:incoming>Flow_Main_2</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:subProcess id="Child" name="Spawned child" triggeredByEvent="true">
+      <bpmn:startEvent id="C_Start">
+        <bpmn:outgoing>Flow_Child_1</bpmn:outgoing>
+        <bpmn:messageEventDefinition id="MessageEventDefinition_Spawn" messageRef="Msg_Spawn" />
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="Flow_Child_1" sourceRef="C_Start" targetRef="C_Task" />
+      <bpmn:task id="C_Task" name="Child Work">
+        <bpmn:incoming>Flow_Child_1</bpmn:incoming>
+        <bpmn:outgoing>Flow_Child_2</bpmn:outgoing>
+      </bpmn:task>
+      <bpmn:sequenceFlow id="Flow_Child_2" sourceRef="C_Task" targetRef="C_End" />
+      <bpmn:endEvent id="C_End">
+        <bpmn:incoming>Flow_Child_2</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+  </bpmn:process>
+</bpmn:definitions>
