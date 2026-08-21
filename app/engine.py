@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,62 @@ from SpiffWorkflow.bpmn.workflow import BpmnWorkflow
 from SpiffWorkflow.task import TaskState
 
 from app.xml_utils import safe_parse_xml
+
+_EXPR_RE = re.compile(r"\$\{([^}]*)\}")
+_INDEX_RE = re.compile(r"-?\d+")
+
+
+def _resolve_path(path: str, data: Any) -> Any:
+    """Walk a dotted path through nested dicts/lists. Any miss (key, index, or wrong
+    container type) yields None rather than raising -- a bad expression should fail the
+    expression, not the whole prompt build.
+    """
+    current = data
+    for segment in path.split("."):
+        if isinstance(current, dict):
+            if segment not in current:
+                return None
+            current = current[segment]
+        elif isinstance(current, (list, tuple)):
+            if not _INDEX_RE.fullmatch(segment):
+                return None
+            index = int(segment)
+            if not -len(current) <= index < len(current):
+                return None
+            current = current[index]
+        else:
+            return None
+    return current
+
+
+def resolve_input(expr: str, data: dict[str, Any]) -> Any:
+    """Resolve a camunda:inputParameter expression against workflow/task data.
+
+    Deliberately not a general expression language (see plans/bpmn.md): pure dict/list
+    lookup plus string substitution, nothing more. In particular this must never route
+    through SpiffWorkflow's script engine or `eval` -- these values are interpolated into
+    agent prompts, and workflow data an agent previously wrote must not be evaluated as code.
+
+    - A literal string with no `${...}` passes through unchanged.
+    - A whole-string expression (`${a.b.c}`, list indices supported) returns the resolved
+      *value* with its native type -- gateways and agent JSON depend on ints/lists/dicts
+      surviving, not becoming strings.
+    - A mixed string (`"Review ${contract}"`) interpolates every `${...}` occurrence,
+      stringifying each resolved value; a miss becomes an empty string rather than leaking
+      a literal `${...}` into the prompt.
+    """
+    if "${" not in expr:
+        return expr
+
+    whole = _EXPR_RE.fullmatch(expr)
+    if whole:
+        return _resolve_path(whole.group(1), data)
+
+    def _substitute(match: re.Match[str]) -> str:
+        value = _resolve_path(match.group(1), data)
+        return "" if value is None else str(value)
+
+    return _EXPR_RE.sub(_substitute, expr)
 
 
 class WorkflowRunner:
@@ -171,13 +228,7 @@ class WorkflowRunner:
         target_wf = getattr(task, "workflow", workflow)
 
         if input_params:
-            variables: dict[str, Any] = {}
-            for name, expr in input_params.items():
-                if expr.startswith("${") and expr.endswith("}"):
-                    var_name = expr[2:-1]
-                    variables[name] = target_wf.data.get(var_name)
-                else:
-                    variables[name] = expr
+            variables: dict[str, Any] = {name: resolve_input(expr, target_wf.data) for name, expr in input_params.items()}
         else:
             variables = dict(target_wf.data)
 

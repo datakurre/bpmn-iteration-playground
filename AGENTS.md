@@ -177,6 +177,24 @@ vendor/agent-sandbox – git submodule: Rust CLI + Podman sandbox, isolates Pi's
   succeed", and it is what the bundled templates route on (`plan_status == 'success'`).
   Note SpiffWorkflow merges the terminal task's data into `workflow.data` when an instance
   completes, so a completed instance's data also carries that last task's local keys.
+- **Reading data into a prompt (inputParameters)**: `camunda:inputParameter` expressions are
+  resolved by `resolve_input()` (`app/engine.py`), a pure dict/list lookup + string
+  substitution helper — deliberately not a general expression language, and it must never
+  route through SpiffWorkflow's script engine or `eval` (these values are interpolated into
+  agent prompts, so evaluating them would be an injection path from agent output back into
+  engine evaluation). Supported syntax:
+  - `${name}` — resolves against `workflow.data[name]`.
+  - `${a.b.c}` — dotted nested path through dicts; numeric segments (`${findings.0.title}`)
+    index into lists. Any miss along the path (missing key, out-of-range or non-numeric
+    index, or the path running into a non-container) yields `None`, never a `KeyError`.
+  - A **whole-string** expression (the entire value is one `${...}`) returns the resolved
+    value with its native type — an int, list, or dict survives, since gateway conditions
+    and agent JSON depend on that.
+  - A **mixed** string (`"Review ${contract} for ${reviewer}"`) interpolates every `${...}`
+    occurrence, stringifying each resolved value; a miss becomes `""` rather than leaking a
+    literal `${...}` into the prompt for the agent to puzzle over.
+  - A task with no `inputParameters` at all falls back to passing the whole of
+    `workflow.data` as `variables` — several bundled templates rely on this.
 - **Session lineage**: agent sessions are tracked per execution path in
   `workflow.data["__sessions"]` (task instance id → session id). A turn inherits the
   session of the nearest ancestor on its own branch and forks it (`pi --fork`) when the
