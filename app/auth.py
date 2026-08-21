@@ -1,16 +1,17 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
-from enum import Enum
-from typing import Any, Optional
+from enum import StrEnum
+from typing import Any
 
-from fastapi import Depends, HTTPException, Header, Request
+from fastapi import Depends, Header, HTTPException
 
 logger = logging.getLogger("bpmn.auth")
 
 
-class Role(str, Enum):
+class Role(StrEnum):
     ADMIN = "admin"
     OPERATOR = "operator"
     VIEWER = "viewer"
@@ -39,10 +40,8 @@ def parse_auth_config() -> tuple[str | None, dict[str, Role], bool]:
         entry = entry.strip()
         if ":" in entry:
             key, role_str = entry.split(":", 1)
-            try:
+            with contextlib.suppress(ValueError):
                 api_keys[key.strip()] = Role(role_str.strip().lower())
-            except ValueError:
-                pass
         elif entry:
             api_keys[entry] = Role.OPERATOR
     auth_enabled = bool(admin_token or api_keys)
@@ -65,8 +64,8 @@ _warned_fail_open = False
 
 
 def get_current_role(
-    x_api_key: Optional[str] = Header(default=None),
-    x_admin_token: Optional[str] = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
 ) -> Role | None:
     global _warned_fail_open
     admin_token, api_keys, auth_enabled = parse_auth_config()
@@ -95,7 +94,7 @@ def get_current_role(
 def require_role(*allowed_roles: Role) -> Any:
     # Depends() is itself typed `-> Any`, so this stays assignable as a Role-typed default.
     def checker(role: Role | None = Depends(get_current_role)) -> Role:
-        admin_token, api_keys, auth_enabled = parse_auth_config()
+        _admin_token, _api_keys, auth_enabled = parse_auth_config()
         require_auth = _is_require_auth()
 
         if not auth_enabled:

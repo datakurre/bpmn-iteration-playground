@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -79,14 +80,10 @@ async def _kill_process_group(process: asyncio.subprocess.Process) -> None:
     try:
         os.killpg(os.getpgid(process.pid), signal.SIGKILL)
     except (ProcessLookupError, PermissionError, OSError):
-        try:
+        with contextlib.suppress(ProcessLookupError):
             process.kill()
-        except ProcessLookupError:
-            pass
-    try:
+    with contextlib.suppress(ProcessLookupError):
         await process.wait()
-    except ProcessLookupError:
-        pass
 
 
 def _set_resource_limits() -> None:
@@ -240,7 +237,7 @@ class PiClient:
                 return demo_result
         return result
 
-    async def _execute(
+    async def _execute(  # noqa: C901, PLR0912, PLR0913, PLR0915 -- subprocess spawn/stream/timeout/cancel/parse lifecycle; pre-existing complexity
         self,
         executable: str,
         prompt: str,
@@ -319,7 +316,7 @@ class PiClient:
         try:
             await asyncio.wait_for(self._read_output(process, events, on_event=on_event), active_timeout)
             exit_code = process.returncode
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await _kill_process_group(process)
             status = "timeout"
             stderr_msg = "Pi timed out"
@@ -334,10 +331,8 @@ class PiClient:
         finally:
             raw_stderr = b""
             if process.stderr:
-                try:
+                with contextlib.suppress(Exception):
                     raw_stderr = await process.stderr.read()
-                except Exception:
-                    pass
             decoded_stderr = raw_stderr.decode(errors="replace")
             if stderr_msg:
                 stderr_text = f"{stderr_msg}\n{decoded_stderr}".strip() if decoded_stderr else stderr_msg

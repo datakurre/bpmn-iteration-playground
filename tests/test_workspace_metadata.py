@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+
 import pytest
 from starlette.testclient import TestClient
 
@@ -70,6 +71,7 @@ def test_workspace_api_endpoints(client: TestClient) -> None:
 async def test_unpack_workspace_gz_fallback() -> None:
     import io
     import tarfile
+
     from app.workspace import unpack_workspace
 
     # Create a tar.gz archive in memory
@@ -95,6 +97,7 @@ async def test_unpack_workspace_gz_fallback() -> None:
 async def test_unpack_workspace_plain_tar_no_compression() -> None:
     import io
     import tarfile
+
     from app.workspace import unpack_workspace
 
     buf = io.BytesIO()
@@ -116,6 +119,7 @@ async def test_unpack_workspace_plain_tar_no_compression() -> None:
 @pytest.mark.anyio
 async def test_unpack_workspace_empty_blob_returns_bare_workdir() -> None:
     from ZODB.blob import Blob
+
     from app.workspace import unpack_workspace
 
     blob = Blob()
@@ -133,6 +137,7 @@ async def test_unpack_workspace_empty_blob_returns_bare_workdir() -> None:
 @pytest.mark.anyio
 async def test_unpack_workspace_unopenable_blob_returns_bare_workdir() -> None:
     from ZODB.blob import Blob
+
     from app.workspace import unpack_workspace
 
     # A freshly-constructed Blob has no committed data yet, so .open("r") raises.
@@ -147,6 +152,7 @@ async def test_unpack_workspace_unopenable_blob_returns_bare_workdir() -> None:
 @pytest.mark.anyio
 async def test_pack_workspace_falls_back_to_gzip_when_tar_subprocess_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     import asyncio
+
     from app.workspace import pack_workspace
 
     async def boom(*args, **kwargs):
@@ -168,6 +174,7 @@ async def test_pack_workspace_falls_back_to_gzip_when_tar_subprocess_fails(monke
 @pytest.mark.anyio
 async def test_pack_workspace_to_bytes_falls_back_to_gzip_when_tar_subprocess_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     import asyncio
+
     from app.workspace import pack_workspace_to_bytes
 
     async def boom(*args, **kwargs):
@@ -206,6 +213,7 @@ async def test_extract_workspace_file_blocks_path_traversal() -> None:
 @pytest.mark.anyio
 async def test_duplicate_blob() -> None:
     import transaction
+
     from app.persistence import WorkflowStore
     from app.workspace import duplicate_blob
 

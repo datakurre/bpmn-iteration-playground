@@ -1,6 +1,9 @@
 import io
+
 import pytest
-from app.xml_utils import safe_parse_xml, safe_fromstring_xml
+from defusedxml.common import EntitiesForbidden
+
+from app.xml_utils import safe_fromstring_xml, safe_parse_xml
 
 
 def test_safe_xml_parsing_normal() -> None:
@@ -24,7 +27,7 @@ def test_safe_xml_blocks_xxe_external_entity() -> None:
     <root>
         <data>&xxe;</data>
     </root>"""
-    with pytest.raises(Exception):
+    with pytest.raises(EntitiesForbidden):
         safe_parse_xml(io.BytesIO(xxe_xml))
 
 
@@ -34,7 +37,7 @@ def test_safe_fromstring_blocks_xxe() -> None:
         <!ENTITY xxe SYSTEM "file:///etc/hosts">
     ]>
     <root>&xxe;</root>"""
-    with pytest.raises(Exception):
+    with pytest.raises(EntitiesForbidden):
         safe_fromstring_xml(xxe_xml)
 
 
@@ -49,5 +52,5 @@ def test_safe_xml_blocks_internal_entity_declaration() -> None:
         <!ENTITY foo "bar">
     ]>
     <root>&foo;</root>"""
-    with pytest.raises(Exception):
+    with pytest.raises(EntitiesForbidden):
         safe_parse_xml(io.BytesIO(bomb_xml))

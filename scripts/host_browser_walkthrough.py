@@ -1,18 +1,16 @@
-import json
 import os
-import sys
-import time
 from pathlib import Path
+
 from playwright.sync_api import sync_playwright
 
 BASE_URL = os.environ.get("APP_URL", "http://localhost:8000")
 OUTPUT_DIR = Path(__file__).resolve().parents[1] / "docs" / "images"
 CDP_URL = "http://127.0.0.1:9222"
 
-def main():
+def main():  # noqa: PLR0915 -- linear step-by-step manual walkthrough script; splitting it up would obscure the sequence it demonstrates
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     print(f"Connecting to Host Browser over CDP at {CDP_URL}...")
-    
+
     with sync_playwright() as p:
         browser = p.chromium.connect_over_cdp(CDP_URL)
         context = browser.contexts[0]
@@ -33,7 +31,7 @@ def main():
         # Select Contract Review template
         print("   Selecting 'Contract Review' workflow template...")
         page.locator("#template-select").select_option("workflows/contract_review.bpmn")
-        
+
         contract_text = (
             "Enterprise Master Services Agreement (MSA) between Acme Cloud Corp and Beta Tech Inc.\n"
             "Section 4: Confidentiality obligation shall survive for 5 years.\n"
@@ -66,7 +64,7 @@ def main():
         print("   Waiting for Pi task completion -> 'waiting_human' state...")
         page.get_by_text("waiting_human", exact=True).wait_for(timeout=60000)
         page.wait_for_timeout(2000)
-        
+
         # Step 3: Screenshot Live Instance Review Form
         print("3. Capturing Live Instance with BPMN Diagram & Human Review Form...")
         page.screenshot(path=str(OUTPUT_DIR / "instance-review-form.png"), full_page=False)

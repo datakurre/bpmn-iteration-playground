@@ -51,8 +51,9 @@
     };
   };
 
-  scripts.test.exec = "uv run pytest -q --cov=app --cov-report=term-missing --cov-report=html && uv run mypy app/ && npm run typecheck && npm test";
-  scripts.lint.exec = "uv run mypy app/ && npm run typecheck";
+  scripts.test.exec = "uv run ruff check . && uv run pytest -q --cov=app --cov-report=term-missing --cov-report=html && uv run mypy app/ && npm run typecheck && npm test";
+  scripts.lint.exec = "uv run ruff check . && uv run mypy app/ && npm run typecheck";
+  scripts.lint-fix.exec = "uv run ruff check --fix .";
   scripts.demo.exec = ''
     PI_EXECUTABLE="${config.devenv.root}/scripts/pi-demo" \
       uvicorn app.api.server:app --host 0.0.0.0 --port 8000

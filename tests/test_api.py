@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 
@@ -121,8 +122,8 @@ def test_download_workspace_endpoint(client: TestClient) -> None:
 
 
 def test_request_logging_middleware_handles_errors() -> None:
-    import logging
     from fastapi import FastAPI
+
     from app.logging_config import RequestLoggingMiddleware
 
     test_app = FastAPI()
@@ -139,6 +140,7 @@ def test_request_logging_middleware_handles_errors() -> None:
 
 def test_configure_logging_preserves_external_handlers() -> None:
     import logging
+
     from app.logging_config import configure_logging
 
     root = logging.getLogger()
@@ -199,13 +201,14 @@ def test_sse_events_stream_endpoint(client: TestClient) -> None:
 
     # Valid instance stream
     from unittest import mock
-    import asyncio
-    with mock.patch("asyncio.sleep", new_callable=mock.AsyncMock, side_effect=asyncio.CancelledError):
-        with client.stream("GET", f"/instance/{wf_id}/events/stream") as stream_resp:
-            assert stream_resp.status_code == 200
-            for chunk in stream_resp.iter_text():
-                assert "data:" in chunk
-                break
+    with (
+        mock.patch("asyncio.sleep", new_callable=mock.AsyncMock, side_effect=asyncio.CancelledError),
+        client.stream("GET", f"/instance/{wf_id}/events/stream") as stream_resp,
+    ):
+        assert stream_resp.status_code == 200
+        for chunk in stream_resp.iter_text():
+            assert "data:" in chunk
+            break
 
 
 

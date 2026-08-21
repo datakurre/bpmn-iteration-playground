@@ -1,5 +1,6 @@
 import json
 from typing import Any
+
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 MAX_VARIABLES_SIZE_BYTES = 1024 * 1024  # 1 MB
@@ -26,7 +27,7 @@ def _validate_variables(v: dict[str, Any]) -> dict[str, Any]:
         if len(serialized.encode("utf-8")) > MAX_VARIABLES_SIZE_BYTES:
             raise ValueError(f"Variables payload exceeds maximum size of {MAX_VARIABLES_SIZE_BYTES} bytes")
     except (TypeError, OverflowError) as exc:
-        raise ValueError(f"Variables must be JSON serializable: {exc}")
+        raise ValueError(f"Variables must be JSON serializable: {exc}") from exc
     return v
 
 

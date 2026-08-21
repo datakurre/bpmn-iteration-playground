@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any
 
 from app.xml_utils import safe_parse_xml
 
@@ -35,7 +35,7 @@ class WorkflowRegistry:
         self.dir = Path(workflows_dir)
         self._cache: dict[str, tuple[float, WorkflowTemplate | None]] = {}
 
-    def list_templates(self) -> List[WorkflowTemplate]:
+    def list_templates(self) -> list[WorkflowTemplate]:
         templates: list[WorkflowTemplate] = []
         if not self.dir.exists():
             return templates
@@ -67,13 +67,13 @@ class WorkflowRegistry:
 
         return templates
 
-    def get_template(self, process_id: str) -> Optional[WorkflowTemplate]:
+    def get_template(self, process_id: str) -> WorkflowTemplate | None:
         for template in self.list_templates():
             if template.id == process_id or Path(template.path).stem == process_id:
                 return template
         return None
 
-    def _parse_template(self, path: Path) -> Optional[WorkflowTemplate]:
+    def _parse_template(self, path: Path) -> WorkflowTemplate | None:
         root = safe_parse_xml(path).getroot()
         if root is None:
             return None

@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+
 import pytest
 
 from app.persistence import WorkflowStore
@@ -77,14 +78,14 @@ def test_session_id_propagated_to_record_and_data() -> None:
                 0,
                 f"session-abc-{self.calls}"
             )
-            
+
     async def scenario() -> None:
         pi = SessionPi()
         service = WorkflowService(WorkflowStore(":memory:"), pi)
         state = await service.start("workflows/contract_review.bpmn", None, {"contract": "text"})
         await asyncio.gather(*service.jobs.values())
         state = service.state(state["workflow_id"])
-        
+
         # Session id is reported on the instance, not injected into routable workflow data
         assert state["pi_session_id"] == "session-abc-1"
         assert "pi_session_id" not in state["data"]
@@ -96,7 +97,7 @@ def test_session_id_propagated_to_record_and_data() -> None:
         after = next(point for point in state["save_points"] if point["phase"] == "after_harness")
         after_fork = await service.fork(state["workflow_id"], after["id"])
         assert "session-abc-1" in after_fork["data"]["__sessions"].values()
-        
+
     asyncio.run(scenario())
 
 
@@ -289,7 +290,6 @@ async def test_output_parameters_missing_fallback_none() -> None:
 
 
 def test_all_bundled_workflows_parse_and_have_failure_paths() -> None:
-    from pathlib import Path
     from app.engine import WorkflowRunner
     from app.registry import WorkflowRegistry
 
@@ -306,6 +306,7 @@ def test_all_bundled_workflows_parse_and_have_failure_paths() -> None:
 
 def test_workflow_registry_logs_warning_on_malformed_file(tmp_path: Path, caplog) -> None:
     import logging
+
     from app.registry import WorkflowRegistry
 
     bad_bpmn = tmp_path / "broken.bpmn"

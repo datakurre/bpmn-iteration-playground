@@ -78,7 +78,7 @@ def test_history_instances_pagination_and_date_filtering(client: TestClient) -> 
     # Test date filtering
     all_res = client.get("/api/history/instances").json()
     assert len(all_res) == 5
-    created = all_res[0]["created_at"]
+    all_res[0]["created_at"]
     # filter since futuristic date returns 0
     future_res = client.get("/api/history/instances?since=2099-01-01T00:00:00Z").json()
     assert len(future_res) == 0

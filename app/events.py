@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -16,7 +15,7 @@ logger = logging.getLogger("bpmn.events")
 class WorkflowEvent:
     event_type: str
     workflow_id: str
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     task_id: str | None = None
     task_name: str | None = None
     data: dict[str, Any] = field(default_factory=dict)

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -83,7 +82,7 @@ async def unpack_workspace(blob_or_bytes: Blob | bytes | None, prefix: str = "bp
 async def pack_workspace(workdir: str) -> Blob:
     """Pack a directory into a tar.zst blob."""
     blob = Blob()
-    
+
     try:
         proc = await asyncio.create_subprocess_exec(
             "tar",
@@ -111,10 +110,10 @@ async def pack_workspace(workdir: str) -> Blob:
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         tar.add(workdir, arcname=".")
-    
+
     with blob.open("w") as f:
         f.write(buf.getvalue())
-        
+
     return blob
 
 

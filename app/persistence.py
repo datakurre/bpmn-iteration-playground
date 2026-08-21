@@ -4,10 +4,11 @@ import os
 import tempfile
 import time
 import uuid
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 from BTrees.OOBTree import OOBTree
 from persistent import Persistent
@@ -24,7 +25,7 @@ from app.migrations import migrate_workflow_object
 F = TypeVar("F", bound=Callable[..., Any])
 
 
-class WorkspaceConflict(Exception):
+class WorkspaceConflictError(Exception):
     """Raised by set_workspace when expected_version no longer matches the stored version.
 
     Interim optimistic-concurrency guard: two concurrent agent turns on the same instance
@@ -76,7 +77,7 @@ def _create_storage(path: str) -> tuple[Any, str | None]:
 class WorkflowMetadata(Persistent):  # type: ignore[misc]  # persistent ships no type stubs
     """Lightweight metadata for fast listing and indexing."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 -- plain data holder, one field per constructor arg
         self,
         workflow_id: str,
         process_id: str,
@@ -124,7 +125,7 @@ class WorkflowMetadata(Persistent):  # type: ignore[misc]  # persistent ships no
 class SavePointSnapshot(Persistent):  # type: ignore[misc]  # persistent ships no type stubs
     """Independent persistent snapshot holding a deepcopied SpiffWorkflow object graph."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 -- plain data holder, one field per constructor arg
         self,
         id: str,
         workflow_id: str,
@@ -182,7 +183,7 @@ class SavePointSnapshot(Persistent):  # type: ignore[misc]  # persistent ships n
 class WorkflowInstance(Persistent):  # type: ignore[misc]  # persistent ships no type stubs
     """Active persistent workflow execution entity."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 -- plain data holder, one field per constructor arg
         self,
         workflow_id: str,
         process_id: str,
@@ -220,7 +221,7 @@ class WorkflowInstance(Persistent):  # type: ignore[misc]  # persistent ships no
         self.forked_from = forked_from
         self.forked_from_save_point = forked_from_save_point
         self.parent_workflow_id = parent_workflow_id
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         self.created_at = created_at or now
         self.updated_at = updated_at or now
         self.workspace_blob = workspace_blob
@@ -309,7 +310,7 @@ class WorkflowStore:
                 task_id=d.get("task_id", ""),
                 task_name=d.get("task_name", ""),
                 status=d.get("status", "running"),
-                created_at=d.get("created_at", datetime.now(timezone.utc).isoformat()),
+                created_at=d.get("created_at", datetime.now(UTC).isoformat()),
                 data=d.get("data", {}),
                 tasks=d.get("tasks", []),
                 workflow=d.get("workflow"),
@@ -352,7 +353,7 @@ class WorkflowStore:
             return None
 
     @_retry_on_conflict()
-    def save(self, workflow_id: str, record: dict[str, Any] | WorkflowInstance) -> None:
+    def save(self, workflow_id: str, record: dict[str, Any] | WorkflowInstance) -> None:  # noqa: C901, PLR0912, PLR0915 -- reconciles two input shapes (dict record vs. WorkflowInstance) against an existing-or-new instance; pre-existing complexity
         with self.db.transaction() as connection:
             root = connection.root()
             save_points_root = root["save_points"]
@@ -410,7 +411,7 @@ class WorkflowStore:
                                 task_id=point.get("task_id", ""),
                                 task_name=point.get("task_name", ""),
                                 status=point.get("status", "running"),
-                                created_at=point.get("created_at", datetime.now(timezone.utc).isoformat()),
+                                created_at=point.get("created_at", datetime.now(UTC).isoformat()),
                                 data=point.get("data", {}),
                                 tasks=point.get("tasks", []),
                                 workflow=point.get("workflow"),
@@ -429,21 +430,18 @@ class WorkflowStore:
                     or (existing.get("created_at") if isinstance(existing, dict) else None)
                     or (summaries[0]["created_at"] if summaries else None)
                     or raw_record.get("created_at")
-                    or datetime.now(timezone.utc).isoformat()
+                    or datetime.now(UTC).isoformat()
                 )
                 updated_at = (
                     (summaries[-1]["created_at"] if summaries else None)
                     or raw_record.get("updated_at")
-                    or datetime.now(timezone.utc).isoformat()
+                    or datetime.now(UTC).isoformat()
                 )
 
                 if existing and hasattr(existing, "events"):
                     existing_events = list(existing.events)
                     raw_events = raw_record.get("events")
-                    if raw_events:
-                        events = raw_events
-                    else:
-                        events = existing_events
+                    events = raw_events or existing_events
                 else:
                     events = raw_record.get("events", [])
 
@@ -623,7 +621,7 @@ class WorkflowStore:
             "id": webhook_id,
             "url": url,
             "events": list(events or []),
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         }
         with self.db.transaction() as connection:
             root = connection.root()
@@ -773,7 +771,7 @@ class WorkflowStore:
                         setattr(wf, k, v)
                     else:
                         wf.extra[k] = v
-                wf.updated_at = datetime.now(timezone.utc).isoformat()
+                wf.updated_at = datetime.now(UTC).isoformat()
                 wf._p_changed = True
 
                 if workflow_id in root["metadata"]:
@@ -858,7 +856,7 @@ class WorkflowStore:
             if instance is not None:
                 current_version = int(getattr(instance, "workspace_version", 0))
                 if expected_version is not None and expected_version != current_version:
-                    raise WorkspaceConflict(
+                    raise WorkspaceConflictError(
                         f"workspace for {workflow_id} was modified by another turn "
                         f"(expected version {expected_version}, found {current_version})"
                     )

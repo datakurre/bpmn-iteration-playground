@@ -8,7 +8,6 @@ import pytest
 
 from app.adapters.base import AgentResult
 from app.adapters.mock_adapter import MockAdapter
-from app.persistence import WorkspaceConflict
 from app.workflow_service import WORKSPACE_CONFLICT_MESSAGE, WorkflowService
 from app.workspace import cleanup_workspace, unpack_workspace
 
@@ -136,7 +135,7 @@ async def test_conflicted_turn_can_be_retried(service: WorkflowService) -> None:
     )
     assert record["jobs"][failed_task_id]["conflict"] is True
 
-    # WorkspaceConflict must not be retried automatically: the losing turn stays failed
+    # WorkspaceConflictError must not be retried automatically: the losing turn stays failed
     # until the caller explicitly retries it (todo 04 acceptance criteria).
     assert record["jobs"][failed_task_id]["status"] == "failed"
 

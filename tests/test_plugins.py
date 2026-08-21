@@ -1,5 +1,6 @@
 import asyncio
 from typing import Any
+
 from app.adapters.base import AgentResult, BaseAdapter
 from app.adapters.mock_adapter import MockAdapter
 from app.adapters.registry import AdapterRegistry

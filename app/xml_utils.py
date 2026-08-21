@@ -9,14 +9,14 @@ C-accelerated XMLParser CPython normally returns has no `.parser` attribute to h
 from __future__ import annotations
 
 import io
-from pathlib import Path
-from typing import Any, Union
 import xml.etree.ElementTree as ET
+from pathlib import Path
+from typing import Any
 
 import defusedxml.ElementTree as DefusedET
 
 
-def safe_parse_xml(source: Union[str, Path, io.BytesIO, io.StringIO]) -> ET.ElementTree[Any]:
+def safe_parse_xml(source: str | Path | io.BytesIO | io.StringIO) -> ET.ElementTree[Any]:
     """Parse XML safely with DTDs, entity expansion, and external references forbidden."""
     return DefusedET.parse(source)  # type: ignore[no-any-return]
 

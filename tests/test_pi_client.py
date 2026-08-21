@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+
 import pytest
 
 from app.pi_client import PiClient, _parse_json
@@ -245,6 +246,7 @@ async def test_kill_process_group_noop_when_already_exited() -> None:
 @pytest.mark.anyio
 async def test_kill_process_group_kills_running_process(tmp_path: Path) -> None:
     import asyncio
+
     from app.pi_client import _kill_process_group
 
     proc = await asyncio.create_subprocess_exec("sleep", "30", start_new_session=True)

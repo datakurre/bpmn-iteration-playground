@@ -1,8 +1,10 @@
 import asyncio
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from app.events import WorkflowEvent, EventBus
+
+from app.events import EventBus, WorkflowEvent
 from app.workflow_service import WorkflowService
 
 
@@ -84,7 +86,7 @@ def test_event_bus_tracks_pending_tasks() -> None:
     async def scenario() -> None:
         bus = EventBus(store=DummyStore())
         assert hasattr(bus, "_pending_tasks")
-        event = bus.emit("test_event", "wf-123")
+        bus.emit("test_event", "wf-123")
         assert len(bus._pending_tasks) == 1
         # Wait for delivery attempt to complete and verify task cleanup
         await asyncio.gather(*list(bus._pending_tasks), return_exceptions=True)
@@ -96,6 +98,7 @@ def test_event_bus_tracks_pending_tasks() -> None:
 @pytest.mark.anyio
 async def test_webhook_delivery_retry_and_failure(monkeypatch) -> None:
     from unittest.mock import AsyncMock, MagicMock
+
     from app.events import EventBus, WorkflowEvent
 
     bus = EventBus(store=None)

@@ -73,9 +73,8 @@ def test_websocket_auth_required_when_configured(client: TestClient, monkeypatch
     monkeypatch.delenv("REQUIRE_AUTH", raising=False)
 
     # 1. Unauthenticated WS connection is rejected
-    with pytest.raises(WebSocketDisconnect) as exc_info:
-        with client.websocket_connect("/ws/instance/dummy-wf"):
-            pass
+    with pytest.raises(WebSocketDisconnect) as exc_info, client.websocket_connect("/ws/instance/dummy-wf"):
+        pass
     assert exc_info.value.code == 1008
 
     # 2. Authenticated WS connection via header or query parameter succeeds
@@ -104,30 +103,30 @@ def test_ui_page_routes_require_auth(client: TestClient, monkeypatch) -> None:
     assert client.get("/admin", headers=viewer_headers).status_code == 403
 
 def test_auth_config_cached_and_invalidates_on_env_change(monkeypatch) -> None:
-    from app.auth import parse_auth_config, Role
+    from app.auth import Role, parse_auth_config
 
     monkeypatch.setenv("API_KEYS", "cached-key:operator")
     monkeypatch.delenv("ADMIN_TOKEN", raising=False)
 
-    token1, keys1, enabled1 = parse_auth_config()
+    _token1, keys1, _enabled1 = parse_auth_config()
     assert keys1["cached-key"] == Role.OPERATOR
 
-    token2, keys2, enabled2 = parse_auth_config()
+    _token2, keys2, _enabled2 = parse_auth_config()
     assert keys1 is keys2  # Same cached dictionary instance
 
     monkeypatch.setenv("API_KEYS", "cached-key2:viewer")
-    token3, keys3, enabled3 = parse_auth_config()
+    _token3, keys3, _enabled3 = parse_auth_config()
     assert "cached-key2" in keys3
     assert keys3["cached-key2"] == Role.VIEWER
 
 
 def test_malformed_api_keys_handling(monkeypatch) -> None:
-    from app.auth import parse_auth_config, Role
+    from app.auth import Role, parse_auth_config
 
     monkeypatch.delenv("ADMIN_TOKEN", raising=False)
     # Test whitespace, empty items, unknown roles, keys without roles
     monkeypatch.setenv("API_KEYS", "  , key1:admin, , key2:invalid_role , key3:OPERATOR , key4 , key5:viewer:extra ")
-    token, keys, enabled = parse_auth_config()
+    _token, keys, enabled = parse_auth_config()
     assert enabled is True
     assert keys.get("key1") == Role.ADMIN
     assert "key2" not in keys  # invalid role is skipped

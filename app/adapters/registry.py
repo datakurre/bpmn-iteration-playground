@@ -4,7 +4,6 @@ import inspect
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from app.adapters.base import BaseAdapter
 from app.adapters.pi_adapter import PiAdapter
@@ -17,7 +16,7 @@ class AdapterRegistry:
     """Registry managing pluggable agent adapters keyed by harness_type."""
 
     def __init__(self, auto_discover: bool = True) -> None:
-        self._adapters: Dict[str, BaseAdapter] = {}
+        self._adapters: dict[str, BaseAdapter] = {}
         # Register default Pi adapter and Sandbox adapter
         pi_adapter = PiAdapter()
         sandbox_adapter = SandboxPiAdapter()
@@ -35,10 +34,10 @@ class AdapterRegistry:
     def register(self, adapter: BaseAdapter) -> None:
         self._adapters[adapter.adapter_type] = adapter
 
-    def get(self, harness_type: str) -> Optional[BaseAdapter]:
+    def get(self, harness_type: str) -> BaseAdapter | None:
         return self._adapters.get(harness_type)
 
-    def list_types(self) -> List[str]:
+    def list_types(self) -> list[str]:
         return list(self._adapters.keys())
 
     def discover_plugins(self) -> int:

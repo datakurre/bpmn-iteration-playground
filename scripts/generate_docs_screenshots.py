@@ -11,10 +11,10 @@ Uses Playwright in headless mode to capture high-resolution screenshots of all f
 
 import json
 import os
-import sys
 import time
 import urllib.request
 from pathlib import Path
+
 from playwright.sync_api import sync_playwright
 
 BASE_URL = os.environ.get("APP_URL", "http://127.0.0.1:8000")

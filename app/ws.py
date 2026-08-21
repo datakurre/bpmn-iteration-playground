@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from typing import Any, Dict, Set
+from typing import Any
+
 from fastapi import WebSocket
 
 logger = logging.getLogger("bpmn.ws")
@@ -10,7 +11,7 @@ class ConnectionManager:
     """Manages active WebSocket connections for live workflow state push updates."""
 
     def __init__(self) -> None:
-        self._connections: Dict[str, Set[WebSocket]] = {}
+        self._connections: dict[str, set[WebSocket]] = {}
 
     async def connect(self, workflow_id: str, websocket: WebSocket) -> None:
         await websocket.accept()
@@ -37,7 +38,7 @@ class ConnectionManager:
         )
 
         dead_connections = set()
-        for ws, res in zip(conn_list, results):
+        for ws, res in zip(conn_list, results, strict=True):
             if isinstance(res, Exception):
                 logger.debug(f"Failed to send WS message to client: {res}")
                 dead_connections.add(ws)

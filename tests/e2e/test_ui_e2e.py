@@ -1,15 +1,13 @@
-import asyncio
 import os
-import shutil
-import subprocess
-from fastapi.testclient import TestClient
-import pytest
 
+import pytest
+from fastapi.testclient import TestClient
+
+from app.adapters.mock_adapter import MockAdapter
+from app.adapters.registry import AdapterRegistry
 from app.api.server import create_app
 from app.persistence import WorkflowStore
 from app.workflow_service import WorkflowService
-from app.adapters.mock_adapter import MockAdapter
-from app.adapters.registry import AdapterRegistry
 
 
 @pytest.fixture
@@ -104,6 +102,6 @@ def test_playwright_scripts_syntax_and_structure() -> None:
     for script_name in ["verify_instance_ui.py", "verify_history_ui.py", "verify_savepoints.py", "verify_retry_ui.py"]:
         script_path = os.path.join("scripts", script_name)
         assert os.path.exists(script_path), f"{script_path} must exist"
-        with open(script_path, "r", encoding="utf-8") as f:
+        with open(script_path, encoding="utf-8") as f:
             content = f.read()
             assert "playwright" in content

@@ -1,4 +1,5 @@
 import pytest
+
 from app.adapters.mock_adapter import MockAdapter
 
 

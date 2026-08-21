@@ -24,11 +24,11 @@ class WorkflowRunner:
 
         bpmn_dir = Path(bpmn_path).parent
         parser = BpmnParser()
-        
+
         # Load all BPMN files in the same directory (enables call activities/subprocesses)
         for f in bpmn_dir.glob("*.bpmn"):
             parser.add_bpmn_file(str(f))
-        
+
         if not process_id:
             process_ids = parser.get_process_ids()
             if not process_ids:

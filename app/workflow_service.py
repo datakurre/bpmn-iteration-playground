@@ -8,7 +8,7 @@ import os
 import re
 import shutil
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,13 +18,12 @@ from SpiffWorkflow.task import TaskState
 from ZODB.blob import Blob
 
 from app.adapters.base import AgentResult, BaseAdapter
-from app.adapters.mock_adapter import MockAdapter
 from app.adapters.pi_adapter import PiAdapter
-from app.adapters.sandbox_adapter import SandboxPiAdapter
 from app.adapters.registry import AdapterRegistry
+from app.adapters.sandbox_adapter import SandboxPiAdapter
 from app.engine import WorkflowRunner
-from app.events import EventBus, WorkflowEvent
-from app.persistence import WorkflowStore, WorkspaceConflict
+from app.events import EventBus
+from app.persistence import WorkflowStore, WorkspaceConflictError
 from app.pi_client import PiClient, PiResult
 from app.workspace import cleanup_workspace, get_workspace_metadata, pack_workspace_to_bytes, unpack_workspace
 from app.ws import manager as ws_manager
@@ -52,7 +51,7 @@ CAMUNDA_TO_FORMJS_TYPE: dict[str, str] = {
 }
 
 
-class WorkflowNotFound(KeyError):
+class WorkflowNotFoundError(KeyError):
     pass
 
 
@@ -276,7 +275,7 @@ class WorkflowService:
     def _record(self, workflow_id: str) -> dict[str, Any]:
         record = self.store.load(workflow_id)
         if not record:
-            raise WorkflowNotFound()
+            raise WorkflowNotFoundError()
         return record
 
     def _public_state(self, workflow_id: str, record: dict[str, Any]) -> dict[str, Any]:
@@ -338,7 +337,7 @@ class WorkflowService:
                 "task_id": str(task.id),
                 "task_name": getattr(task.task_spec, "bpmn_name", task.task_spec.name),
                 "status": record.get("status", "running"),
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
                 "data": dict(workflow.data),
                 "tasks": self.runner.task_snapshot(workflow),
                 "workflow": copy.deepcopy(workflow),
@@ -425,7 +424,7 @@ class WorkflowService:
     def _get_root_workflow_id(self, workflow_id: str) -> str:
         record = self.store.load(workflow_id)
         if not record:
-            raise WorkflowNotFound()
+            raise WorkflowNotFoundError()
         if record.get("parent_workflow_id"):
             return self._get_root_workflow_id(record["parent_workflow_id"])
         return workflow_id
@@ -937,12 +936,10 @@ class WorkflowService:
         self._timer_task = None
         if task is not None and not task.done():
             task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
-            except (asyncio.CancelledError, Exception):
-                pass
 
-    async def _dispatch(self, workflow_id: str, _lock_held: bool = False) -> None:
+    async def _dispatch(self, workflow_id: str, _lock_held: bool = False) -> None:  # noqa: PLR0915 -- scans/launches every STARTED ServiceTask for the instance in one pass; pre-existing complexity
         workflow_id = self._get_root_workflow_id(workflow_id)
         guard: Any = contextlib.nullcontext() if _lock_held else self._lock(workflow_id)
         async with guard:
@@ -1083,7 +1080,6 @@ class WorkflowService:
         workflow_id = self._get_root_workflow_id(workflow_id)
         workdir = None
         ws_meta: dict[str, Any] | None = None
-        blob = None
         try:
             record = self._record(workflow_id)
             task = self.runner.find_task(record["workflow"], task_id)
@@ -1132,7 +1128,7 @@ class WorkflowService:
 
             # Capture generated artifacts and documents into the isolated instance workspace
             wf_data = record["workflow"].data
-            artifacts_list, ws_meta = await asyncio.to_thread(
+            _artifacts_list, ws_meta = await asyncio.to_thread(
                 _process_workspace_artifacts,
                 cwd,
                 workdir,
@@ -1154,7 +1150,7 @@ class WorkflowService:
         except asyncio.CancelledError:
             logger.info(f"Agent task {task_id} was cancelled")
             result = AgentResult("cancelled", None, "", [], "Task was cancelled", 1)
-        except WorkspaceConflict:
+        except WorkspaceConflictError:
             logger.warning(
                 "Workspace conflict repacking task %s on %s; another turn already wrote a newer workspace",
                 task_id,
@@ -1170,7 +1166,7 @@ class WorkflowService:
 
         await self._complete_pi(workflow_id, task_id, result, workspace_metadata=ws_meta)
 
-    async def _complete_pi(
+    async def _complete_pi(  # noqa: C901, PLR0912, PLR0915 -- reconciles one agent-turn result into job/task/record/event state across every outcome (success/cancelled/failed); pre-existing complexity
         self,
         workflow_id: str,
         task_id: str,

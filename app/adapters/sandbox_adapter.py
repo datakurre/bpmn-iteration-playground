@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -53,7 +54,7 @@ class SandboxPiAdapter(BaseAdapter):
                 base_md = root_agents_md.read_text("utf-8")
         agents_md.write_text(build_agents_md(config, base_agents_md=base_md), encoding="utf-8")
 
-    async def run(
+    async def run(  # noqa: C901, PLR0912, PLR0915 -- subprocess lifecycle (spawn/stream/timeout/cancel/parse) isn't naturally splittable without threading state through several helpers; left as pre-existing complexity
         self,
         prompt: str,
         config: dict[str, str],
@@ -129,21 +130,17 @@ class SandboxPiAdapter(BaseAdapter):
             process.stdin.write(prompt.encode("utf-8"))
             await process.stdin.drain()
             process.stdin.close()
-            try:
+            with contextlib.suppress(Exception):
                 await process.stdin.wait_closed()
-            except Exception:
-                pass
 
             raw_stdout, raw_stderr = await asyncio.wait_for(
                 process.communicate(), timeout=float(timeout_seconds)
             )
             exit_code = process.returncode if process.returncode is not None else 0
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if process.returncode is None:
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     process.kill()
-                except ProcessLookupError:
-                    pass
                 await process.wait()
             return AgentResult(
                 status="timeout",
@@ -155,10 +152,8 @@ class SandboxPiAdapter(BaseAdapter):
             )
         except asyncio.CancelledError:
             if process.returncode is None:
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     process.kill()
-                except ProcessLookupError:
-                    pass
                 await process.wait()
             return AgentResult(
                 status="cancelled",
@@ -233,10 +228,7 @@ class SandboxPiAdapter(BaseAdapter):
             output["network"] = network_data
 
         settled = any(ev.get("type") == "agent_settled" for ev in events)
-        if output is not None and (container_exit_code == 0 or settled):
-            status = "success"
-        else:
-            status = "failed"
+        status = "success" if output is not None and (container_exit_code == 0 or settled) else "failed"
 
         stderr_final = inner_stderr or decoded_stderr
         if policy_error and not stderr_final:

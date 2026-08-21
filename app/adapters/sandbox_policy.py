@@ -6,6 +6,7 @@ here rather than in the BPMN engine.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import tomllib
@@ -20,7 +21,7 @@ def parse_agents_md_toml(content: str) -> str:
     return ""
 
 
-def build_agents_md(task_config: dict[str, str], base_agents_md: str | None = None) -> str:
+def build_agents_md(task_config: dict[str, str], base_agents_md: str | None = None) -> str:  # noqa: C901, PLR0912, PLR0915 -- merges base+task-declared network policy across several optional sources; pre-existing complexity
     """Build or update an AGENTS.md document embedding task-specific agent-sandbox network policy."""
 
     raw_policy = task_config.get("sandbox_policy") or task_config.get("network_policy")
@@ -43,10 +44,8 @@ def build_agents_md(task_config: dict[str, str], base_agents_md: str | None = No
                 allowed_routes.extend(net["allowed_routes"])
             if isinstance(parsed_base.get("ports"), dict):
                 for k, v in parsed_base["ports"].items():
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         ports[str(k)] = int(v)
-                    except (ValueError, TypeError):
-                        pass
         except Exception:
             pass
 
