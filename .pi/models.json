@@ -15,7 +15,7 @@
       ]
     },
     "opencode-go": {
-      "baseUrl": "https://opencode.ai/go/v1",
+      "baseUrl": "https://opencode.ai/zen/go/v1",
       "api": "openai-completions",
       "apiKey": "secret-injected-by-proxy",
       "models": [
