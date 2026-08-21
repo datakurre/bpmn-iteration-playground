@@ -32,7 +32,8 @@
   env = {
     PI_EXECUTABLE = "${config.devenv.root}/node_modules/.bin/pi";
     PI_TIMEOUT_SECONDS = "1800";
-    PI_WORKDIR = "${config.devenv.root}";
+    # PI_WORKDIR is a *seed* copied into each instance workspace, not the agent's cwd.
+    # Left unset by default so instances start from an empty, isolated workspace.
     PI_OFFLINE = "0";
     PI_PROVIDER = "opencode-go";
     PI_MODEL = "gpt-5.6-luna";

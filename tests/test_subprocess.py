@@ -59,37 +59,83 @@ def test_chained_workflow_execution() -> None:
     asyncio.run(scenario())
 
 
-def test_sync_children_cycle_detection() -> None:
-    from unittest.mock import MagicMock
-    from app.sync_children import sync_children
+async def _wait_jobs(service) -> None:
+    while any(not job.done() for job in list(service.jobs.values())):
+        pending = [job for job in list(service.jobs.values()) if not job.done()]
+        if pending:
+            await asyncio.gather(*pending)
+        await asyncio.sleep(0.01)
 
-    service = MagicMock()
-    # Mock circular child workflow reference
-    parent_wf = MagicMock()
-    child_wf = MagicMock()
 
-    task1 = MagicMock()
-    task1.task_spec = MagicMock()
-    type(task1.task_spec).__name__ = "CallActivity"
-    task1.id = "task-1"
-    task1.workflow = child_wf
+def test_call_activity_runs_child_process_with_human_gate() -> None:
+    """composed_delivery calls agent_review_cycle: an agent turn and a human gate
+    inside the called process, then the parent graph resumes from its result."""
 
-    task2 = MagicMock()
-    task2.task_spec = MagicMock()
-    type(task2.task_spec).__name__ = "CallActivity"
-    task2.id = "task-2"
-    task2.workflow = parent_wf  # cycle back to parent_wf
+    async def scenario() -> None:
+        store = WorkflowStore(":memory:")
+        service = WorkflowService(store, SubprocessFakePi())
 
-    parent_wf.get_tasks.return_value = [task1]
-    child_wf.get_tasks.return_value = [task2]
-    parent_wf.data = {}
-    child_wf.data = {}
+        started = await service.start(
+            "workflows/composed_delivery.bpmn", None, {"subject": "the API surface"}
+        )
+        workflow_id = started["workflow_id"]
+        await asyncio.wait_for(_wait_jobs(service), timeout=5.0)
 
-    service.store.load.side_effect = lambda wid: {"workflow": parent_wf, "data": {}} if wid == "root-1" else None
-    service.runner.record.return_value = {"workflow": child_wf, "data": {}}
+        state = service.state(workflow_id)
+        assert state["status"] == "waiting_human"
 
-    # Should complete without RecursionError
-    sync_children(service, "root-1")
+        # The gate lives inside the called subprocess but surfaces on the parent instance
+        signoff = next(t for t in state["tasks"] if t["bpmn_id"] == "Task_Cycle_Signoff")
+        assert signoff["state"] == "READY"
+
+        # camunda:formData is loaded for task specs inside the called process
+        form = service.form(workflow_id, signoff["id"])
+        assert "cycle_decision" in [component["key"] for component in form["components"]]
+
+        # Exactly one child record, back-referencing its parent
+        children = [i for i in service.instances() if i["process_id"] == "agent_review_cycle"]
+        assert len(children) == 1
+        child_record = store.load(children[0]["workflow_id"])
+        assert child_record is not None
+        assert child_record["parent_workflow_id"] == workflow_id
+
+        # Signing off in the child resumes the parent graph through its own agent turn
+        await service.submit_task(
+            workflow_id, signoff["id"], {"cycle_decision": "accepted", "cycle_notes": "ok"}
+        )
+        await asyncio.wait_for(_wait_jobs(service), timeout=5.0)
+
+        final = service.state(workflow_id)
+        assert final["status"] == "completed"
+        assert final["data"]["delivery_status"] == "success"
+
+        # Repeated syncs must not mint duplicate child records
+        assert len([i for i in service.instances() if i["process_id"] == "agent_review_cycle"]) == 1
+
+    asyncio.run(scenario())
+
+
+def test_call_activity_rejected_review_skips_delivery() -> None:
+    async def scenario() -> None:
+        service = WorkflowService(WorkflowStore(":memory:"), SubprocessFakePi())
+        started = await service.start(
+            "workflows/composed_delivery.bpmn", None, {"subject": "the API surface"}
+        )
+        workflow_id = started["workflow_id"]
+        await asyncio.wait_for(_wait_jobs(service), timeout=5.0)
+
+        signoff = next(
+            t for t in service.state(workflow_id)["tasks"] if t["bpmn_id"] == "Task_Cycle_Signoff"
+        )
+        await service.submit_task(workflow_id, signoff["id"], {"cycle_decision": "rejected"})
+        await asyncio.wait_for(_wait_jobs(service), timeout=5.0)
+
+        final = service.state(workflow_id)
+        assert final["status"] == "completed"
+        assert "delivery_status" not in final["data"]
+        assert not any(t["bpmn_id"] == "Task_Deliver" for t in final["tasks"])
+
+    asyncio.run(scenario())
 
 
 def test_fork_child_workflow_raises_explicit_error() -> None:

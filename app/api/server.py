@@ -23,6 +23,7 @@ from app.models import (
     SaveWorkflowResponse,
     StartWorkflowRequest,
     StorageStats,
+    MessageRequest,
     SubmitTaskRequest,
     TemplateSummary,
     WebhookRegistration,
@@ -65,7 +66,17 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
                 logger.info(f"Startup recovery cleaned up {recovered} orphaned workflows")
         except Exception as exc:
             logger.warning(f"Startup recovery check failed: {exc}")
-        yield
+        try:
+            get_service().start_timer_loop()
+        except Exception as exc:
+            logger.warning(f"Failed to start timer loop: {exc}")
+        try:
+            yield
+        finally:
+            try:
+                await get_service().stop_timer_loop()
+            except Exception:
+                pass
 
     app = FastAPI(
         title="BPMN Pi Workflow API",
@@ -539,6 +550,30 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
         except (KeyError, ValueError) as exc:
             raise HTTPException(409, str(exc))
 
+    @app.get("/instance/{workflow_id}/events/pending", tags=["Instance"], summary="List events the instance is waiting on")
+    async def instance_pending_events(
+        workflow_id: str,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
+    ) -> dict[str, Any]:
+        try:
+            return {"workflow_id": workflow_id, "pending": get_service().pending_events(workflow_id)}
+        except WorkflowNotFound:
+            raise HTTPException(404, "workflow not found")
+
+    @app.post("/instance/{workflow_id}/message/{message_name}", response_model=WorkflowState, tags=["Instance"], summary="Deliver an external message to a waiting catch event")
+    async def instance_message(
+        workflow_id: str,
+        message_name: str,
+        request: MessageRequest,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR),
+    ) -> dict[str, Any]:
+        try:
+            return await get_service().send_message(workflow_id, message_name, request.payload)
+        except WorkflowNotFound:
+            raise HTTPException(404, "workflow not found")
+        except KeyError as exc:
+            raise HTTPException(409, str(exc))
+
     @app.post("/instance/{workflow_id}/retry/{task_id}", response_model=WorkflowState, tags=["Instance"], summary="Retry failed service task")
     async def retry_instance_task(
         workflow_id: str,
@@ -596,7 +631,9 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
     @app.get("/metrics", response_class=PlainTextResponse, tags=["Observability"], summary="Prometheus metrics")
-    async def prometheus_metrics() -> PlainTextResponse:
+    async def prometheus_metrics(
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
+    ) -> PlainTextResponse:
         svc = get_service()
         stats = svc.store.storage_stats()
         meta = svc.store.list_metadata()
@@ -605,7 +642,7 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
         failed = sum(1 for m in meta if m.get("status") == "failed")
         cancelled = sum(1 for m in meta if m.get("status") == "cancelled")
         total = len(meta)
-        zodb_bytes = stats.get("data_fs_size_bytes", 0)
+        zodb_bytes = stats.get("size_bytes", 0)
 
         lines = [
             "# HELP bpmn_instances_total Total workflow instances by status",

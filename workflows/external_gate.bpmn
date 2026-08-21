@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_ExternalGate" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Message_External_Approval" name="external_approval" />
+  <bpmn:process id="external_gate" name="External System Gate" isExecutable="true">
+    <bpmn:documentation>An agent prepares a change, then the graph parks on a message catch event until an external system posts to /instance/{id}/message/external_approval. The message payload decides whether a second agent turn applies the change.</bpmn:documentation>
+    <bpmn:startEvent id="Start_Gate" name="Change Requested">
+      <bpmn:outgoing>Flow_Gate_To_Prepare</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_Gate_To_Prepare" sourceRef="Start_Gate" targetRef="Task_Prepare" />
+    <bpmn:serviceTask id="Task_Prepare" name="Prepare Change">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="implementer" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="change_request">${change_request}</camunda:inputParameter>
+          <camunda:outputParameter name="prepare_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="prepare_summary">${summary}</camunda:outputParameter>
+          <camunda:outputParameter name="prepare_artifacts">${artifacts}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Gate_To_Prepare</bpmn:incoming>
+      <bpmn:outgoing>Flow_Prepare_To_Catch</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_Prepare_To_Catch" sourceRef="Task_Prepare" targetRef="Catch_Approval" />
+    <bpmn:intermediateCatchEvent id="Catch_Approval" name="Await External Approval">
+      <bpmn:incoming>Flow_Prepare_To_Catch</bpmn:incoming>
+      <bpmn:outgoing>Flow_Catch_To_GW</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="MessageEventDefinition_Approval" messageRef="Message_External_Approval" />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:sequenceFlow id="Flow_Catch_To_GW" sourceRef="Catch_Approval" targetRef="GW_External" />
+    <bpmn:exclusiveGateway id="GW_External" name="Approved Externally?">
+      <bpmn:incoming>Flow_Catch_To_GW</bpmn:incoming>
+      <bpmn:outgoing>Flow_External_Approved</bpmn:outgoing>
+      <bpmn:outgoing>Flow_External_Declined</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_External_Approved" name="Approved" sourceRef="GW_External" targetRef="Task_Apply">
+      <bpmn:conditionExpression>approval_decision == 'approved'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_External_Declined" name="Declined" sourceRef="GW_External" targetRef="End_Gate_Declined">
+      <bpmn:conditionExpression>approval_decision != 'approved'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:serviceTask id="Task_Apply" name="Apply Change">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="implementer" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="prepared_change">${prepare_summary}</camunda:inputParameter>
+          <camunda:inputParameter name="approved_by">${approved_by}</camunda:inputParameter>
+          <camunda:outputParameter name="apply_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="apply_summary">${summary}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_External_Approved</bpmn:incoming>
+      <bpmn:outgoing>Flow_Apply_To_End</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_Apply_To_End" sourceRef="Task_Apply" targetRef="End_Gate_Applied" />
+    <bpmn:endEvent id="End_Gate_Applied" name="Change Applied">
+      <bpmn:incoming>Flow_Apply_To_End</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="End_Gate_Declined" name="Change Declined">
+      <bpmn:incoming>Flow_External_Declined</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_ExternalGate">
+    <bpmndi:BPMNPlane id="BPMNPlane_ExternalGate" bpmnElement="external_gate">
+      <bpmndi:BPMNShape id="Start_Gate_di" bpmnElement="Start_Gate">
+        <dc:Bounds x="50" y="140" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Prepare_di" bpmnElement="Task_Prepare">
+        <dc:Bounds x="140" y="118" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Catch_Approval_di" bpmnElement="Catch_Approval">
+        <dc:Bounds x="330" y="140" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_External_di" bpmnElement="GW_External" isMarkerVisible="true">
+        <dc:Bounds x="420" y="133" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Apply_di" bpmnElement="Task_Apply">
+        <dc:Bounds x="520" y="118" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Gate_Applied_di" bpmnElement="End_Gate_Applied">
+        <dc:Bounds x="710" y="140" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Gate_Declined_di" bpmnElement="End_Gate_Declined">
+        <dc:Bounds x="427" y="270" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_Gate_To_Prepare_di" bpmnElement="Flow_Gate_To_Prepare">
+        <di:waypoint x="86" y="158" />
+        <di:waypoint x="140" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Prepare_To_Catch_di" bpmnElement="Flow_Prepare_To_Catch">
+        <di:waypoint x="280" y="158" />
+        <di:waypoint x="330" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Catch_To_GW_di" bpmnElement="Flow_Catch_To_GW">
+        <di:waypoint x="366" y="158" />
+        <di:waypoint x="420" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_External_Approved_di" bpmnElement="Flow_External_Approved">
+        <di:waypoint x="470" y="158" />
+        <di:waypoint x="520" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_External_Declined_di" bpmnElement="Flow_External_Declined">
+        <di:waypoint x="445" y="183" />
+        <di:waypoint x="445" y="270" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Apply_To_End_di" bpmnElement="Flow_Apply_To_End">
+        <di:waypoint x="660" y="158" />
+        <di:waypoint x="710" y="158" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

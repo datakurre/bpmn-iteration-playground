@@ -12,6 +12,13 @@
           <camunda:property name="harness_type" value="pi_agent" />
           <camunda:property name="agent_role" value="technical_writer" />
         </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="requirements">${requirements}</camunda:inputParameter>
+          <camunda:inputParameter name="feedback">${feedback}</camunda:inputParameter>
+          <camunda:outputParameter name="draft_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="draft_summary">${summary}</camunda:outputParameter>
+          <camunda:outputParameter name="draft_artifacts">${artifacts}</camunda:outputParameter>
+        </camunda:inputOutput>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_To_Draft</bpmn:incoming>
       <bpmn:incoming>Flow_Approve_Revise</bpmn:incoming>
@@ -24,10 +31,10 @@
       <bpmn:outgoing>Flow_Draft_Fail</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="Flow_Draft_OK" name="Success" sourceRef="GW_Draft" targetRef="Task_QA">
-      <bpmn:conditionExpression>agent_status == 'success'</bpmn:conditionExpression>
+      <bpmn:conditionExpression>draft_status == 'success'</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="Flow_Draft_Fail" name="Failed" sourceRef="GW_Draft" targetRef="Task_Manual_Draft">
-      <bpmn:conditionExpression>agent_status != 'success'</bpmn:conditionExpression>
+      <bpmn:conditionExpression>draft_status != 'success'</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:serviceTask id="Task_QA" name="Quality Review Agent">
       <bpmn:extensionElements>
@@ -35,6 +42,12 @@
           <camunda:property name="harness_type" value="pi_agent" />
           <camunda:property name="agent_role" value="editor" />
         </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="draft_summary">${draft_summary}</camunda:inputParameter>
+          <camunda:outputParameter name="qa_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="qa_summary">${summary}</camunda:outputParameter>
+          <camunda:outputParameter name="qa_findings">${findings}</camunda:outputParameter>
+        </camunda:inputOutput>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_Draft_OK</bpmn:incoming>
       <bpmn:outgoing>Flow_QA_Approve</bpmn:outgoing>

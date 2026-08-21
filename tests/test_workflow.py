@@ -36,7 +36,8 @@ def test_pi_task_persists_and_waits_for_human_task() -> None:
         await asyncio.gather(*service.jobs.values())
         state = service.state(state["workflow_id"])
         assert state["status"] == "waiting_human"
-        assert state["data"]["agent_status"] == "success"
+        assert state["data"]["extract_status"] == "success"
+        assert "agent_status" not in state["data"]
         phases = [point["phase"] for point in state["save_points"]]
         assert phases == ["before_harness", "after_harness", "human_wait"]
         review_task = next(task for task in state["tasks"] if task["bpmn_id"] == "ServiceTask_Review")
@@ -84,13 +85,17 @@ def test_session_id_propagated_to_record_and_data() -> None:
         await asyncio.gather(*service.jobs.values())
         state = service.state(state["workflow_id"])
         
-        # Check that session id propagated
-        assert state["data"]["pi_session_id"] == "session-abc-1"
-        
-        # Check that it survives a fork
+        # Session id is reported on the instance, not injected into routable workflow data
+        assert state["pi_session_id"] == "session-abc-1"
+        assert "pi_session_id" not in state["data"]
+
+        # The branch lineage records which task produced the session
+        assert "session-abc-1" in state["data"]["__sessions"].values()
+
+        # ...and it survives a fork, so the fork continues the same context tree
         after = next(point for point in state["save_points"] if point["phase"] == "after_harness")
         after_fork = await service.fork(state["workflow_id"], after["id"])
-        assert after_fork["data"]["pi_session_id"] == "session-abc-1"
+        assert "session-abc-1" in after_fork["data"]["__sessions"].values()
         
     asyncio.run(scenario())
 
@@ -107,7 +112,7 @@ def test_failed_pi_state_contains_failure_reason() -> None:
         state = service.state(started["workflow_id"])
         assert state["status"] == "failed"
         assert state["failure_reason"] == "model response was invalid"
-        assert state["data"]["failure_reason"] == "model response was invalid"
+        assert "failure_reason" not in state["data"]
         assert state["jobs"][next(iter(state["jobs"]))]["failure_reason"] == "model response was invalid"
 
     asyncio.run(scenario())
@@ -191,7 +196,9 @@ def test_cancelled_task_completes_with_cancelled_status() -> None:
     asyncio.run(scenario())
 
 
-def test_agent_status_and_status_mapping() -> None:
+def test_service_task_publishes_only_declared_output_parameters() -> None:
+    """Agent results reach the workflow only through camunda:outputParameters."""
+
     async def scenario() -> None:
         pi = FakePi()
         service = WorkflowService(WorkflowStore(":memory:"), pi)
@@ -199,7 +206,25 @@ def test_agent_status_and_status_mapping() -> None:
         wf_id = started["workflow_id"]
         await asyncio.gather(*list(service.jobs.values()))
         state = service.state(wf_id)
-        assert state["data"]["agent_status"] == "success"
+
+        # Declared by ServiceTask_Extract
+        assert state["data"]["extract_status"] == "success"
+        assert state["data"]["extract_summary"] == "complete"
+        assert state["data"]["extract_findings"] == []
+
+        # Never published implicitly
+        for implicit in ("agent_status", "agent_output", "agent_text", "status"):
+            assert implicit not in state["data"], f"{implicit} leaked into workflow data"
+
+        # ...but still available task-locally for inspection in the UI
+        record = service.store.load(wf_id)
+        assert record is not None
+        task = next(
+            t for t in record["workflow"].get_tasks() if getattr(t.task_spec, "bpmn_id", None) == "ServiceTask_Extract"
+        )
+        assert task.data["agent_status"] == "success"
+        assert task.data["agent_output"]["summary"] == "complete"
+
     asyncio.run(scenario())
 
 
@@ -248,7 +273,12 @@ async def test_output_parameters_missing_fallback_none() -> None:
     assert record is not None
     task_obj = service.runner.find_task(record["workflow"], task_id)
     assert task_obj is not None
-    task_obj.task_spec.extensions = {"outputParameters": {"mapped_var": "missing_key"}}
+    extensions = dict(task_obj.task_spec.extensions or {})
+    extensions["outputParameters"] = {
+        **extensions.get("outputParameters", {}),
+        "mapped_var": "missing_key",
+    }
+    task_obj.task_spec.extensions = extensions
 
     result = AgentResult(status="success", output={"present_key": "val1"}, text="ok")
     await service._complete_pi(wf_id, task_id, result)
@@ -293,3 +323,60 @@ def test_workflow_registry_logs_warning_on_malformed_file(tmp_path: Path, caplog
 
 
 
+
+
+def test_superseded_savepoint_attempts_are_pruned(monkeypatch) -> None:
+    """Each attempt deep-copies the workflow graph, so only the newest per generation is kept."""
+
+    async def scenario() -> None:
+        service = WorkflowService(WorkflowStore(":memory:"), FakePi())
+        started = await service.start("workflows/contract_review.bpmn", None, {"contract": "text"})
+        wf_id = started["workflow_id"]
+        await asyncio.gather(*list(service.jobs.values()))
+
+        record = service.store.load(wf_id)
+        assert record is not None
+        workflow = record["workflow"]
+        task = next(
+            t for t in workflow.get_tasks() if getattr(t.task_spec, "bpmn_id", None) == "ServiceTask_Extract"
+        )
+
+        for attempt in range(2, 5):
+            service._add_save_point(
+                record, workflow, task, "before_harness", "run_harness", f":run_0:attempt_{attempt}"
+            )
+
+        before_harness = [p for p in record["save_points"] if p["phase"] == "before_harness"]
+        assert len(before_harness) == 1
+        assert before_harness[0]["key"].endswith("attempt_4")
+
+        # the pruned snapshots are gone from the store, not just the record
+        service.store.save(wf_id, record)
+        assert service.store.load_save_point(before_harness[0]["id"]) is not None
+
+    asyncio.run(scenario())
+
+
+def test_savepoint_retention_is_configurable(monkeypatch) -> None:
+    monkeypatch.setenv("SAVEPOINT_ATTEMPT_RETENTION", "3")
+
+    async def scenario() -> None:
+        service = WorkflowService(WorkflowStore(":memory:"), FakePi())
+        started = await service.start("workflows/contract_review.bpmn", None, {"contract": "text"})
+        await asyncio.gather(*list(service.jobs.values()))
+
+        record = service.store.load(started["workflow_id"])
+        assert record is not None
+        workflow = record["workflow"]
+        task = next(
+            t for t in workflow.get_tasks() if getattr(t.task_spec, "bpmn_id", None) == "ServiceTask_Extract"
+        )
+        for attempt in range(2, 6):
+            service._add_save_point(
+                record, workflow, task, "before_harness", "run_harness", f":run_0:attempt_{attempt}"
+            )
+
+        kept = [p["key"].rsplit(":", 1)[-1] for p in record["save_points"] if p["phase"] == "before_harness"]
+        assert kept == ["attempt_3", "attempt_4", "attempt_5"]
+
+    asyncio.run(scenario())

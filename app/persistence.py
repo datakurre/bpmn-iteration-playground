@@ -235,6 +235,17 @@ class WorkflowInstance(Persistent):
         }
 
 
+#: Record keys mapped to first-class WorkflowInstance attributes. Anything else a caller
+#: puts on a record (pi_session_id, network, policy_error, ...) is kept in `extra` rather
+#: than silently dropped on save.
+_INSTANCE_FIELDS = frozenset({
+    "workflow_id", "process_id", "bpmn_path", "status", "workflow", "data", "jobs",
+    "tasks", "save_points", "events", "failure_reason", "failure_history", "forked_from",
+    "forked_from_save_point", "parent_workflow_id", "created_at", "updated_at",
+    "workspace_blob", "workspace_archive",
+})
+
+
 class WorkflowStore:
     """Idiomatic ZODB repository using OOBTree collections, Persistent entities, and compaction."""
 
@@ -291,6 +302,15 @@ class WorkflowStore:
             )
             root["save_points"][snapshot.id] = snapshot
         return snapshot
+
+    @_retry_on_conflict()
+    def delete_save_point(self, save_point_id: str) -> bool:
+        with self.db.transaction() as connection:
+            root = connection.root()
+            if save_point_id in root["save_points"]:
+                del root["save_points"][save_point_id]
+                return True
+            return False
 
     def load_save_point(self, save_point_id: str) -> dict[str, Any] | None:
         with self.db.transaction() as connection:
@@ -442,6 +462,11 @@ class WorkflowStore:
                         instance.workspace_blob = workspace_blob
                     if workspace_archive is not None:
                         instance.workspace_archive = workspace_archive
+                    if not hasattr(instance, "extra"):
+                        instance.extra = PersistentMapping()
+                    for extra_key, extra_value in raw_record.items():
+                        if extra_key not in _INSTANCE_FIELDS:
+                            instance.extra[extra_key] = extra_value
                     instance._p_changed = True
                 else:
                     events = [
@@ -468,6 +493,7 @@ class WorkflowStore:
                         updated_at=updated_at,
                         workspace_blob=workspace_blob,
                         workspace_archive=workspace_archive,
+                        **{k: v for k, v in raw_record.items() if k not in _INSTANCE_FIELDS},
                     )
                     workflows_root[workflow_id] = instance
 

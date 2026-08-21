@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 
 from app.adapters.base import BaseAdapter
 from app.adapters.pi_adapter import PiAdapter
+from app.adapters.sandbox_adapter import SandboxPiAdapter
 
 logger = logging.getLogger("bpmn.adapters")
 
@@ -17,8 +18,17 @@ class AdapterRegistry:
 
     def __init__(self, auto_discover: bool = True) -> None:
         self._adapters: Dict[str, BaseAdapter] = {}
-        # Register default Pi adapter
-        self.register(PiAdapter())
+        # Register default Pi adapter and Sandbox adapter
+        pi_adapter = PiAdapter()
+        sandbox_adapter = SandboxPiAdapter()
+        self.register(pi_adapter)
+        self.register(sandbox_adapter)
+        # Register alias for agent_sandbox
+        self._adapters["agent_sandbox"] = sandbox_adapter
+
+        if os.getenv("PI_SANDBOX_ENABLED") == "1":
+            self._adapters["pi_agent"] = sandbox_adapter
+
         if auto_discover:
             self.discover_plugins()
 

@@ -12,6 +12,12 @@
           <camunda:property name="harness_type" value="pi_agent" />
           <camunda:property name="agent_role" value="bug_analyst" />
         </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="bug_report">${bug_report}</camunda:inputParameter>
+          <camunda:outputParameter name="diagnose_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="diagnose_summary">${summary}</camunda:outputParameter>
+          <camunda:outputParameter name="diagnose_findings">${findings}</camunda:outputParameter>
+        </camunda:inputOutput>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_To_Diagnose</bpmn:incoming>
       <bpmn:outgoing>Flow_To_Diag_GW</bpmn:outgoing>
@@ -23,10 +29,10 @@
       <bpmn:outgoing>Flow_Diag_Fail</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="Flow_Diag_Success" name="Success" sourceRef="GW_Diag_Check" targetRef="Task_Human_Clarify">
-      <bpmn:conditionExpression>agent_status == 'success'</bpmn:conditionExpression>
+      <bpmn:conditionExpression>diagnose_status == 'success'</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="Flow_Diag_Fail" name="Failed" sourceRef="GW_Diag_Check" targetRef="End_Bug_Fail">
-      <bpmn:conditionExpression>agent_status != 'success'</bpmn:conditionExpression>
+      <bpmn:conditionExpression>diagnose_status != 'success'</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:userTask id="Task_Human_Clarify" name="Clarify Bug Details">
       <bpmn:extensionElements>
@@ -58,6 +64,15 @@
           <camunda:property name="harness_type" value="pi_agent" />
           <camunda:property name="agent_role" value="bug_fixer" />
         </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="bug_report">${bug_report}</camunda:inputParameter>
+          <camunda:inputParameter name="diagnosis">${diagnose_summary}</camunda:inputParameter>
+          <camunda:inputParameter name="reproduction_notes">${reproduction_notes}</camunda:inputParameter>
+          <camunda:inputParameter name="priority">${priority}</camunda:inputParameter>
+          <camunda:outputParameter name="fix_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="fix_summary">${summary}</camunda:outputParameter>
+          <camunda:outputParameter name="fix_artifacts">${artifacts}</camunda:outputParameter>
+        </camunda:inputOutput>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_Proceed_Fix</bpmn:incoming>
       <bpmn:outgoing>Flow_Fix_To_GW</bpmn:outgoing>
@@ -69,10 +84,10 @@
       <bpmn:outgoing>Flow_Fix_Fail</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="Flow_Fix_OK" name="Success" sourceRef="GW_Fix_Check" targetRef="Task_Verify_Fix">
-      <bpmn:conditionExpression>agent_status == 'success'</bpmn:conditionExpression>
+      <bpmn:conditionExpression>fix_status == 'success'</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="Flow_Fix_Fail" name="Failed" sourceRef="GW_Fix_Check" targetRef="End_Bug_Fail">
-      <bpmn:conditionExpression>agent_status != 'success'</bpmn:conditionExpression>
+      <bpmn:conditionExpression>fix_status != 'success'</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:userTask id="Task_Verify_Fix" name="Verify Patch">
       <bpmn:extensionElements>

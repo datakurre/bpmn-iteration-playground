@@ -12,6 +12,14 @@
           <camunda:property name="harness_type" value="pi_agent" />
           <camunda:property name="agent_role" value="planner" />
         </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="feature_request">${feature_request}</camunda:inputParameter>
+          <camunda:inputParameter name="human_answers">${human_answers}</camunda:inputParameter>
+          <camunda:inputParameter name="instructions">${instructions}</camunda:inputParameter>
+          <camunda:outputParameter name="plan_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="plan_summary">${summary}</camunda:outputParameter>
+          <camunda:outputParameter name="plan_findings">${findings}</camunda:outputParameter>
+        </camunda:inputOutput>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_To_Plan</bpmn:incoming>
       <bpmn:incoming>Flow_Revise_Plan</bpmn:incoming>
@@ -24,10 +32,10 @@
       <bpmn:outgoing>Flow_Plan_Fail</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="Flow_Plan_OK" name="Success" sourceRef="GW_Plan_Check" targetRef="Task_Review_Plan">
-      <bpmn:conditionExpression>agent_status == 'success'</bpmn:conditionExpression>
+      <bpmn:conditionExpression>plan_status == 'success'</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="Flow_Plan_Fail" name="Failed" sourceRef="GW_Plan_Check" targetRef="End_Plan_Fail">
-      <bpmn:conditionExpression>agent_status != 'success'</bpmn:conditionExpression>
+      <bpmn:conditionExpression>plan_status != 'success'</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:userTask id="Task_Review_Plan" name="Review Plan &amp; Answer Questions">
       <bpmn:extensionElements>
@@ -63,6 +71,14 @@
           <camunda:property name="harness_type" value="pi_agent" />
           <camunda:property name="agent_role" value="implementer" />
         </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="plan_summary">${plan_summary}</camunda:inputParameter>
+          <camunda:inputParameter name="human_answers">${human_answers}</camunda:inputParameter>
+          <camunda:inputParameter name="instructions">${instructions}</camunda:inputParameter>
+          <camunda:outputParameter name="exec_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="exec_summary">${summary}</camunda:outputParameter>
+          <camunda:outputParameter name="exec_artifacts">${artifacts}</camunda:outputParameter>
+        </camunda:inputOutput>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_Approve_Exec</bpmn:incoming>
       <bpmn:outgoing>Flow_Exec_To_GW</bpmn:outgoing>
@@ -74,10 +90,10 @@
       <bpmn:outgoing>Flow_Exec_Fail</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="Flow_Exec_OK" name="Success" sourceRef="GW_Exec_Check" targetRef="Task_Verify_Results">
-      <bpmn:conditionExpression>agent_status == 'success'</bpmn:conditionExpression>
+      <bpmn:conditionExpression>exec_status == 'success'</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="Flow_Exec_Fail" name="Failed" sourceRef="GW_Exec_Check" targetRef="End_Exec_Fail">
-      <bpmn:conditionExpression>agent_status != 'success'</bpmn:conditionExpression>
+      <bpmn:conditionExpression>exec_status != 'success'</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:userTask id="Task_Verify_Results" name="Verify Implementation">
       <bpmn:extensionElements>

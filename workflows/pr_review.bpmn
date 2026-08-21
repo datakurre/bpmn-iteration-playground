@@ -12,6 +12,13 @@
           <camunda:property name="harness_type" value="pi_agent" />
           <camunda:property name="agent_role" value="pr_reviewer" />
         </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="pr_url">${pr_url}</camunda:inputParameter>
+          <camunda:inputParameter name="diff">${diff}</camunda:inputParameter>
+          <camunda:outputParameter name="analysis_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="analysis_summary">${summary}</camunda:outputParameter>
+          <camunda:outputParameter name="analysis_findings">${findings}</camunda:outputParameter>
+        </camunda:inputOutput>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_To_Analyse</bpmn:incoming>
       <bpmn:outgoing>Flow_Analyse_GW</bpmn:outgoing>
@@ -23,10 +30,10 @@
       <bpmn:outgoing>Flow_Analyse_Fail</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="Flow_Analyse_OK" name="Success" sourceRef="GW_Analyse" targetRef="Task_Merge_Decision">
-      <bpmn:conditionExpression>agent_status == 'success'</bpmn:conditionExpression>
+      <bpmn:conditionExpression>analysis_status == 'success'</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="Flow_Analyse_Fail" name="Failed" sourceRef="GW_Analyse" targetRef="Task_Manual_Review">
-      <bpmn:conditionExpression>agent_status != 'success'</bpmn:conditionExpression>
+      <bpmn:conditionExpression>analysis_status != 'success'</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:userTask id="Task_Merge_Decision" name="Merge Decision">
       <bpmn:extensionElements>

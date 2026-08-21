@@ -52,6 +52,14 @@ class StartWorkflowRequest(BaseModel):
         return _validate_variables(v)
 
 
+class MessageRequest(BaseModel):
+    payload: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Message payload merged into the catching task's data",
+        json_schema_extra={"example": {"approved_by": "ops-team"}},
+    )
+
+
 class SubmitTaskRequest(BaseModel):
     task_id: str | None = Field(
         default=None,

@@ -1,20 +1,25 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 import logging
 import os
+import re
 import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from SpiffWorkflow.bpmn.specs.mixins.events.event_types import CatchingEvent
+from SpiffWorkflow.bpmn.util import BpmnEvent
 from SpiffWorkflow.task import TaskState
 
 from app.adapters.base import AgentResult, BaseAdapter
 from app.adapters.mock_adapter import MockAdapter
 from app.adapters.pi_adapter import PiAdapter
+from app.adapters.sandbox_adapter import SandboxPiAdapter
 from app.adapters.registry import AdapterRegistry
 from app.engine import WorkflowRunner
 from app.events import EventBus, WorkflowEvent
@@ -42,6 +47,49 @@ class WorkflowNotFound(KeyError):
     pass
 
 
+def _attempt_retention() -> int:
+    """How many savepoints to keep per (task, phase, generation).
+
+    Each savepoint deep-copies the whole workflow graph and duplicates the workspace
+    blob, so superseded attempts of the same turn are the dominant source of storage
+    growth. The newest attempt of every generation is always kept, so every meaningful
+    fork target survives.
+    """
+    try:
+        return max(1, int(os.getenv("SAVEPOINT_ATTEMPT_RETENTION", "1")))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _generation_of(key: str) -> str:
+    match = re.search(r":run_(\d+)", key or "")
+    return match.group(1) if match else ""
+
+
+_SEED_IGNORE = shutil.ignore_patterns(
+    ".git", "node_modules", ".venv", ".devenv", ".direnv", "data", "vendor",
+    "__pycache__", ".mypy_cache", ".pytest_cache", "site", "result", "*.log",
+)
+
+
+def _seed_workspace(workdir: str) -> None:
+    """Seed a fresh instance workspace from PI_WORKDIR.
+
+    PI_WORKDIR is a template copied in once per instance, never the directory the agent
+    runs in: agents always work in their own unpacked workspace so that concurrent
+    instances cannot collide and savepoints capture what the agent actually touched.
+    """
+    seed = os.getenv("PI_WORKDIR")
+    if not seed:
+        return
+    seed_path = Path(seed).resolve()
+    if not seed_path.is_dir():
+        logger.warning("PI_WORKDIR=%s is not a directory; starting from an empty workspace", seed)
+        return
+    shutil.copytree(seed_path, workdir, dirs_exist_ok=True, ignore=_SEED_IGNORE, symlinks=True)
+    logger.info("Seeded workspace from PI_WORKDIR=%s", seed_path)
+
+
 def _sanitize(value: Any, max_length: int = 50_000, depth: int = 0, max_depth: int = 10) -> Any:
     if depth > max_depth:
         return "[nested too deep]"
@@ -62,11 +110,54 @@ def _sanitize_output(output: dict[str, Any] | None) -> dict[str, Any]:
     return res if isinstance(res, dict) else {}
 
 
+def _output_sources(
+    result: Any,
+    sanitized_output: dict[str, Any],
+    failure_reason: str | None,
+) -> dict[str, Any]:
+    """Names a camunda:outputParameter expression may read from.
+
+    The agent's own JSON keys (status, summary, findings, artifacts, next_action) plus
+    reserved harness keys. `status` is the agent's self-reported verdict -- what a
+    template means by "did the work succeed" -- falling back to the harness verdict when
+    the agent produced no parseable result. `agent_status` is always the harness verdict.
+    """
+    sources: dict[str, Any] = dict(sanitized_output or {})
+    sources.setdefault("status", result.status)
+    sources.update(
+        {
+            "agent_status": result.status,
+            "agent_text": result.text,
+            "agent_output": sanitized_output,
+            "agent_exit_code": result.exit_code,
+            "failure_reason": failure_reason,
+        }
+    )
+    return sources
+
+
+def _contained_path(root: str, relative: str) -> Path | None:
+    """Resolve `relative` under `root`, or None if it escapes.
+
+    Artifact names come from the agent, so they are untrusted input: the orchestrator
+    process (not the sandboxed agent) performs these writes.
+    """
+    if not relative or relative.startswith(("/", "\\")) or "\x00" in relative:
+        return None
+    root_resolved = Path(root).resolve()
+    try:
+        candidate = (root_resolved / relative).resolve()
+    except (OSError, RuntimeError):
+        return None
+    if candidate == root_resolved or root_resolved not in candidate.parents:
+        return None
+    return candidate
+
+
 def _process_workspace_artifacts(
     cwd: str,
     workdir: str,
     result_output: Any,
-    result_text: str,
     document_content: Any,
 ) -> tuple[list[str], dict[str, Any]]:
     artifacts_list: list[str] = []
@@ -74,22 +165,21 @@ def _process_workspace_artifacts(
         raw_artifacts = result_output.get("artifacts", [])
         if isinstance(raw_artifacts, list):
             for art in raw_artifacts:
-                if isinstance(art, str):
-                    artifacts_list.append(art)
-                    src_file = Path(cwd) / art
-                    dst_file = Path(workdir) / art
-                    if src_file.is_file() and str(src_file.resolve()) != str(dst_file.resolve()):
-                        dst_file.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(src_file, dst_file)
-                    elif not dst_file.is_file():
-                        doc_content = (
-                            result_output.get("document_text")
-                            or result_output.get("summary")
-                            or result_text
-                        )
-                        if doc_content:
-                            dst_file.parent.mkdir(parents=True, exist_ok=True)
-                            dst_file.write_text(doc_content)
+                if not isinstance(art, str):
+                    continue
+                dst_file = _contained_path(workdir, art)
+                src_file = _contained_path(cwd, art)
+                if dst_file is None:
+                    logger.warning("Ignoring agent artifact escaping the workspace: %r", art)
+                    continue
+                artifacts_list.append(art)
+                if src_file is not None and src_file.is_file() and src_file != dst_file:
+                    dst_file.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src_file, dst_file)
+                elif not dst_file.is_file():
+                    # The agent claimed an artifact it never wrote. Record the claim, but
+                    # never invent file content from the summary and pass it off as output.
+                    logger.warning("Agent declared artifact %r that does not exist in the workspace", art)
 
     if document_content:
         doc_file = Path(workdir) / "document.md"
@@ -117,6 +207,7 @@ class WorkflowService:
         if pi_client is not None:
             if isinstance(pi_client, BaseAdapter):
                 self.registry.register(pi_client)
+                self.registry._adapters["pi_agent"] = pi_client
             else:
                 import inspect
                 class GenericAdapter(BaseAdapter):
@@ -157,9 +248,11 @@ class WorkflowService:
             except (ValueError, TypeError):
                 default_timeout = 1800.0
             self.registry.register(PiAdapter(PiClient(timeout_seconds=default_timeout)))
+            self.registry.register(SandboxPiAdapter(timeout_seconds=default_timeout))
 
         self.jobs: dict[str, asyncio.Task[None]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._timer_task: asyncio.Task[None] | None = None
 
     def _lock(self, workflow_id: str) -> asyncio.Lock:
         return self._locks.setdefault(workflow_id, asyncio.Lock())
@@ -188,6 +281,8 @@ class WorkflowService:
             "jobs": record.get("jobs", {}),
             "failure_reason": record.get("failure_reason"),
             "pi_session_id": record.get("pi_session_id") or record.get("data", {}).get("pi_session_id"),
+            "network": record.get("network") or record.get("data", {}).get("network"),
+            "policy_error": record.get("policy_error") or record.get("data", {}).get("policy_error"),
             "save_points": [self._save_point_summary(point) for point in record.get("save_points", [])],
             "events": record.get("events", []),
             "parent_workflow_id": record.get("parent_workflow_id"),
@@ -233,6 +328,81 @@ class WorkflowService:
                 "workspace_blob": duplicate_blob(workspace_blob),
             }
         )
+        self._prune_save_points(record, str(task.id), phase)
+
+    def _prune_save_points(self, record: dict[str, Any], task_id: str, phase: str) -> None:
+        """Drop superseded attempts of the same turn from this record."""
+        retention = _attempt_retention()
+        points = record.get("save_points", [])
+        by_generation: dict[str, list[dict[str, Any]]] = {}
+        for point in points:
+            if point.get("task_id") != task_id or point.get("phase") != phase:
+                continue
+            by_generation.setdefault(_generation_of(point.get("key", "")), []).append(point)
+
+        superseded = {
+            point["id"]
+            for group in by_generation.values()
+            if len(group) > retention
+            for point in group[:-retention]
+            if point.get("id")
+        }
+        if not superseded:
+            return
+
+        record["save_points"] = [p for p in points if p.get("id") not in superseded]
+        for save_point_id in superseded:
+            try:
+                self.store.delete_save_point(save_point_id)
+            except Exception as exc:
+                logger.warning("Failed to delete superseded savepoint %s: %s", save_point_id, exc)
+        logger.info(
+            "Pruned %d superseded savepoint(s) for task %s phase %s", len(superseded), task_id, phase
+        )
+
+    @staticmethod
+    def _top_workflow(workflow: Any, task: Any) -> Any:
+        return getattr(getattr(task, "workflow", None), "top_workflow", None) or workflow
+
+    def _record_session(self, workflow: Any, task: Any, session_id: str) -> None:
+        """Record the agent session this task produced, on the instance-wide lineage map.
+
+        Lives in workflow.data so that a savepoint fork inherits the lineage along with
+        the workflow state. `__`-prefixed like `__children`: internal, never routable.
+        """
+        top = self._top_workflow(workflow, task)
+        sessions = top.data.setdefault("__sessions", {})
+        sessions[str(task.id)] = session_id
+
+    def _inherited_session(self, workflow: Any, task: Any) -> str | None:
+        """The session of the nearest ancestor on this task's own execution path.
+
+        Walking the task tree rather than reading one instance-wide id means parallel
+        branches inherit from their common ancestor instead of stealing whichever
+        session happened to be written last.
+        """
+        top = self._top_workflow(workflow, task)
+        sessions = top.data.get("__sessions") or {}
+        if not sessions:
+            return None
+        node = getattr(task, "parent", None)
+        seen = 0
+        while node is not None and seen < 10_000:
+            seen += 1
+            session_id = sessions.get(str(node.id))
+            if session_id:
+                return str(session_id)
+            parent = getattr(node, "parent", None)
+            if parent is None:
+                # Hop out of a subprocess to the CallActivity task that started it.
+                parent_task_id = getattr(getattr(node, "workflow", None), "parent_task_id", None)
+                if parent_task_id is not None:
+                    try:
+                        parent = top.get_task_from_id(parent_task_id)
+                    except Exception:
+                        parent = None
+            node = parent
+        return None
 
     def _get_root_workflow_id(self, workflow_id: str) -> str:
         record = self.store.load(workflow_id)
@@ -243,47 +413,62 @@ class WorkflowService:
         return workflow_id
 
     def _sync_children(self, root_workflow_id: str, record: dict[str, Any]) -> None:
-        from SpiffWorkflow.task import TaskState
-        
-        def _sync(parent_id: str, parent_wf: Any) -> None:
-            children_map = record.setdefault("data", {}).setdefault("__children", {})
-            for task in parent_wf.get_tasks(state=TaskState.ANY_MASK):
-                if type(task.task_spec).__name__ == "CallActivity" and hasattr(task, "workflow") and task.workflow:
-                    task_id = str(task.id)
-                    if task_id not in children_map:
-                        children_map[task_id] = uuid.uuid4().hex
-                    
-                    child_id = children_map[task_id]
-                    child_wf = task.workflow
-                    
-                    child_record = self.store.load(child_id)
-                    called = getattr(task.task_spec, "calledElement", "")
-                    bpmn_path = f"workflows/{called}.bpmn" if called else "unknown"
-                    
-                    if not child_record:
-                        child_record = self.runner.record(
-                            child_id,
-                            child_wf,
-                            bpmn_path,
-                            called or "unknown",
-                            self._status(child_wf),
-                            jobs={},
-                            save_points=[],
-                            events=[],
-                            parent_workflow_id=parent_id,
-                        )
-                    else:
-                        child_record["workflow"] = child_wf
-                        child_record["status"] = self._status(child_wf)
-                        child_record["tasks"] = self.runner.task_snapshot(child_wf)
-                        child_record["data"] = dict(child_wf.data)
-                        child_record["bpmn_path"] = bpmn_path
-                        child_record["process_id"] = called or "unknown"
-                        
-                    self.store.save(child_id, child_record)
-                    _sync(child_id, child_wf)
+        root_workflow = record.get("workflow")
+        if root_workflow is None:
+            self.store.save(root_workflow_id, record)
+            return
 
-        _sync(root_workflow_id, record["workflow"])
+        # Must live in workflow.data, not record["data"]: runner.record() rebuilds
+        # record["data"] from workflow.data on every save, so a map kept on the record
+        # was silently discarded and every sync minted a fresh child record.
+        children_map = root_workflow.data.setdefault("__children", {})
+
+        def _sync(parent_id: str, parent_wf: Any) -> None:
+            # One level at a time: the iterator descends into subprocesses by default,
+            # which would attribute grandchildren to the root instead of their parent.
+            for task in parent_wf.get_tasks(state=TaskState.ANY_MASK, skip_subprocesses=True):
+                if type(task.task_spec).__name__ != "CallActivity":
+                    continue
+                # `task.workflow` is the workflow *containing* the call activity; the
+                # subprocess it launched lives in top_workflow.subprocesses.
+                child_wf = self.runner.subprocess_of(root_workflow, task)
+                if child_wf is None:
+                    continue
+
+                task_id = str(task.id)
+                if task_id not in children_map:
+                    children_map[task_id] = uuid.uuid4().hex
+                child_id = children_map[task_id]
+
+                called = getattr(task.task_spec, "spec", "") or getattr(task.task_spec, "calledElement", "")
+                bpmn_path = f"workflows/{called}.bpmn" if called else "unknown"
+
+                child_record = self.store.load(child_id)
+                if not child_record:
+                    child_record = self.runner.record(
+                        child_id,
+                        child_wf,
+                        bpmn_path,
+                        called or "unknown",
+                        self._status(child_wf),
+                        jobs={},
+                        save_points=[],
+                        events=[],
+                        parent_workflow_id=parent_id,
+                    )
+                else:
+                    child_record["workflow"] = child_wf
+                    child_record["status"] = self._status(child_wf)
+                    child_record["tasks"] = self.runner.task_snapshot(child_wf)
+                    child_record["data"] = dict(child_wf.data)
+                    child_record["bpmn_path"] = bpmn_path
+                    child_record["process_id"] = called or "unknown"
+                    child_record["parent_workflow_id"] = parent_id
+
+                self.store.save(child_id, child_record)
+                _sync(child_id, child_wf)
+
+        _sync(root_workflow_id, root_workflow)
         self.store.save(root_workflow_id, record)
 
     async def start(
@@ -414,21 +599,25 @@ class WorkflowService:
         return await asyncio.to_thread(path.read_text, encoding="utf-8")
 
     async def fork(self, workflow_id: str, save_point_id: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
-        source = self._record(workflow_id)
-        if source.get("parent_workflow_id"):
-            raise ValueError(
-                f"Cannot fork child workflow '{workflow_id}' directly; fork root workflow '{source['parent_workflow_id']}' instead"
-            )
-        logger.info("Forking workflow from savepoint", extra={"workflow_id": workflow_id, "save_point_id": save_point_id})
-        point = self.store.load_save_point(save_point_id)
-        if point is None:
-            point = next(
-                (candidate for candidate in source.get("save_points", []) if candidate.get("id") == save_point_id),
-                None,
-            )
-        if point is None or point.get("workflow") is None:
-            raise KeyError(save_point_id)
-        workflow = copy.deepcopy(point["workflow"])
+        async with self._lock(workflow_id):
+            source = self._record(workflow_id)
+            if source.get("parent_workflow_id"):
+                raise ValueError(
+                    f"Cannot fork child workflow '{workflow_id}' directly; fork root workflow '{source['parent_workflow_id']}' instead"
+                )
+            logger.info("Forking workflow from savepoint", extra={"workflow_id": workflow_id, "save_point_id": save_point_id})
+            point = self.store.load_save_point(save_point_id)
+            if point is None:
+                point = next(
+                    (candidate for candidate in source.get("save_points", []) if candidate.get("id") == save_point_id),
+                    None,
+                )
+            if point is None or point.get("workflow") is None:
+                raise KeyError(save_point_id)
+            workflow = copy.deepcopy(point["workflow"])
+            source_save_points = copy.deepcopy(source.get("save_points", []))
+            source_bpmn_path = source["bpmn_path"]
+            source_process_id = source["process_id"]
         if variables:
             workflow.data.update(variables)
         if point.get("resume_action") == "complete_harness":
@@ -439,11 +628,11 @@ class WorkflowService:
         record = self.runner.record(
             fork_id,
             workflow,
-            source["bpmn_path"],
-            source["process_id"],
+            source_bpmn_path,
+            source_process_id,
             self._status(workflow),
             jobs={},
-            save_points=copy.deepcopy(source.get("save_points", [])),
+            save_points=source_save_points,
             events=[],
             forked_from=workflow_id,
             forked_from_save_point=save_point_id,
@@ -465,35 +654,36 @@ class WorkflowService:
     async def submit_task(self, workflow_id: str, task_id: str, variables: dict[str, Any]) -> dict[str, Any]:
         workflow_id = self._get_root_workflow_id(workflow_id)
         logger.info("Submitting human user task", extra={"workflow_id": workflow_id, "task_id": task_id})
-        record = self._record(workflow_id)
-        workflow = record["workflow"]
-        task = self.runner.find_task(workflow, task_id)
-        if not task.state & TaskState.READY:
-            raise ValueError("task is not ready for submission")
-        task.data.update(variables)
-        task.workflow.data.update(variables)
-        task.complete()
-        workflow.do_engine_steps()
-        self.events.emit(
-            "human_task_submitted",
-            workflow_id,
-            task_id=task_id,
-            task_name=getattr(task.task_spec, "bpmn_name", task.task_spec.name),
-            data=variables,
-        )
-        record.update(
-            self.runner.record(
+        async with self._lock(workflow_id):
+            record = self._record(workflow_id)
+            workflow = record["workflow"]
+            task = self.runner.find_task(workflow, task_id)
+            if not task.state & TaskState.READY:
+                raise ValueError("task is not ready for submission")
+            task.data.update(variables)
+            task.workflow.data.update(variables)
+            task.complete()
+            workflow.do_engine_steps()
+            self.events.emit(
+                "human_task_submitted",
                 workflow_id,
-                workflow,
-                record["bpmn_path"],
-                record["process_id"],
-                self._status(workflow),
-                jobs=record.get("jobs", {}),
+                task_id=task_id,
+                task_name=getattr(task.task_spec, "bpmn_name", task.task_spec.name),
+                data=variables,
             )
-        )
-        await asyncio.to_thread(self.store.save, workflow_id, record)
-        self._sync_children(workflow_id, record)
-        await self._dispatch(workflow_id)
+            record.update(
+                self.runner.record(
+                    workflow_id,
+                    workflow,
+                    record["bpmn_path"],
+                    record["process_id"],
+                    self._status(workflow),
+                    jobs=record.get("jobs", {}),
+                )
+            )
+            await asyncio.to_thread(self.store.save, workflow_id, record)
+            self._sync_children(workflow_id, record)
+            await self._dispatch(workflow_id, _lock_held=True)
         state = self.state(workflow_id)
         if state["status"] == "completed":
             self.events.emit("workflow_completed", workflow_id, data=state["data"])
@@ -503,42 +693,195 @@ class WorkflowService:
     async def retry_task(self, workflow_id: str, task_id: str) -> dict[str, Any]:
         workflow_id = self._get_root_workflow_id(workflow_id)
         logger.info("Retrying failed task", extra={"workflow_id": workflow_id, "task_id": task_id})
-        record = self._record(workflow_id)
-        workflow = record["workflow"]
-        task = self.runner.find_task(workflow, task_id)
-        if task.task_spec.__class__.__name__ != "ServiceTask":
-            raise ValueError("only service tasks can be retried")
-        if not task.state & TaskState.STARTED:
-            raise ValueError("task is not failed and waiting for retry")
-        job = record.setdefault("jobs", {}).get(task_id)
-        if not job or job.get("status") != "failed":
-            raise ValueError("task does not have a failed Pi attempt")
-        job["status"] = "retry_requested"
-        job["attempts"] = 0
-        job["generation"] = int(job.get("generation", 0)) + 1
-        record["status"] = "retry_requested"
-        self._add_save_point(
-            record,
-            workflow,
-            task,
-            "retry_requested",
-            "run_harness",
-            f":run_{job['generation']}",
-        )
-        await asyncio.to_thread(self.store.save, workflow_id, record)
-        self._sync_children(workflow_id, record)
-        await self._dispatch(workflow_id)
+        async with self._lock(workflow_id):
+            record = self._record(workflow_id)
+            workflow = record["workflow"]
+            task = self.runner.find_task(workflow, task_id)
+            if task.task_spec.__class__.__name__ != "ServiceTask":
+                raise ValueError("only service tasks can be retried")
+            if not task.state & TaskState.STARTED:
+                raise ValueError("task is not failed and waiting for retry")
+            job = record.setdefault("jobs", {}).get(task_id)
+            if not job or job.get("status") != "failed":
+                raise ValueError("task does not have a failed Pi attempt")
+            job["status"] = "retry_requested"
+            job["attempts"] = 0
+            job["generation"] = int(job.get("generation", 0)) + 1
+            record["status"] = "retry_requested"
+            self._add_save_point(
+                record,
+                workflow,
+                task,
+                "retry_requested",
+                "run_harness",
+                f":run_{job['generation']}",
+            )
+            await asyncio.to_thread(self.store.save, workflow_id, record)
+            self._sync_children(workflow_id, record)
+            await self._dispatch(workflow_id, _lock_held=True)
         state = self.state(workflow_id)
         await ws_manager.broadcast(workflow_id, state)
         return state
 
-    async def _dispatch(self, workflow_id: str) -> None:
+    @staticmethod
+    def _catching_definitions(workflow: Any, name: str | None = None) -> list[Any]:
+        definitions = []
+        for task in workflow.get_tasks(state=TaskState.WAITING):
+            if not isinstance(task.task_spec, CatchingEvent):
+                continue
+            definition = getattr(task.task_spec, "event_definition", None)
+            if definition is None:
+                continue
+            if name is None or getattr(definition, "name", None) == name:
+                definitions.append(definition)
+        return definitions
+
+    def pending_events(self, workflow_id: str) -> list[dict[str, Any]]:
+        """Events this instance is currently parked on (messages, timers, signals)."""
+        record = self._record(workflow_id)
+        workflow = record.get("workflow")
+        if workflow is None:
+            return []
+        return [
+            {
+                "name": event.name,
+                "event_type": event.event_type,
+                "value": str(event.value) if event.value is not None else None,
+            }
+            for event in workflow.waiting_events()
+        ]
+
+    async def send_message(
+        self, workflow_id: str, message_name: str, payload: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Deliver an external message to a waiting BPMN message catch event."""
         workflow_id = self._get_root_workflow_id(workflow_id)
+        payload = dict(payload or {})
+        logger.info(
+            "Delivering message to workflow",
+            extra={"workflow_id": workflow_id, "message_name": message_name},
+        )
         async with self._lock(workflow_id):
+            record = self._record(workflow_id)
+            workflow = record["workflow"]
+            definitions = self._catching_definitions(workflow, message_name)
+            if not definitions:
+                raise KeyError(f"no waiting event named {message_name!r}")
+
+            workflow.catch(BpmnEvent(definitions[0], payload=payload))
+            workflow.do_engine_steps()
+            self.events.emit(
+                "message_received",
+                workflow_id,
+                data={"message": message_name, "payload": payload},
+            )
+            record.update(
+                self.runner.record(
+                    workflow_id,
+                    workflow,
+                    record["bpmn_path"],
+                    record["process_id"],
+                    self._status(workflow),
+                    jobs=record.get("jobs", {}),
+                )
+            )
+            await asyncio.to_thread(self.store.save, workflow_id, record)
+            self._sync_children(workflow_id, record)
+            await self._dispatch(workflow_id, _lock_held=True)
+        state = self.state(workflow_id)
+        if state["status"] == "completed":
+            self.events.emit("workflow_completed", workflow_id, data=state["data"])
+        await ws_manager.broadcast(workflow_id, state)
+        return state
+
+    async def refresh_timers(self) -> list[str]:
+        """Fire any due timer events across live instances. Returns advanced instance ids."""
+        advanced: list[str] = []
+        for item in self.instances():
+            if item["status"] in ("completed", "cancelled", "failed"):
+                continue
+            workflow_id = item["workflow_id"]
+            record = self.store.load(workflow_id)
+            if not record or record.get("parent_workflow_id"):
+                continue
+            workflow = record.get("workflow")
+            if workflow is None or not self._catching_definitions(workflow):
+                continue
+
+            async with self._lock(workflow_id):
+                record = self._record(workflow_id)
+                workflow = record["workflow"]
+                before = self.runner.task_snapshot(workflow)
+                workflow.refresh_waiting_tasks()
+                workflow.do_engine_steps()
+                if self.runner.task_snapshot(workflow) == before:
+                    continue
+                logger.info("Timer advanced workflow", extra={"workflow_id": workflow_id})
+                self.events.emit("timer_fired", workflow_id)
+                record.update(
+                    self.runner.record(
+                        workflow_id,
+                        workflow,
+                        record["bpmn_path"],
+                        record["process_id"],
+                        self._status(workflow),
+                        jobs=record.get("jobs", {}),
+                    )
+                )
+                await asyncio.to_thread(self.store.save, workflow_id, record)
+                self._sync_children(workflow_id, record)
+                await self._dispatch(workflow_id, _lock_held=True)
+            advanced.append(workflow_id)
+            await ws_manager.broadcast(workflow_id, self.state(workflow_id))
+        return advanced
+
+    def start_timer_loop(self, interval: float | None = None) -> None:
+        """Start the background ticker that fires due BPMN timer events.
+
+        SpiffWorkflow only advances a timer when refresh_waiting_tasks() is called, so
+        without this loop timer events never fire at all.
+        """
+        if self._timer_task is not None and not self._timer_task.done():
+            return
+        if interval is None:
+            try:
+                interval = float(os.getenv("TIMER_TICK_SECONDS", "10"))
+            except (TypeError, ValueError):
+                interval = 10.0
+        if interval <= 0:
+            logger.info("Timer loop disabled (TIMER_TICK_SECONDS <= 0)")
+            return
+        self._timer_task = asyncio.create_task(self._timer_loop(interval))
+
+    async def _timer_loop(self, interval: float) -> None:
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await self.refresh_timers()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Timer refresh failed")
+
+    async def stop_timer_loop(self) -> None:
+        task = self._timer_task
+        self._timer_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+    async def _dispatch(self, workflow_id: str, _lock_held: bool = False) -> None:
+        workflow_id = self._get_root_workflow_id(workflow_id)
+        guard: Any = contextlib.nullcontext() if _lock_held else self._lock(workflow_id)
+        async with guard:
             record = self._record(workflow_id)
             workflow = record["workflow"]
             jobs = record.setdefault("jobs", {})
             tasks_to_launch: list[tuple[str, str, int, int]] = []
+            unresolved: list[tuple[str, str, str]] = []
 
             for task in self.runner.get_all_tasks(workflow, TaskState.STARTED):
                 if task.task_spec.__class__.__name__ != "ServiceTask":
@@ -546,6 +889,22 @@ class WorkflowService:
                 config = self.runner.pi_config(task)
                 harness_type = config.get("harness_type", "pi_agent")
                 if harness_type not in ("pi_agent", "mock_agent") and not self.registry.get(harness_type):
+                    task_key = str(task.id)
+                    task_name = getattr(task.task_spec, "bpmn_name", task.task_spec.name)
+                    if jobs.get(task_key, {}).get("status") != "failed":
+                        reason = (
+                            f"No adapter registered for harness_type {harness_type!r} "
+                            f"(registered: {', '.join(sorted(self.registry.list_types()))})"
+                        )
+                        previous = jobs.get(task_key, {})
+                        jobs[task_key] = {
+                            "status": "failed",
+                            "task_name": task_name,
+                            "attempts": int(previous.get("attempts", 0)),
+                            "generation": int(previous.get("generation", 0)),
+                            "failure_reason": reason,
+                        }
+                        unresolved.append((task_key, task_name, reason))
                     continue
                 task_key = str(task.id)
                 existing_job = jobs.get(task_key)
@@ -564,11 +923,26 @@ class WorkflowService:
                     f":run_{generation}:attempt_{attempts}",
                 )
                 task_name = getattr(task.task_spec, "bpmn_name", task.task_spec.name)
+                inherited = self._inherited_session(workflow, task)
+                # Continue the branch's session, but fork it whenever this turn is a
+                # re-roll (retry / forked instance) or a sibling branch is already
+                # running against the same session.
+                session_fork = bool(inherited) and (
+                    bool(record.get("forked_from"))
+                    or generation > 0
+                    or any(
+                        other.get("status") == "running" and other.get("session_id") == inherited
+                        for key, other in jobs.items()
+                        if key != task_key
+                    )
+                )
                 jobs[task_key] = {
                     "status": "running",
                     "task_name": task_name,
                     "attempts": attempts,
                     "generation": generation,
+                    "session_id": inherited,
+                    "session_fork": session_fork,
                 }
                 tasks_to_launch.append((task_key, task_name, attempts, generation))
 
@@ -607,6 +981,23 @@ class WorkflowService:
                 if record["status"] == "completed":
                     self.events.emit("workflow_completed", workflow_id, data=record["data"])
 
+            if unresolved:
+                reason = unresolved[-1][2]
+                record["failure_reason"] = reason
+                record["status"] = "failed"
+                record["tasks"] = self.runner.task_snapshot(workflow)
+                await asyncio.to_thread(self.store.save, workflow_id, record)
+                for task_key, task_name, task_reason in unresolved:
+                    logger.error("Unresolvable harness for task %s: %s", task_key, task_reason)
+                    self.events.emit(
+                        "pi_failed",
+                        workflow_id,
+                        task_id=task_key,
+                        task_name=task_name,
+                        data={"failure_reason": task_reason},
+                    )
+                self.events.emit("workflow_failed", workflow_id, data={"failure_reason": reason})
+
     def jobs_for_workflow(self, workflow_id: str) -> list[asyncio.Task[None]]:
         return [job for task_id, job in self.jobs.items() if not job.done() and self._job_workflow(task_id, workflow_id)]
 
@@ -624,15 +1015,12 @@ class WorkflowService:
             task = self.runner.find_task(record["workflow"], task_id)
             config = self.runner.pi_config(task)
 
-            wf_data = getattr(record.get("workflow"), "data", {})
-            pi_session_id = (
-                record.get("pi_session_id")
-                or record.get("data", {}).get("pi_session_id")
-                or wf_data.get("pi_session_id")
-            )
-            if pi_session_id:
-                config["session_id"] = str(pi_session_id)
-                config["fork"] = "true"
+            job_entry = record.get("jobs", {}).get(task_id, {})
+            session_id = job_entry.get("session_id")
+            if session_id:
+                config["session_id"] = str(session_id)
+                if "fork" not in config:
+                    config["fork"] = "true" if job_entry.get("session_fork") else "false"
 
             harness_type = config.get("harness_type", "pi_agent")
 
@@ -643,8 +1031,12 @@ class WorkflowService:
             # Unpack per-instance workspace archive (TODO 05)
             blob_or_bytes = self.store.get_workspace(workflow_id)
             workdir = await unpack_workspace(blob_or_bytes, prefix=f"bpmn-{workflow_id[:8]}-")
-            configured_cwd = os.getenv("PI_WORKDIR")
-            cwd = configured_cwd if configured_cwd else workdir
+            if not blob_or_bytes:
+                await asyncio.to_thread(_seed_workspace, workdir)
+            cwd = workdir
+
+            # Harness-specific workspace setup is the adapter's business, not ours
+            await adapter.prepare_workspace(cwd, config)
 
             prompt = self.runner.prompt(workflow_id, task, record["workflow"])
 
@@ -670,11 +1062,9 @@ class WorkflowService:
                 cwd,
                 workdir,
                 result.output,
-                result.text,
                 wf_data.get("document_content"),
             )
             record["workspace_metadata"] = ws_meta
-            record["workflow"].data["workspace_metadata"] = ws_meta
 
             # Repack modified workspace back into storage
             if workdir and Path(workdir).exists():
@@ -711,7 +1101,26 @@ class WorkflowService:
 
             if workspace_metadata:
                 record["workspace_metadata"] = workspace_metadata
-                workflow.data["workspace_metadata"] = workspace_metadata
+
+            net_data = getattr(result, "network", None)
+            if net_data:
+                record["network"] = net_data
+                task.data["network"] = net_data
+                try:
+                    from app.ws import manager
+                    await manager.broadcast(workflow_id, {
+                        "type": "network_summary",
+                        "workflow_id": workflow_id,
+                        "task_id": task_id,
+                        "network": net_data,
+                    })
+                except Exception:
+                    pass
+
+            policy_err = getattr(result, "policy_error", None)
+            if policy_err:
+                record["policy_error"] = policy_err
+                task.data["policy_error"] = policy_err
 
             failure_reason = None
             if result.status != "success":
@@ -740,36 +1149,55 @@ class WorkflowService:
                 )
 
             sanitized_output = _sanitize_output(result.output)
-            # Map result.status to both 'agent_status' (used by BPMN exclusive gateway conditions)
-            # and 'status' for resilience and consistency.
-            task_data = {
-                "agent_status": result.status,
-                "status": result.status,
-                "agent_output": sanitized_output,
-                "agent_text": result.text,
-            }
-            task.data.update(task_data)
-            task.workflow.data.update(task_data)
+            sources = _output_sources(result, sanitized_output, failure_reason)
 
-            # Apply outputParameters mapping if defined (TODO 16)
+            # Task-local scope. Agent results never reach workflow.data implicitly: a
+            # service task publishes to the workflow only through camunda:outputParameters,
+            # so parallel agent turns cannot overwrite each other's verdict.
+            task.data.update(
+                {
+                    "agent_status": result.status,
+                    "status": sources["status"],
+                    "agent_output": sanitized_output,
+                    "agent_text": result.text,
+                }
+            )
+
             extensions = getattr(task.task_spec, "extensions", {}) or {}
             output_params = extensions.get("outputParameters", {})
-            if output_params and sanitized_output:
-                for target_var, source_expr in output_params.items():
-                    if source_expr.startswith("${") and source_expr.endswith("}"):
-                        source_key = source_expr[2:-1]
-                        task.workflow.data[target_var] = sanitized_output.get(source_key)
-                    else:
-                        task.workflow.data[target_var] = sanitized_output.get(source_expr)
+            published: dict[str, Any] = {}
+            for target_var, source_expr in output_params.items():
+                source_key = (
+                    source_expr[2:-1]
+                    if source_expr.startswith("${") and source_expr.endswith("}")
+                    else source_expr
+                )
+                # Only actionable when the agent actually produced a result: on a failed
+                # or cancelled turn every agent-JSON key is legitimately absent.
+                if source_key not in sources and sanitized_output:
+                    logger.warning(
+                        "Task %s maps outputParameter %r from unknown key %r; publishing None",
+                        task_id,
+                        target_var,
+                        source_key,
+                    )
+                published[target_var] = sources.get(source_key)
+            if published:
+                # task.data is inherited by successor tasks, so this is the scope BPMN
+                # gateway conditions evaluate in -- and it is per-branch, which is what
+                # makes parallel agent turns safe. workflow.data additionally carries the
+                # instance-wide view surfaced in the API and UI.
+                task.data.update(published)
+                task.workflow.data.update(published)
 
             if failure_reason:
                 task.data["failure_reason"] = failure_reason
-                task.workflow.data["failure_reason"] = failure_reason
 
             if result.status == "success" and getattr(result, "session_id", None):
                 record["pi_session_id"] = result.session_id
                 record.setdefault("data", {})["pi_session_id"] = result.session_id
-                task.workflow.data["pi_session_id"] = result.session_id
+                task.data["pi_session_id"] = result.session_id
+                self._record_session(workflow, task, str(result.session_id))
 
             attempt = job.get("attempts", 1)
             generation = job.get("generation", 0)
@@ -853,6 +1281,11 @@ class WorkflowService:
         for task in workflow.get_tasks(state=TaskState.READY):
             if task.task_spec.__class__.__name__ == "UserTask":
                 return "waiting_human"
+        if any(
+            isinstance(task.task_spec, CatchingEvent)
+            for task in workflow.get_tasks(state=TaskState.WAITING)
+        ):
+            return "waiting_event"
         return "running"
 
     def form(self, workflow_id: str, task_id: str) -> dict[str, Any]:

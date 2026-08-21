@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import signal
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,36 @@ class PiResult:
     stderr: str
     exit_code: int | None
     session_id: str | None = None
+
+
+def _demo_fallback_allowed() -> bool:
+    """Whether a failed real Pi run may silently fall back to the deterministic demo mock.
+
+    Off by default: a misconfigured provider must fail loudly rather than feed fabricated
+    agent output into BPMN gateway conditions.
+    """
+    return os.getenv("PI_ALLOW_DEMO_FALLBACK", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+async def _kill_process_group(process: asyncio.subprocess.Process) -> None:
+    """Kill the whole session started for Pi, not just its direct child.
+
+    Pi is spawned with start_new_session=True, so process.kill() would leave the node
+    runtime and any tool subprocesses it started running after a timeout or cancellation.
+    """
+    if process.returncode is not None:
+        return
+    try:
+        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+    try:
+        await process.wait()
+    except ProcessLookupError:
+        pass
 
 
 def _set_resource_limits() -> None:
@@ -183,10 +214,16 @@ class PiClient:
         )
         if (
             result.status != "success"
+            and _demo_fallback_allowed()
             and not self._explicit_executable
             and executable != demo_executable
             and Path(demo_executable).is_file()
         ):
+            logger.warning(
+                "Pi failed (%s); retrying with the deterministic demo mock because "
+                "PI_ALLOW_DEMO_FALLBACK is set. Results are FABRICATED, not model output.",
+                result.status,
+            )
             demo_result = await self._execute(
                 demo_executable,
                 prompt,
@@ -199,6 +236,7 @@ class PiClient:
                 fork=fork,
             )
             if demo_result.status == "success":
+                logger.warning("Returning FABRICATED demo-mock result for a failed Pi invocation")
                 return demo_result
         return result
 
@@ -282,21 +320,15 @@ class PiClient:
             await asyncio.wait_for(self._read_output(process, events, on_event=on_event), active_timeout)
             exit_code = process.returncode
         except asyncio.TimeoutError:
-            if process.returncode is None:
-                try:
-                    process.kill()
-                except ProcessLookupError:
-                    pass
-                await process.wait()
+            await _kill_process_group(process)
             status = "timeout"
             stderr_msg = "Pi timed out"
-        except (BrokenPipeError, ConnectionError) as exc:
-            if process.returncode is None:
-                try:
-                    process.kill()
-                except ProcessLookupError:
-                    pass
-                await process.wait()
+        except asyncio.CancelledError:
+            # Never leave the agent running after the orchestrator gives up on it.
+            await _kill_process_group(process)
+            raise
+        except (BrokenPipeError, ConnectionError, PiError) as exc:
+            await _kill_process_group(process)
             status = "failed"
             stderr_msg = str(exc)
         finally:

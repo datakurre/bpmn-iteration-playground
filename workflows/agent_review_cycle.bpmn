@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_AgentReviewCycle" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="agent_review_cycle" name="Agent Review Cycle" isExecutable="true">
+    <bpmn:documentation>Reusable agent turn with a human gate. Callable from another process as a CallActivity, so a composed workflow can run the same review cycle over several subjects without duplicating the diagram.</bpmn:documentation>
+    <bpmn:startEvent id="Start_Cycle" name="Subject Received">
+      <bpmn:outgoing>Flow_Cycle_To_Review</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_Cycle_To_Review" sourceRef="Start_Cycle" targetRef="Task_Cycle_Review" />
+    <bpmn:serviceTask id="Task_Cycle_Review" name="Review Subject">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="reviewer" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="subject">${subject}</camunda:inputParameter>
+          <camunda:inputParameter name="review_guidance">${review_guidance}</camunda:inputParameter>
+          <camunda:outputParameter name="cycle_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="cycle_summary">${summary}</camunda:outputParameter>
+          <camunda:outputParameter name="cycle_findings">${findings}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Cycle_To_Review</bpmn:incoming>
+      <bpmn:outgoing>Flow_Cycle_To_GW</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_Cycle_To_GW" sourceRef="Task_Cycle_Review" targetRef="GW_Cycle_Check" />
+    <bpmn:exclusiveGateway id="GW_Cycle_Check" name="Review Succeeded?">
+      <bpmn:incoming>Flow_Cycle_To_GW</bpmn:incoming>
+      <bpmn:outgoing>Flow_Cycle_OK</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Cycle_Fail</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_Cycle_OK" name="Success" sourceRef="GW_Cycle_Check" targetRef="Task_Cycle_Signoff">
+      <bpmn:conditionExpression>cycle_status == 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Cycle_Fail" name="Failed" sourceRef="GW_Cycle_Check" targetRef="End_Cycle_Failed">
+      <bpmn:conditionExpression>cycle_status != 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:userTask id="Task_Cycle_Signoff" name="Sign Off Review">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="cycle_preview" label="### Review Findings&#10;Read the agent's review of this subject before signing off." type="markdown" />
+          <camunda:formField id="cycle_decision" label="Decision" type="enum" defaultValue="accepted">
+            <camunda:value id="accepted" name="Accept" />
+            <camunda:value id="rejected" name="Reject" />
+          </camunda:formField>
+          <camunda:formField id="cycle_notes" label="Reviewer Notes" type="textarea" />
+        </camunda:formData>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Cycle_OK</bpmn:incoming>
+      <bpmn:outgoing>Flow_Cycle_To_End</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="Flow_Cycle_To_End" sourceRef="Task_Cycle_Signoff" targetRef="End_Cycle_Done" />
+    <bpmn:endEvent id="End_Cycle_Done" name="Cycle Complete">
+      <bpmn:incoming>Flow_Cycle_To_End</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="End_Cycle_Failed" name="Review Failed">
+      <bpmn:incoming>Flow_Cycle_Fail</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_AgentReviewCycle">
+    <bpmndi:BPMNPlane id="BPMNPlane_AgentReviewCycle" bpmnElement="agent_review_cycle">
+      <bpmndi:BPMNShape id="Start_Cycle_di" bpmnElement="Start_Cycle">
+        <dc:Bounds x="50" y="140" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Cycle_Review_di" bpmnElement="Task_Cycle_Review">
+        <dc:Bounds x="140" y="118" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_Cycle_Check_di" bpmnElement="GW_Cycle_Check" isMarkerVisible="true">
+        <dc:Bounds x="330" y="133" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Cycle_Signoff_di" bpmnElement="Task_Cycle_Signoff">
+        <dc:Bounds x="430" y="118" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Cycle_Done_di" bpmnElement="End_Cycle_Done">
+        <dc:Bounds x="620" y="140" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Cycle_Failed_di" bpmnElement="End_Cycle_Failed">
+        <dc:Bounds x="337" y="270" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_Cycle_To_Review_di" bpmnElement="Flow_Cycle_To_Review">
+        <di:waypoint x="86" y="158" />
+        <di:waypoint x="140" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Cycle_To_GW_di" bpmnElement="Flow_Cycle_To_GW">
+        <di:waypoint x="280" y="158" />
+        <di:waypoint x="330" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Cycle_OK_di" bpmnElement="Flow_Cycle_OK">
+        <di:waypoint x="380" y="158" />
+        <di:waypoint x="430" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Cycle_Fail_di" bpmnElement="Flow_Cycle_Fail">
+        <di:waypoint x="355" y="183" />
+        <di:waypoint x="355" y="270" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Cycle_To_End_di" bpmnElement="Flow_Cycle_To_End">
+        <di:waypoint x="570" y="158" />
+        <di:waypoint x="620" y="158" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

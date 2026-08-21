@@ -16,20 +16,20 @@ allowed_hosts = [
 web = 8000
 
 [[network.allowed_routes]]
+header = "Authorization"
 host = "opencode.ai:443"
 method = "POST"
 path = "/zen/**"
-secret = "OPENCODE_ZEN_API_KEY"
-header = "Authorization"
 prefix = "Bearer "
+secret = "OPENCODE_ZEN_API_KEY"
 
 [[network.allowed_routes]]
+header = "Authorization"
 host = "opencode.ai:443"
 method = "POST"
 path = "/go/**"
-secret = "OPENCODE_GO_API_KEY"
-header = "Authorization"
 prefix = "Bearer "
+secret = "OPENCODE_GO_API_KEY"
 ```
 
 # Agent Guidelines & Project Insights
@@ -40,21 +40,32 @@ This document captures operational experience and technical details for AI agent
 
 ## Project Overview
 
-**BPMN Pi Workflow** is a durable BPMN 2.0 orchestration platform that:
+**BPMN Pi Workflow** is a durable BPMN 2.0 orchestration platform. Its direction: a personal
+iterative digital design and manufacturing pipeline, where BPMN is the controller replacing
+bespoke agentic loops — without reinventing their atoms. Pi remains the agent runtime; BPMN
+adds durable state, composable/reusable pipeline fragments (`CallActivity`), human-in-the-loop
+checkpoints (FormJS forms), and branchable history (savepoint fork, for design-variant
+exploration). The adapter registry decouples orchestration from the agent runtime
+(`harness_type` → `BaseAdapter`), so the platform is not LLM-specific — non-LLM tools
+(slicers, CAM, simulation) can be wrapped as adapters and orchestrated the same way as Pi.
+
+It:
 
 - Parses and executes **BPMN 2.0 diagrams** using [SpiffWorkflow](https://spiffworkflow.org/).
 - Persists every workflow instance and savepoint in **ZODB** (optionally distributed via ZEO).
 - Delegates `pi_agent` service tasks to a local **Pi CLI** subprocess using non-interactive JSON print mode (`--mode json -p <prompt>`).
 - Exposes a **FastAPI** REST + WebSocket API and a browser-based **Workflow Studio** UI (dashboard, instance viewer, history, BPMN editor).
 - Supports **FormJS** for human task forms (Camunda extension elements → FormJS JSON schema).
-- Implements fork/resume **savepoints** at every durable boundary (`before_harness`, `after_harness`, `human_wait`), preserving `session_id` to continue context trees.
+- Implements fork/resume **savepoints** at every durable boundary (`before_harness`, `after_harness`, `human_wait`), preserving `session_id` to continue context trees. Superseded attempts of the same turn are pruned (`SAVEPOINT_ATTEMPT_RETENTION`, default 1).
+- Parks the graph on **message and timer catch events**, so external systems and deadlines are nodes in the diagram rather than out-of-band polling.
 - Ships focused **Nix flake apps** (`pi-bpmn-json-form-builder`, `pi-text-analysis`, `pi-contract-review`) wrapping Pi with task-specific prompts.
+- Runs Pi inside **[agent-sandbox](https://github.com/datakurre/agent-sandbox)** (vendored as a git submodule, `vendor/agent-sandbox`) — a Podman-based sandbox that enforces per-task network/secret policy — via `SandboxPiAdapter`, as an alternative to the bare-subprocess `PiAdapter`.
 
 **Key capabilities:**
 - Workflow fork/branch from any saved checkpoint.
 - Step-by-step agent turn orchestration with intermediate human gates (e.g. Q&A, plan reviews).
 - Failed Pi tasks are persisted with their failure reason; a Retry button re-runs the harness.
-- CallActivity (subprocess) support with per-child workflow records synced to the ZODB store.
+- CallActivity (subprocess) support with per-child workflow records synced to the ZODB store — a whole agent-plus-human cycle is reusable as one node (`composed_delivery.bpmn` calls `agent_review_cycle.bpmn`).
 - Role-based auth (`ADMIN` / `OPERATOR` / `VIEWER`) via `X-Admin-Token` / `X-Api-Key` headers.
 - Webhook event delivery with retry for `workflow_completed`, `pi_failed`, etc.
 - Workspace packaging: agent working directories are archived as `tar.zst` blobs in ZODB.
@@ -70,8 +81,10 @@ app/
     server.py        – FastAPI app factory; all REST + WS routes
     ui.py            – Server-side HTML page renderers (inline HTML)
   adapters/
-    base.py          – BaseAdapter ABC + AgentResult dataclass
+    base.py          – BaseAdapter ABC (run + prepare_workspace hook) + AgentResult dataclass
+    sandbox_policy.py – agent-sandbox network policy rendered into a workspace AGENTS.md
     pi_adapter.py    – PiAdapter: wraps PiClient as a BaseAdapter
+    sandbox_adapter.py – SandboxPiAdapter: runs Pi via `agent-sandbox --programmatic` (Podman isolation)
     mock_adapter.py  – MockAdapter: deterministic in-process stub for tests
     registry.py      – AdapterRegistry: maps harness_type → adapter
   templates/         – Jinja2-rendered HTML (dashboard, instance, history, admin, editor)
@@ -84,16 +97,19 @@ app/
   auth.py            – Role enum + require_role() FastAPI dependency
   registry.py        – WorkflowRegistry: discovers workflows/*.bpmn templates
   workspace.py       – tar.zst pack/unpack helpers for ZODB Blob workspace storage
-  sync_children.py   – CallActivity child-record sync utility
+  sync_children.py   – thin wrapper over WorkflowService._sync_children
   models.py          – Pydantic models for all API request/response bodies
   logging_config.py  – Structured logging + RequestLoggingMiddleware
   ws.py              – WebSocket connection manager for /ws/instance/{id} push
-workflows/           – Executable BPMN 2.0 templates (plan_and_execute, document_generation, bug_triage, contract_review, pr_review)
+workflows/           – Executable BPMN 2.0 templates (plan_and_execute, document_generation,
+                       bug_triage, contract_review, pr_review, external_gate,
+                       composed_delivery + its callable child agent_review_cycle)
 scripts/
   pi-demo            – Deterministic Pi CLI-compatible mock (no credentials needed)
   verify_*.py        – Playwright-based smoke tests for UI pages
 flake.nix            – Nix flake: pi-* variant apps with role-specific prompts
 devenv.nix           – devenv: Python 3.14 + Node 22 + uvicorn process + scripts
+vendor/agent-sandbox – git submodule: Rust CLI + Podman sandbox, isolates Pi's fs/network/secrets
 ```
 
 **Data flow for a Pi service task:**
@@ -102,7 +118,8 @@ devenv.nix           – devenv: Python 3.14 + Node 22 + uvicorn process + scrip
 3. `AdapterRegistry.get("pi_agent").run(prompt, config, cwd)` → `PiClient._execute()`
 4. Pi executes turn non-interactively via `pi --mode json -p <prompt>` (optionally `--session <id>`)
 5. `_parse_json(text)` validates the 5-key JSON result contract
-6. On success → `task.data.update(output)` + `workflow.data.update(output)` + `session_id` recorded → `do_engine_steps()` → savepoint `after_harness`
+6. On success → the result is written to `task.data`, and **only** the task's declared
+   `camunda:outputParameters` are published to `task.workflow.data` → `do_engine_steps()` → savepoint `after_harness`
 7. Failure persisted with `failure_reason`; client retries via `POST /instance/{id}/retry/{task_id}`
 
 **Pi result JSON contract** (required keys):
@@ -125,11 +142,14 @@ devenv.nix           – devenv: Python 3.14 + Node 22 + uvicorn process + scrip
 ## 2. Local Pi Agent & Deterministic Demo
 
 - **Executable Fallback**: `PI_EXECUTABLE` defaults to `node_modules/.bin/pi` in devenv. Falls back to `scripts/pi-demo` when `PI_OFFLINE=1`, `.pi_offline` file exists, or no `OPENAI_API_KEY` is set.
+- **Demo fallback is opt-in**: a *failed* real Pi run only retries against `scripts/pi-demo` when `PI_ALLOW_DEMO_FALLBACK=1`. Off by default — otherwise a misconfigured provider silently feeds fabricated agent output into BPMN gateway conditions.
 - **Deterministic Showcase**: `scripts/pi-demo` is a fast RPC-compatible mock that always emits the 5-key JSON result contract without model credentials.
 - **Pi Provider Config**: `PI_PROVIDER=opencode-go`, `PI_MODEL=gpt-5.6-luna`, `OPENAI_BASE_URL=https://opencode.ai/zen/v1` set by devenv; passed through `ALLOWED_ENV_VARS` filter in `pi_rpc.py`.
-- **Timeout**: Default 1800 s (`PI_TIMEOUT_SECONDS`). Configurable per-deployment.
+- **Timeout**: Default 1800 s (`PI_TIMEOUT_SECONDS`). Configurable per-deployment. On timeout or cancellation the whole process *group* is killed, since Pi runs with `start_new_session=True`.
+- **Workspace**: every instance runs in its own unpacked workspace. `PI_WORKDIR` is a *seed* copied into a fresh workspace (never the agent's cwd), so concurrent instances cannot collide and savepoints capture what the agent actually touched.
 - **Resource Limits**: Pi subprocess runs with `RLIMIT_AS=2GB` and optionally drops privileges to `PI_RUN_AS_USER`.
 - **Nix flake wrappers**: `nix run .#pi-bpmn-json-form-builder` / `pi-text-analysis` / `pi-contract-review` add role-specific prompts and tool allowlists on top of the base Pi executable.
+- **Process-group cleanup**: Pi is spawned in its own session; timeout/cancel/error paths kill the whole process group (`_kill_process_group` in `pi_client.py`), not just the direct child, so tool subprocesses Pi started don't leak.
 
 ## 3. Host Browser CDP Automation
 
@@ -141,7 +161,32 @@ devenv.nix           – devenv: Python 3.14 + Node 22 + uvicorn process + scrip
 
 ## 4. SpiffWorkflow & FastAPI Engine Details
 
-- **Task State Synchronization & Status Mapping**: The Pi result contract returns `{"status": "success", ...}`. `_complete_pi` maps this to both `task.data["agent_status"]` and `task.data["status"]` (also updating `workflow.data`) so SpiffWorkflow exclusive gateway expressions evaluate variables in task evaluation scope (`agent_status == 'success'`).
+- **Publishing agent results (outputParameters only)**: A service task publishes to the
+  workflow *exclusively* through `camunda:outputParameters`. Nothing is written to
+  `workflow.data` implicitly, so parallel agent turns can no longer overwrite each other's
+  verdict. Published values land in `task.data` (the scope gateway conditions evaluate in,
+  and inherited per-branch) and in `workflow.data` (the instance-wide view in the API/UI).
+  Expression sources available to an `outputParameter`:
+  - the agent JSON keys — `status`, `summary`, `findings`, `artifacts`, `next_action`
+  - `agent_status` (harness verdict: success/failed/timeout/cancelled), `agent_text`,
+    `agent_output`, `agent_exit_code`, `failure_reason`
+  `${status}` is the agent's *self-reported* verdict, falling back to the harness verdict
+  when no parseable result was produced — that is what a template means by "did the work
+  succeed", and it is what the bundled templates route on (`plan_status == 'success'`).
+  Note SpiffWorkflow merges the terminal task's data into `workflow.data` when an instance
+  completes, so a completed instance's data also carries that last task's local keys.
+- **Session lineage**: agent sessions are tracked per execution path in
+  `workflow.data["__sessions"]` (task instance id → session id). A turn inherits the
+  session of the nearest ancestor on its own branch and forks it (`pi --fork`) when the
+  turn is a re-roll (retry, forked instance) or a sibling branch is already running against
+  the same session. Because the map lives in workflow data, a savepoint fork inherits the
+  lineage with the state.
+- **Inbound events**: `POST /instance/{id}/message/{name}` delivers an external message to
+  a waiting message catch event (payload merges into task data);
+  `GET /instance/{id}/events/pending` lists what an instance is parked on. Timer events
+  only advance when `refresh_waiting_tasks()` is called, which the background ticker does
+  every `TIMER_TICK_SECONDS` (default 10, `0` disables). Instances parked on an event
+  report status `waiting_event`.
 - **FormJS Schema Compatibility**: FormJS UMD bundle (`form-viewer.umd.js`) requires schemas formatted with `"type": "default"` and `"components": [...]` (mapping string fields to `"type": "textfield"`). Type mapping lives in `CAMUNDA_TO_FORMJS_TYPE` in `workflow_service.py`.
 - **Static Assets Routing**: Specific static mounts (`/static/form-js`) must be mounted in FastAPI before general prefix mounts (`/static`) to ensure correct resolution.
 - **Harness Type Dispatch**: Tasks declare their adapter via a `harness_type` Camunda property (default `pi_agent`). `AdapterRegistry` resolves the correct `BaseAdapter`.
@@ -149,6 +194,14 @@ devenv.nix           – devenv: Python 3.14 + Node 22 + uvicorn process + scrip
 - **Forking**: `POST /instance/{id}/fork/{save_point_id}` duplicates the ZODB record and workspace blob, then resumes from the savepoint.
 - **BPMN Extensions**: `engine.py` reads `camunda:properties`, `camunda:formData`, and `camunda:inputOutput`. Input parameters support `${variable}` expression syntax.
 - **CallActivity Children**: Child workflows tracked in `data["__children"]`, synced as separate ZODB records with `parent_workflow_id` back-references.
+
+## 4b. Agent Sandbox Integration
+
+- **Submodule**: `vendor/agent-sandbox` (Rust CLI + Podman-based sandbox). Fetch with `make submodules` (`git submodule update --init --recursive`); `make submodule-update` pulls the latest upstream commit.
+- **Adapter**: `SandboxPiAdapter` (`app/adapters/sandbox_adapter.py`) shells out to `agent-sandbox --workspace --proxy --secrets --programmatic pi ...`, prefers the vendored release build at `vendor/agent-sandbox/cli/target/release/agent-sandbox`, falls back to `agent-sandbox` on `$PATH`, overridable via `AGENT_SANDBOX_EXECUTABLE`.
+- **Registration**: registered under `harness_type` `sandbox_pi` and alias `agent_sandbox`. Set `PI_SANDBOX_ENABLED=1` to make it the adapter for the default `pi_agent` harness type too (sandbox everything without touching BPMN files).
+- **Per-task network policy**: `WorkflowRunner.build_agents_md()` (`app/engine.py`) generates/merges a `toml agent-sandbox` block — `allowed_hosts`, `allowed_routes` (proxied secret injection), `ports` — from BPMN task `camunda:properties` (`sandbox_policy` / `network_policy` / `allowed_hosts` / `allowed_routes` / `ports`), layered on the repo's own `AGENTS.md` policy block at the top of this file.
+- **Output contract**: the sandbox wraps Pi's stdout in an envelope (`{"status", "stdout", "stderr", "network", "policy_error"}`); the adapter unwraps it, then parses inner lines as Pi JSON events same as the direct adapter.
 
 ## 5. Auth & Security
 
@@ -168,11 +221,14 @@ devenv.nix           – devenv: Python 3.14 + Node 22 + uvicorn process + scrip
 
 1. Create `workflows/<name>.bpmn` with `isExecutable="true"` on the process element.
 2. Add `<bpmn:documentation>` inside the process for the registry description.
-3. For Pi tasks: add `camunda:properties` with at least `agent_role` and optionally `harness_type` (defaults to `pi_agent`).
-4. `WorkflowRegistry` auto-discovers the file — no code changes needed.
+3. For Pi tasks: add `camunda:properties` with at least `agent_role` and optionally `harness_type` (defaults to `pi_agent`). A task whose `harness_type` has no registered adapter now fails loudly rather than stalling.
+4. Declare `camunda:inputOutput` — inputs scope what the agent sees, outputs are the only way results reach the workflow. Gateways downstream must route on those output names.
+5. `WorkflowRegistry` auto-discovers the file — no code changes needed.
 
 ## 8. Adding a New Adapter
 
-1. Subclass `app.adapters.base.BaseAdapter`; implement `adapter_type` property and `run(prompt, config, cwd) -> AgentResult`.
+1. Subclass `app.adapters.base.BaseAdapter`; implement `adapter_type` property and `run(prompt, config, cwd) -> AgentResult`. Override `prepare_workspace(workdir, config)` if the harness needs configuration on disk before the turn (as `SandboxPiAdapter` does for its network policy).
 2. Register via `AdapterRegistry.register(MyAdapter())` in `WorkflowService.__init__` or at app startup.
 3. Set `harness_type` in the BPMN task's Camunda properties to your `adapter_type` string.
+
+See §4b for the `SandboxPiAdapter` as a worked example of a second adapter alongside the default `PiAdapter`.

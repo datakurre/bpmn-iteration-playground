@@ -14,6 +14,8 @@ class AgentResult:
     stderr: str = ""
     exit_code: int | None = 0
     session_id: str | None = None
+    network: dict[str, Any] | None = None
+    policy_error: str | None = None
 
 
 class BaseAdapter(ABC):
@@ -29,6 +31,15 @@ class BaseAdapter(ABC):
     ) -> AgentResult:
         """Execute an agent task with the given prompt, configuration, and event callback."""
         ...
+
+    async def prepare_workspace(self, workdir: str, config: dict[str, str]) -> None:
+        """Optional hook: lay down harness-specific files before the turn runs.
+
+        Called with the instance workspace the agent will execute in. The default is a
+        no-op; adapters that need configuration on disk (sandbox policy, tool config)
+        write it here instead of the orchestrator doing it on their behalf.
+        """
+        return None
 
     @property
     @abstractmethod

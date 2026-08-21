@@ -12,6 +12,12 @@
           <camunda:property name="harness_type" value="pi_agent" />
           <camunda:property name="agent_role" value="contract_analyst" />
         </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="contract">${contract}</camunda:inputParameter>
+          <camunda:outputParameter name="extract_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="extract_summary">${summary}</camunda:outputParameter>
+          <camunda:outputParameter name="extract_findings">${findings}</camunda:outputParameter>
+        </camunda:inputOutput>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_1</bpmn:incoming>
       <bpmn:outgoing>Flow_2</bpmn:outgoing>
@@ -23,10 +29,10 @@
       <bpmn:outgoing>Flow_Failure</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="Flow_Success" name="Success" sourceRef="Gateway_Agent_Check" targetRef="ServiceTask_Review">
-      <bpmn:conditionExpression>agent_status == 'success'</bpmn:conditionExpression>
+      <bpmn:conditionExpression>extract_status == 'success'</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="Flow_Failure" name="Failure" sourceRef="Gateway_Agent_Check" targetRef="ServiceTask_Failure_Review">
-      <bpmn:conditionExpression>agent_status != 'success'</bpmn:conditionExpression>
+      <bpmn:conditionExpression>extract_status != 'success'</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:userTask id="ServiceTask_Failure_Review" name="Review Agent Failure">
       <bpmn:extensionElements>

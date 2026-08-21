@@ -1,0 +1,255 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import shutil
+from pathlib import Path
+from typing import Any
+
+from app.adapters.base import AgentResult, BaseAdapter
+from app.adapters.sandbox_policy import build_agents_md
+from app.pi_client import _final_text, _parse_json
+
+logger = logging.getLogger("bpmn.sandbox_adapter")
+
+
+class SandboxPiAdapter(BaseAdapter):
+    """Adapter executing Pi agents inside isolated Podman containers via agent-sandbox --programmatic."""
+
+    def __init__(
+        self,
+        executable: str | None = None,
+        timeout_seconds: float = 1800,
+        max_events: int = 10000,
+    ) -> None:
+        self.executable = executable or os.getenv("AGENT_SANDBOX_EXECUTABLE") or self._find_sandbox_executable()
+        self.timeout_seconds = timeout_seconds
+        self.max_events = max_events
+
+    @staticmethod
+    def _find_sandbox_executable() -> str:
+        root_dir = Path(__file__).resolve().parents[2]
+        vendor_bin = root_dir / "vendor" / "agent-sandbox" / "cli" / "target" / "release" / "agent-sandbox"
+        if vendor_bin.is_file():
+            return str(vendor_bin)
+        on_path = shutil.which("agent-sandbox")
+        if on_path:
+            return on_path
+        return "agent-sandbox"
+
+    @property
+    def adapter_type(self) -> str:
+        return "sandbox_pi"
+
+    async def prepare_workspace(self, workdir: str, config: dict[str, str]) -> None:
+        """Render this BPMN task's network policy into the workspace AGENTS.md."""
+        agents_md = Path(workdir) / "AGENTS.md"
+        base_md = agents_md.read_text("utf-8") if agents_md.is_file() else None
+        if not base_md:
+            root_agents_md = Path(__file__).resolve().parents[2] / "AGENTS.md"
+            if root_agents_md.is_file():
+                base_md = root_agents_md.read_text("utf-8")
+        agents_md.write_text(build_agents_md(config, base_agents_md=base_md), encoding="utf-8")
+
+    async def run(
+        self,
+        prompt: str,
+        config: dict[str, str],
+        cwd: str,
+        on_event: Any = None,
+    ) -> AgentResult:
+        provider = config.get("provider") or config.get("pi_provider") or os.getenv("PI_PROVIDER")
+        model = config.get("model") or config.get("pi_model") or os.getenv("PI_MODEL")
+        timeout_raw = config.get("timeout") or config.get("timeout_seconds")
+        timeout_seconds = int(timeout_raw) if timeout_raw and timeout_raw.isdigit() else self.timeout_seconds
+
+        session_id = config.get("session_id")
+        fork = config.get("fork", "").lower() in ("true", "1", "yes")
+
+        # Build agent-sandbox programmatic command
+        command = [
+            self.executable,
+            "--workspace",
+            "--proxy",
+            "--secrets",
+            "--programmatic",
+            "pi",
+        ]
+        if model:
+            command.extend(["--model", model])
+        if provider:
+            command.extend(["--provider", provider])
+        if session_id:
+            if fork:
+                command.extend(["--fork", session_id])
+            else:
+                command.extend(["--session", session_id])
+
+        logger.info(f"Executing agent-sandbox: {' '.join(command)} (cwd: {cwd})")
+
+        env = dict(os.environ)
+        # Ensure proxy CA and secrets are forwarded
+        if "NODE_USE_ENV_PROXY" not in env:
+            env["NODE_USE_ENV_PROXY"] = "1"
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                cwd=cwd,
+                env=env,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except Exception as exc:
+            logger.error(f"Failed to spawn agent-sandbox: {exc}")
+            return AgentResult(
+                status="failed",
+                output=None,
+                text="",
+                messages=[],
+                stderr=f"Failed to spawn agent-sandbox: {exc}",
+                exit_code=1,
+                policy_error=str(exc),
+            )
+
+        events: list[dict[str, Any]] = []
+        raw_stdout = b""
+        raw_stderr = b""
+        exit_code = 1
+        status = "failed"
+        network_data: dict[str, Any] | None = None
+        policy_error: str | None = None
+
+        try:
+            # Write prompt to stdin and close stdin so agent-sandbox/pi reaches EOF
+            assert process.stdin is not None
+            process.stdin.write(prompt.encode("utf-8"))
+            await process.stdin.drain()
+            process.stdin.close()
+            try:
+                await process.stdin.wait_closed()
+            except Exception:
+                pass
+
+            raw_stdout, raw_stderr = await asyncio.wait_for(
+                process.communicate(), timeout=float(timeout_seconds)
+            )
+            exit_code = process.returncode if process.returncode is not None else 0
+        except asyncio.TimeoutError:
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                await process.wait()
+            return AgentResult(
+                status="timeout",
+                output=None,
+                text="",
+                messages=[],
+                stderr="agent-sandbox execution timed out",
+                exit_code=1,
+            )
+        except asyncio.CancelledError:
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                await process.wait()
+            return AgentResult(
+                status="cancelled",
+                output=None,
+                text="",
+                messages=[],
+                stderr="agent-sandbox execution was cancelled",
+                exit_code=1,
+            )
+        except Exception as exc:
+            return AgentResult(
+                status="failed",
+                output=None,
+                text="",
+                messages=[],
+                stderr=f"agent-sandbox error: {exc}",
+                exit_code=1,
+            )
+
+        decoded_stdout = raw_stdout.decode("utf-8", errors="replace").strip()
+        decoded_stderr = raw_stderr.decode("utf-8", errors="replace").strip()
+
+        # Parse the outer JSON envelope from agent-sandbox --programmatic
+        inner_stdout = decoded_stdout
+        inner_stderr = decoded_stderr
+        container_exit_code = exit_code
+
+        try:
+            envelope = json.loads(decoded_stdout)
+            if isinstance(envelope, dict) and "status" in envelope and "stdout" in envelope:
+                container_exit_code = envelope.get("status", exit_code)
+                inner_stdout = envelope.get("stdout", "")
+                inner_stderr = envelope.get("stderr", "")
+                network_data = envelope.get("network")
+                policy_error = envelope.get("policy_error")
+        except (json.JSONDecodeError, TypeError):
+            # stdout was not an envelope; treat decoded_stdout as inner stdout
+            pass
+
+        # Parse inner stdout lines for Pi JSON events
+        for line in inner_stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+                if isinstance(ev, dict):
+                    events.append(ev)
+                    if on_event and callable(on_event):
+                        try:
+                            res = on_event(ev)
+                            if asyncio.iscoroutine(res):
+                                await res
+                        except Exception:
+                            pass
+            except json.JSONDecodeError:
+                pass
+
+        branch_session_id = None
+        for ev in events:
+            if ev.get("type") == "session" and ev.get("id"):
+                branch_session_id = ev["id"]
+
+        text = _final_text(events)
+        if not text and inner_stdout and not events:
+            text = inner_stdout
+
+        output = _parse_json(text)
+
+        # Attach network summary to output dictionary if available
+        if output is not None and network_data:
+            output["network"] = network_data
+
+        settled = any(ev.get("type") == "agent_settled" for ev in events)
+        if output is not None and (container_exit_code == 0 or settled):
+            status = "success"
+        else:
+            status = "failed"
+
+        stderr_final = inner_stderr or decoded_stderr
+        if policy_error and not stderr_final:
+            stderr_final = f"Sandbox policy error: {policy_error}"
+
+        return AgentResult(
+            status=status,
+            output=output,
+            text=text,
+            messages=events,
+            stderr=stderr_final,
+            exit_code=container_exit_code,
+            session_id=branch_session_id,
+            network=network_data,
+            policy_error=policy_error,
+        )

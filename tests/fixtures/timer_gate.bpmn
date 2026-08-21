@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_TimerGate" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="timer_gate" name="Timer Gate" isExecutable="true">
+    <bpmn:documentation>Fixture: parks on a short duration timer, used to prove timer events actually fire.</bpmn:documentation>
+    <bpmn:startEvent id="Start_Timer"><bpmn:outgoing>Flow_Timer_1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_Timer_1" sourceRef="Start_Timer" targetRef="Catch_Cooldown" />
+    <bpmn:intermediateCatchEvent id="Catch_Cooldown" name="Cooldown">
+      <bpmn:incoming>Flow_Timer_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_Timer_2</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="TimerEventDefinition_Cooldown">
+        <bpmn:timeDuration>"PT0.1S"</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:intermediateCatchEvent>
+    <bpmn:sequenceFlow id="Flow_Timer_2" sourceRef="Catch_Cooldown" targetRef="End_Timer" />
+    <bpmn:endEvent id="End_Timer"><bpmn:incoming>Flow_Timer_2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

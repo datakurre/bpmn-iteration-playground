@@ -548,11 +548,11 @@ async function loadForm() {
   }
   const initialData = (state && state.data) ? { ...state.data } : {};
   if (!initialData.document_content && state && state.data) {
-    if (state.data.document_text) {
-      initialData.document_content = state.data.document_text;
-    } else if (state.data.agent_output && state.data.agent_output.summary) {
-      initialData.document_content = state.data.agent_output.summary;
-    }
+    // Agent results reach workflow data only via declared outputParameters, so prefer
+    // the names the templates publish before falling back to legacy implicit keys.
+    const d = state.data;
+    initialData.document_content = d.document_text || d.qa_summary || d.draft_summary
+      || (d.agent_output && d.agent_output.summary) || initialData.document_content;
   }
   await formViewer.importSchema(schema, initialData);
 }

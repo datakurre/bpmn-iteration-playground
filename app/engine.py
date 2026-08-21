@@ -35,12 +35,15 @@ class WorkflowRunner:
                 raise ValueError(f"No processes found in BPMN files in {bpmn_dir}")
             process_id = process_ids[0]
 
-        workflow = BpmnWorkflow(parser.get_spec(process_id))
-        
-        # Load extensions for all loaded specs
+        workflow = BpmnWorkflow(
+            parser.get_spec(process_id),
+            parser.get_subprocess_specs(process_id),
+        )
+
+        # Load extensions for the top-level spec and every called subprocess spec
         for f in bpmn_dir.glob("*.bpmn"):
             self._load_extensions(str(f), workflow)
-            
+
         return workflow, process_id
 
     def _load_extensions(self, bpmn_path: str, workflow: BpmnWorkflow) -> None:
@@ -48,9 +51,13 @@ class WorkflowRunner:
         if root is None:
             return
         ns = {"bpmn": "http://www.omg.org/spec/BPMN/20100524/MODEL", "camunda": "http://camunda.org/schema/1.0/bpmn"}
+        specs = [workflow.spec, *getattr(workflow, "subprocess_specs", {}).values()]
         for element in root.findall(".//bpmn:*", ns):
             bpmn_id = element.get("id")
-            if not bpmn_id or bpmn_id not in workflow.spec.task_specs:
+            if not bpmn_id:
+                continue
+            target_specs = [spec for spec in specs if bpmn_id in spec.task_specs]
+            if not target_specs:
                 continue
 
             properties = {
@@ -89,12 +96,13 @@ class WorkflowRunner:
                     outputs[name] = value.strip()
 
             if properties or fields or inputs or outputs:
-                workflow.spec.task_specs[bpmn_id].extensions = {
-                    "properties": properties,
-                    "form": {"fields": fields},
-                    "inputParameters": inputs,
-                    "outputParameters": outputs,
-                }
+                for spec in target_specs:
+                    spec.task_specs[bpmn_id].extensions = {
+                        "properties": properties,
+                        "form": {"fields": fields},
+                        "inputParameters": inputs,
+                        "outputParameters": outputs,
+                    }
 
     def start(self, bpmn_path: str, process_id: str | None, variables: dict[str, Any]) -> tuple[str, BpmnWorkflow, str]:
         workflow, process_id = self.load_workflow(bpmn_path, process_id)
@@ -103,13 +111,13 @@ class WorkflowRunner:
         return uuid.uuid4().hex, workflow, process_id
 
     def get_all_tasks(self, workflow: BpmnWorkflow, state: TaskState | int) -> list[Any]:
-        tasks = []
-        for task in workflow.get_tasks(state=state):
-            tasks.append(task)
-        for task in workflow.get_tasks(state=TaskState.ANY_MASK):
-            if type(task.task_spec).__name__ == "CallActivity" and hasattr(task, "workflow") and task.workflow:
-                tasks.extend(self.get_all_tasks(task.workflow, state))
-        return tasks
+        """All tasks in the instance, including those inside called subprocesses.
+
+        `BpmnTaskIterator` already descends into active subprocesses, so no manual
+        recursion is needed (and `task.workflow` is the containing workflow, not the
+        subprocess -- recursing on it never terminates).
+        """
+        return list(workflow.get_tasks(state=state))
 
     def task_snapshot(self, workflow: BpmnWorkflow) -> list[dict[str, Any]]:
         return [
@@ -140,12 +148,13 @@ class WorkflowRunner:
         for task in workflow.get_tasks(state=TaskState.ANY_MASK):
             if str(task.id) == task_id:
                 return task
-            if type(task.task_spec).__name__ == "CallActivity" and hasattr(task, "workflow") and task.workflow:
-                try:
-                    return self.find_task(task.workflow, task_id)
-                except KeyError:
-                    pass
         raise KeyError(task_id)
+
+    @staticmethod
+    def subprocess_of(workflow: BpmnWorkflow, task: Any) -> Any:
+        """The subprocess a CallActivity task launched, or None."""
+        top = getattr(task.workflow, "top_workflow", workflow)
+        return top.subprocesses.get(task.id)
 
     def pi_config(self, task: Any) -> dict[str, str]:
         extensions = getattr(task.task_spec, "extensions", {}) or {}
