@@ -164,6 +164,7 @@ class SavePointSnapshot(Persistent):  # type: ignore[misc]  # persistent ships n
     def to_dict(self) -> dict[str, Any]:
         result = self.to_summary()
         result["workflow"] = self.workflow
+        result["workspace_blob"] = self.workspace_blob
         return result
 
 
@@ -322,6 +323,18 @@ class WorkflowStore:
                 result = sp.to_dict() if hasattr(sp, "to_dict") else dict(sp)
                 if result.get("workflow") is not None:
                     migrate_workflow_object(result["workflow"])
+                blob = result.get("workspace_blob")
+                if blob is not None:
+                    # The stored Blob is a persistent object referenced from `sp`; reading
+                    # it back into a standalone copy here, while the connection is still
+                    # open, means the caller gets an independent Blob that survives past
+                    # this transaction instead of a ghost reference to a closed connection.
+                    with blob.open("r") as f:
+                        content = f.read()
+                    standalone = Blob()
+                    with standalone.open("w") as f:
+                        f.write(content)
+                    result["workspace_blob"] = standalone
                 return result
             return None
 

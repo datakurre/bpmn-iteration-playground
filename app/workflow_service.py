@@ -15,6 +15,7 @@ from typing import Any
 from SpiffWorkflow.bpmn.specs.mixins.events.event_types import CatchingEvent
 from SpiffWorkflow.bpmn.util import BpmnEvent
 from SpiffWorkflow.task import TaskState
+from ZODB.blob import Blob
 
 from app.adapters.base import AgentResult, BaseAdapter
 from app.adapters.mock_adapter import MockAdapter
@@ -25,7 +26,7 @@ from app.engine import WorkflowRunner
 from app.events import EventBus, WorkflowEvent
 from app.persistence import WorkflowStore
 from app.pi_client import PiClient, PiResult
-from app.workspace import cleanup_workspace, get_workspace_metadata, pack_workspace_to_bytes, unpack_workspace, duplicate_blob
+from app.workspace import cleanup_workspace, get_workspace_metadata, pack_workspace_to_bytes, unpack_workspace
 from app.ws import manager as ws_manager
 
 logger = logging.getLogger("bpmn.workflow")
@@ -296,6 +297,7 @@ class WorkflowService:
 
     def _add_save_point(
         self,
+        workflow_id: str,
         record: dict[str, Any],
         workflow: Any,
         task: Any,
@@ -307,9 +309,17 @@ class WorkflowService:
         key = f"{task.id}:{phase}{key_suffix}"
         if any(point.get("key") == key for point in save_points):
             return
-        workspace_blob = record.get("workspace_blob")
-        if not workspace_blob and hasattr(record.get("workflow"), "workspace_blob"):
-            workspace_blob = getattr(record["workflow"], "workspace_blob", None)
+        # Read the live workspace from the store rather than `record` -- the record's
+        # keys are rebuilt on every save by runner.record() and don't reliably carry a
+        # workspace_blob (see the _sync_children comment below for the same trap). Wrap
+        # the bytes in a fresh Blob so the savepoint holds an independent copy: two
+        # savepoints must never share one blob, or purging one corrupts the other.
+        workspace_bytes = self.store.get_workspace(workflow_id)
+        workspace_blob = None
+        if workspace_bytes:
+            workspace_blob = Blob()
+            with workspace_blob.open("w") as f:
+                f.write(workspace_bytes)
 
         save_points.append(
             {
@@ -325,7 +335,7 @@ class WorkflowService:
                 "tasks": self.runner.task_snapshot(workflow),
                 "workflow": copy.deepcopy(workflow),
                 "parent_workflow_id": record.get("parent_workflow_id"),
-                "workspace_blob": duplicate_blob(workspace_blob),
+                "workspace_blob": workspace_blob,
             }
         )
         self._prune_save_points(record, str(task.id), phase)
@@ -636,7 +646,9 @@ class WorkflowService:
             events=[],
             forked_from=workflow_id,
             forked_from_save_point=save_point_id,
-            workspace_blob=duplicate_blob(point.get("workspace_blob")),
+            # load_save_point() already hands back a standalone Blob copy, independent
+            # of the savepoint's own stored blob -- no need to duplicate it again here.
+            workspace_blob=point.get("workspace_blob"),
             parent_workflow_id=point.get("parent_workflow_id"),
         )
         await asyncio.to_thread(self.store.save, fork_id, record)
@@ -709,6 +721,7 @@ class WorkflowService:
             job["generation"] = int(job.get("generation", 0)) + 1
             record["status"] = "retry_requested"
             self._add_save_point(
+                workflow_id,
                 record,
                 workflow,
                 task,
@@ -915,6 +928,7 @@ class WorkflowService:
                 generation = int(existing_job.get("generation", 0)) if existing_job else 0
                 record["status"] = "waiting_pi"
                 self._add_save_point(
+                    workflow_id,
                     record,
                     workflow,
                     task,
@@ -967,7 +981,7 @@ class WorkflowService:
                 record["status"] = self._status(workflow)
                 for task in workflow.get_tasks(state=TaskState.READY):
                     if task.task_spec.__class__.__name__ == "UserTask":
-                        self._add_save_point(record, workflow, task, "human_wait", "submit_human")
+                        self._add_save_point(workflow_id, record, workflow, task, "human_wait", "submit_human")
                         self.events.emit(
                             "human_task_ready",
                             workflow_id,
@@ -1202,6 +1216,7 @@ class WorkflowService:
             attempt = job.get("attempts", 1)
             generation = job.get("generation", 0)
             self._add_save_point(
+                workflow_id,
                 record,
                 workflow,
                 task,

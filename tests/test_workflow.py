@@ -343,7 +343,7 @@ def test_superseded_savepoint_attempts_are_pruned(monkeypatch) -> None:
 
         for attempt in range(2, 5):
             service._add_save_point(
-                record, workflow, task, "before_harness", "run_harness", f":run_0:attempt_{attempt}"
+                wf_id, record, workflow, task, "before_harness", "run_harness", f":run_0:attempt_{attempt}"
             )
 
         before_harness = [p for p in record["save_points"] if p["phase"] == "before_harness"]
@@ -365,7 +365,8 @@ def test_savepoint_retention_is_configurable(monkeypatch) -> None:
         started = await service.start("workflows/contract_review.bpmn", None, {"contract": "text"})
         await asyncio.gather(*list(service.jobs.values()))
 
-        record = service.store.load(started["workflow_id"])
+        wf_id = started["workflow_id"]
+        record = service.store.load(wf_id)
         assert record is not None
         workflow = record["workflow"]
         task = next(
@@ -373,7 +374,7 @@ def test_savepoint_retention_is_configurable(monkeypatch) -> None:
         )
         for attempt in range(2, 6):
             service._add_save_point(
-                record, workflow, task, "before_harness", "run_harness", f":run_0:attempt_{attempt}"
+                wf_id, record, workflow, task, "before_harness", "run_harness", f":run_0:attempt_{attempt}"
             )
 
         kept = [p["key"].rsplit(":", 1)[-1] for p in record["save_points"] if p["phase"] == "before_harness"]
