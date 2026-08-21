@@ -87,14 +87,16 @@ async def _kill_process_group(process: asyncio.subprocess.Process) -> None:
 
 
 def _set_resource_limits() -> None:
-    """Set process resource limits for sandboxed Pi subprocess execution."""
-    try:
-        import resource
+    """Set process resource limits for sandboxed Pi subprocess execution.
 
-        # Limit memory address space to 2GB if supported
-        resource.setrlimit(resource.RLIMIT_AS, (2 * 1024**3, 2 * 1024**3))
-    except Exception:
-        pass
+    Deliberately does not set RLIMIT_AS: Node/V8 reserves large virtual address space up
+    front (pointer-compression cage, WASM linear memory arenas) independent of actual heap
+    usage, and any RLIMIT_AS ceiling -- 2GB or 6GB, tested live against opencode.ai from
+    this process tree -- reliably crashed every real (non-demo) Pi turn with
+    "WebAssembly.instantiate(): Out of memory" inside undici's WASM llhttp parser as soon
+    as it made a real HTTPS request. Memory containment for the Pi subprocess should come
+    from the outer sandbox (agent-sandbox/Podman), not an in-process ulimit.
+    """
 
 
 def _final_text(events: list[dict[str, Any]]) -> str:
