@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from pathlib import Path
@@ -11,6 +12,8 @@ from SpiffWorkflow.bpmn.workflow import BpmnWorkflow
 from SpiffWorkflow.task import TaskState
 
 from app.xml_utils import safe_parse_xml
+
+logger = logging.getLogger("bpmn.engine")
 
 _EXPR_RE = re.compile(r"\$\{([^}]*)\}")
 _INDEX_RE = re.compile(r"-?\d+")
@@ -103,12 +106,46 @@ class WorkflowRunner:
 
         return workflow, process_id
 
+    @staticmethod
+    def _specs_defined_by(
+        bpmn_path: str, root: Any, ns: dict[str, str], workflow: BpmnWorkflow
+    ) -> list[Any]:
+        """The loaded specs this file actually defines, keyed by process id.
+
+        Every `*.bpmn` in the directory is parsed and then walked for extensions -- that is
+        how a CallActivity target in a sibling file gets its `camunda:properties`. Matching
+        elements by id alone would therefore let two templates that happen to share a task
+        id cross-apply each other's properties, forms and inputOutput: silently, and in
+        filesystem glob order, so it need not even fail the same way twice. Scoping each
+        file to its own processes keeps sibling-file loading without that coupling.
+        """
+        specs_by_name: dict[str, Any] = {}
+        top_name = getattr(workflow.spec, "name", None)
+        if top_name:
+            specs_by_name[str(top_name)] = workflow.spec
+        for name, spec in (getattr(workflow, "subprocess_specs", None) or {}).items():
+            specs_by_name[str(name)] = spec
+
+        specs = []
+        seen: set[int] = set()
+        for process in root.findall(".//bpmn:process", ns):
+            process_id = process.get("id")
+            spec = specs_by_name.get(process_id) if process_id else None
+            if spec is not None and id(spec) not in seen:
+                seen.add(id(spec))
+                specs.append(spec)
+        if not specs:
+            logger.debug("No loaded spec defined by %s; skipping its extensions", bpmn_path)
+        return specs
+
     def _load_extensions(self, bpmn_path: str, workflow: BpmnWorkflow) -> None:
         root = safe_parse_xml(bpmn_path).getroot()
         if root is None:
             return
         ns = {"bpmn": "http://www.omg.org/spec/BPMN/20100524/MODEL", "camunda": "http://camunda.org/schema/1.0/bpmn"}
-        specs = [workflow.spec, *getattr(workflow, "subprocess_specs", {}).values()]
+        specs = self._specs_defined_by(bpmn_path, root, ns, workflow)
+        if not specs:
+            return
         for element in root.findall(".//bpmn:*", ns):
             bpmn_id = element.get("id")
             if not bpmn_id:

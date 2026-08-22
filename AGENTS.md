@@ -217,7 +217,7 @@ vendor/agent-sandbox – git submodule: Rust CLI + Podman sandbox, isolates Pi's
 - **Harness Type Dispatch**: Tasks declare their adapter via a `harness_type` Camunda property (default `pi_agent`). `AdapterRegistry` resolves the correct `BaseAdapter`.
 - **Savepoints**: Three phases per task — `before_harness`, `after_harness`, `human_wait`. Each deep-copies workflow state + workspace blob into ZODB.
 - **Forking**: `POST /instance/{id}/fork/{save_point_id}` duplicates the ZODB record and workspace blob, then resumes from the savepoint.
-- **BPMN Extensions**: `engine.py` reads `camunda:properties`, `camunda:formData`, and `camunda:inputOutput`. Input parameters support `${variable}` expression syntax.
+- **BPMN Extensions**: `engine.py` reads `camunda:properties`, `camunda:formData`, and `camunda:inputOutput`. Input parameters support `${variable}` expression syntax. Every `*.bpmn` in the directory is parsed into one `BpmnParser` (that is how CallActivity targets resolve) and then walked for extensions, but `_specs_defined_by()` scopes each file's extensions to the processes that file itself declares — otherwise two templates sharing a task id would cross-apply properties, forms and inputOutput in filesystem glob order.
 - **CallActivity Children**: Child workflows tracked in `data["__children"]`, synced as separate ZODB records with `parent_workflow_id` back-references.
 - **Event Subprocess Children**: `_sync_children` also syncs children spawned by a native
   `triggeredByEvent="true"` event subprocess (`workflows/project.bpmn`), the same way as

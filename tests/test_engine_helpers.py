@@ -109,3 +109,62 @@ def test_prompt_uses_nested_input_parameters() -> None:
     prompt = runner.prompt("wf-1", task, wf)
     context = json.loads(prompt.split("\n\n", 1)[1])
     assert context["variables"] == {"plan_status": "ready"}
+
+
+def _minimal_bpmn(process_id: str, agent_role: str, output_name: str) -> str:
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_{process_id}" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="{process_id}" name="{process_id}" isExecutable="true">
+    <bpmn:documentation>{process_id}</bpmn:documentation>
+    <bpmn:startEvent id="Start_{process_id}">
+      <bpmn:outgoing>Flow_{process_id}_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_{process_id}_1" sourceRef="Start_{process_id}" targetRef="Task_Shared" />
+    <bpmn:serviceTask id="Task_Shared" name="Shared Id">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="{agent_role}" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:outputParameter name="{output_name}">${{status}}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_{process_id}_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_{process_id}_2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_{process_id}_2" sourceRef="Task_Shared" targetRef="End_{process_id}" />
+    <bpmn:endEvent id="End_{process_id}">
+      <bpmn:incoming>Flow_{process_id}_2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
+"""
+
+
+def test_extensions_do_not_leak_between_templates_sharing_a_task_id() -> None:
+    """A file's extensions apply only to the processes that file defines.
+
+    Every `*.bpmn` in the directory is parsed so CallActivity targets resolve, and each is
+    then walked for extensions. Matching by element id alone let a task id shared by two
+    unrelated templates cross-apply properties and inputOutput in filesystem glob order.
+    """
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        a = Path(tmpdir) / "alpha.bpmn"
+        z = Path(tmpdir) / "zeta.bpmn"
+        a.write_text(_minimal_bpmn("alpha", "alpha_role", "alpha_status"))
+        z.write_text(_minimal_bpmn("zeta", "zeta_role", "zeta_status"))
+
+        runner = WorkflowRunner()
+        for path, process_id, role, output in (
+            (a, "alpha", "alpha_role", "alpha_status"),
+            (z, "zeta", "zeta_role", "zeta_status"),
+        ):
+            workflow, loaded_id = runner.load_workflow(str(path))
+            assert loaded_id == process_id
+            extensions = workflow.spec.task_specs["Task_Shared"].extensions
+            assert extensions["properties"]["agent_role"] == role
+            assert output in extensions["outputParameters"]

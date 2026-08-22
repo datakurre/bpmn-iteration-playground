@@ -54,13 +54,13 @@
         </camunda:formData>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_Analyse_Fail</bpmn:incoming>
-      <bpmn:outgoing>Flow_Manual_End</bpmn:outgoing>
+      <bpmn:outgoing>Flow_PR_Manual_End</bpmn:outgoing>
     </bpmn:userTask>
     <bpmn:sequenceFlow id="Flow_Merge_End" sourceRef="Task_Merge_Decision" targetRef="End_PR" />
-    <bpmn:sequenceFlow id="Flow_Manual_End" sourceRef="Task_Manual_Review" targetRef="End_PR" />
+    <bpmn:sequenceFlow id="Flow_PR_Manual_End" sourceRef="Task_Manual_Review" targetRef="End_PR" />
     <bpmn:endEvent id="End_PR" name="PR Resolved">
       <bpmn:incoming>Flow_Merge_End</bpmn:incoming>
-      <bpmn:incoming>Flow_Manual_End</bpmn:incoming>
+      <bpmn:incoming>Flow_PR_Manual_End</bpmn:incoming>
     </bpmn:endEvent>
   </bpmn:process>
   <bpmndi:BPMNDiagram id="BPMNDiagram_PRReview">
@@ -106,7 +106,7 @@
         <di:waypoint x="725" y="70" />
         <di:waypoint x="725" y="120" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_Manual_End_di" bpmnElement="Flow_Manual_End">
+      <bpmndi:BPMNEdge id="Flow_PR_Manual_End_di" bpmnElement="Flow_PR_Manual_End">
         <di:waypoint x="625" y="230" />
         <di:waypoint x="725" y="230" />
         <di:waypoint x="725" y="156" />

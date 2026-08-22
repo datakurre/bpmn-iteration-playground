@@ -103,48 +103,29 @@ def test_registry_list_templates_on_missing_directory() -> None:
     assert registry.list_templates() == []
 
 
-def test_shipped_workflows_do_not_share_flow_node_ids() -> None:
-    """Flow-node ids must be unique across every file in `workflows/`.
+def test_shipped_workflows_do_not_share_element_ids() -> None:
+    """No BPMN element id is reused across two files in `workflows/`.
 
-    `WorkflowRunner._load_extensions` loads every `*.bpmn` in the directory (that is how
-    CallActivity targets resolve) and applies each element's extensions to *any* loaded spec
-    declaring a task of that id, without checking which process it came from. Two templates
-    sharing a task id therefore cross-apply each other's `camunda:properties`,
-    `formData` and `inputOutput` -- silently, and in filesystem glob order, so it does not
-    even fail the same way twice.
+    Not load-bearing any more -- `WorkflowRunner._load_extensions` now scopes each file's
+    extensions to the processes that file defines, so a shared id is inert. Kept as hygiene
+    and as a second line of defence: every `*.bpmn` in the directory is still parsed into
+    one `BpmnParser` so CallActivity targets resolve, and directory-wide unique ids keep
+    anything that resolves by id alone unambiguous.
     """
     import collections
 
     from app.xml_utils import safe_parse_xml
 
     ns = "{http://www.omg.org/spec/BPMN/20100524/MODEL}"
-    flow_node_tags = {
-        f"{ns}{tag}"
-        for tag in (
-            "serviceTask",
-            "userTask",
-            "scriptTask",
-            "manualTask",
-            "task",
-            "callActivity",
-            "subProcess",
-            "exclusiveGateway",
-            "parallelGateway",
-            "inclusiveGateway",
-            "startEvent",
-            "endEvent",
-            "intermediateCatchEvent",
-            "intermediateThrowEvent",
-            "boundaryEvent",
-        )
-    }
 
     owners: dict[str, set[str]] = collections.defaultdict(set)
     for path in sorted(Path("workflows").glob("*.bpmn")):
         root = safe_parse_xml(str(path)).getroot()
         for element in root.iter():
-            if element.tag in flow_node_tags and (node_id := element.get("id")):
-                owners[node_id].add(path.name)
+            # BPMN model elements only; DI shapes and camunda form fields carry their own
+            # id namespaces and never resolve against task specs.
+            if element.tag.startswith(ns) and (element_id := element.get("id")):
+                owners[element_id].add(path.name)
 
-    collisions = {node_id: sorted(files) for node_id, files in owners.items() if len(files) > 1}
-    assert not collisions, f"flow-node ids shared between templates: {collisions}"
+    collisions = {element_id: sorted(files) for element_id, files in owners.items() if len(files) > 1}
+    assert not collisions, f"element ids shared between templates: {collisions}"
