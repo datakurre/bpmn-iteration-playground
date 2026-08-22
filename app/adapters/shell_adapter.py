@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from app.adapters.base import AdapterCapabilities, AgentResult, BaseAdapter, resolve_timeout
+from app.paths import contained_path as _contained
 
 logger = logging.getLogger("bpmn.shell_adapter")
 
@@ -20,25 +21,6 @@ DEFAULT_LOG_TAIL = 8000
 MAX_ARTIFACTS = 200
 READ_CHUNK_BYTES = 65536
 TEMPLATE_ROOT = Path(__file__).resolve().parents[2] / "workspace_templates"
-
-
-def _contained(root: Path, relative: str) -> Path | None:
-    """Resolve `relative` under `root`, or None if it escapes.
-
-    Mirrors the orchestrator's own containment check: BPMN properties are authored
-    alongside the code, but a template subdirectory or artifact glob still must not
-    reach outside the instance workspace.
-    """
-    if not relative or relative.startswith(("/", "\\")) or "\x00" in relative:
-        return None
-    root_resolved = root.resolve()
-    try:
-        candidate = (root_resolved / relative).resolve()
-    except (OSError, RuntimeError):
-        return None
-    if candidate != root_resolved and root_resolved not in candidate.parents:
-        return None
-    return candidate
 
 
 def _split_list(raw: str | None) -> list[str]:

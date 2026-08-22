@@ -56,6 +56,15 @@ class AdapterRegistry:
             if existing is previous:
                 self._adapters[key] = adapter
 
+    def bind(self, harness_type: str, adapter: BaseAdapter) -> None:
+        """Point `harness_type` at `adapter`, regardless of the adapter's own `adapter_type`.
+
+        For the one case `register()`/`replace()` don't cover: a caller supplying a
+        specific instance to serve as a *named* harness (e.g. a test double standing in
+        for `pi_agent`) that need not share that name as its own declared type.
+        """
+        self._adapters[harness_type] = adapter
+
     def get(self, harness_type: str) -> BaseAdapter | None:
         return self._adapters.get(harness_type)
 
