@@ -6,7 +6,7 @@ from SpiffWorkflow.bpmn.util import BpmnEvent
 
 from app.engine import WorkflowRunner
 from app.persistence import WorkflowStore
-from app.pi_rpc import PiResult
+from app.pi_client import PiResult
 from app.workflow_service import WorkflowService
 
 FIXTURE = "tests/fixtures/event_subprocess_spawn.bpmn"

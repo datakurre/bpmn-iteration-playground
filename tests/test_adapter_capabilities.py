@@ -11,7 +11,7 @@ from app.adapters.registry import AdapterRegistry
 from app.adapters.shell_adapter import ShellAdapter
 from app.api.server import create_app
 from app.persistence import WorkflowStore
-from app.pi_rpc import PiResult
+from app.pi_client import PiResult
 from app.workflow_service import WorkflowService
 
 BEAMER = "workflows/beamer_slides.bpmn"

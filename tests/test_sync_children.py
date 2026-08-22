@@ -1,7 +1,7 @@
 import asyncio
 
 from app.persistence import WorkflowStore
-from app.pi_rpc import PiResult
+from app.pi_client import PiResult
 from app.sync_children import sync_children
 from app.workflow_service import WorkflowService
 

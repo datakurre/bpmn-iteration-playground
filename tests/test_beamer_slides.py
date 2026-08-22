@@ -9,7 +9,7 @@ from app.adapters.base import AgentResult
 from app.adapters.shell_adapter import ShellAdapter
 from app.engine import WorkflowRunner
 from app.persistence import WorkflowStore
-from app.pi_rpc import PiResult
+from app.pi_client import PiResult
 from app.registry import WorkflowRegistry
 from app.workflow_service import WorkflowService
 
