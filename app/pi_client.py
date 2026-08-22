@@ -91,6 +91,23 @@ def _kill_process_group_popen(process: subprocess.Popen[bytes]) -> None:
             process.kill()
 
 
+async def _kill_process_group(process: asyncio.subprocess.Process) -> None:
+    """Kill the whole process group started for an asyncio subprocess.
+
+    Used by adapter subclasses (e.g. SandboxPiAdapter, ShellAdapter) that still manage
+    asyncio.subprocess instances directly.
+    """
+    if process.returncode is not None:
+        return
+    try:
+        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        with contextlib.suppress(ProcessLookupError):
+            process.kill()
+    with contextlib.suppress(ProcessLookupError):
+        await process.wait()
+
+
 def _set_resource_limits() -> None:
     """Set process resource limits for sandboxed Pi subprocess execution.
 
@@ -133,6 +150,46 @@ def _final_text(events: list[dict[str, Any]]) -> str:
                 if isinstance(block, dict) and block.get("type") == "text"
             )
     return ""
+
+
+def _session_id_from_events(events: list[dict[str, Any]]) -> str | None:
+    """The branch/session id Pi assigned this turn, from its own `session` event.
+
+    Shared by `PiClient` (which streams events) and `SandboxPiAdapter` (which parses
+    them from a buffered envelope) -- both scan the same event shape for the same key.
+    """
+    session_id = None
+    for event in events:
+        if event.get("type") == "session" and event.get("id"):
+            session_id = event["id"]
+    return session_id
+
+
+async def _dispatch_event(on_event: Any, event: dict[str, Any]) -> None:
+    """Best-effort forward of one parsed Pi event to the caller's UI callback.
+
+    A broken callback (or a client that disconnected mid-turn) must never interrupt the
+    agent turn itself -- hence the blanket suppression.
+    """
+    if not (on_event and callable(on_event)):
+        return
+    try:
+        res = on_event(event)
+        if asyncio.iscoroutine(res):
+            await res
+    except Exception:
+        pass
+
+
+def _outcome_status(output: dict[str, Any] | None, exit_code: int | None, events: list[dict[str, Any]]) -> str:
+    """success/failed verdict shared by both harness-side adapters.
+
+    A parseable 5-key result plus either a clean exit or Pi's own `agent_settled` event
+    counts as success -- `agent_settled` covers a turn that finished its work but whose
+    process exit code isn't reliably 0 in every harness path.
+    """
+    settled = any(event.get("type") == "agent_settled" for event in events)
+    return "success" if output is not None and (exit_code == 0 or settled) else "failed"
 
 
 def _parse_json(text: str) -> dict[str, Any] | None:
@@ -244,7 +301,7 @@ class PiClient:
                 return demo_result
         return result
 
-    async def _execute(  # noqa: C901, PLR0912, PLR0913, PLR0915 -- subprocess spawn/stream/timeout/cancel/parse lifecycle; pre-existing complexity
+    async def _execute(  # noqa: C901, PLR0913, PLR0915 -- subprocess spawn/stream/timeout/cancel/parse lifecycle; pre-existing complexity
         self,
         executable: str,
         prompt: str,
@@ -375,17 +432,13 @@ class PiClient:
                 stderr_text = decoded_stderr
             reader_thread.join(timeout=5)
 
-        branch_session_id = None
-        for event in events:
-            if event.get("type") == "session" and event.get("id"):
-                branch_session_id = event["id"]
+        branch_session_id = _session_id_from_events(events)
 
         text = _final_text(events)
         output = _parse_json(text)
 
         if status not in ("timeout",) and not stderr_msg:
-            settled = any(event.get("type") == "agent_settled" for event in events)
-            status = "success" if output is not None and (exit_code == 0 or settled) else "failed"
+            status = _outcome_status(output, exit_code, events)
 
         return PiResult(status, output, text, events, stderr_text, exit_code, session_id=branch_session_id)
 
@@ -404,16 +457,6 @@ class PiClient:
             try:
                 parsed = json.loads(line.decode(errors="replace"))
                 events.append(parsed)
-                if on_event and callable(on_event):
-                    try:
-                        res = on_event(parsed)
-                        if asyncio.iscoroutine(res):
-                            await res
-                    except Exception:
-                        pass
+                await _dispatch_event(on_event, parsed)
             except json.JSONDecodeError:
                 pass
-
-
-# Backward compatibility alias
-PiRpcClient = PiClient

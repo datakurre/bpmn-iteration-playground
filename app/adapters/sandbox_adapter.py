@@ -11,7 +11,14 @@ from typing import Any
 
 from app.adapters.base import AdapterCapabilities, AgentResult, BaseAdapter
 from app.adapters.sandbox_policy import build_agents_md
-from app.pi_client import _final_text, _parse_json
+from app.pi_client import (
+    _dispatch_event,
+    _final_text,
+    _kill_process_group,
+    _outcome_status,
+    _parse_json,
+    _session_id_from_events,
+)
 
 logger = logging.getLogger("bpmn.sandbox_adapter")
 
@@ -64,7 +71,7 @@ class SandboxPiAdapter(BaseAdapter):
                 base_md = root_agents_md.read_text("utf-8")
         agents_md.write_text(build_agents_md(config, base_agents_md=base_md), encoding="utf-8")
 
-    async def run(  # noqa: C901, PLR0912, PLR0915 -- subprocess lifecycle (spawn/stream/timeout/cancel/parse) isn't naturally splittable without threading state through several helpers; left as pre-existing complexity
+    async def run(  # noqa: C901, PLR0915 -- subprocess lifecycle (spawn/stream/timeout/cancel/parse) isn't naturally splittable without threading state through several helpers; left as pre-existing complexity
         self,
         prompt: str,
         config: dict[str, str],
@@ -113,6 +120,10 @@ class SandboxPiAdapter(BaseAdapter):
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                # Matches PiClient: agent-sandbox spawns Podman/Pi children of its own, so a
+                # plain process.kill() on timeout/cancel would leave them running. Its own
+                # session (not the caller's) is what gets killed below.
+                start_new_session=True,
             )
         except Exception as exc:
             logger.error(f"Failed to spawn agent-sandbox: {exc}")
@@ -148,10 +159,7 @@ class SandboxPiAdapter(BaseAdapter):
             )
             exit_code = process.returncode if process.returncode is not None else 0
         except TimeoutError:
-            if process.returncode is None:
-                with contextlib.suppress(ProcessLookupError):
-                    process.kill()
-                await process.wait()
+            await _kill_process_group(process)
             return AgentResult(
                 status="timeout",
                 output=None,
@@ -161,10 +169,7 @@ class SandboxPiAdapter(BaseAdapter):
                 exit_code=1,
             )
         except asyncio.CancelledError:
-            if process.returncode is None:
-                with contextlib.suppress(ProcessLookupError):
-                    process.kill()
-                await process.wait()
+            await _kill_process_group(process)
             return AgentResult(
                 status="cancelled",
                 output=None,
@@ -212,20 +217,11 @@ class SandboxPiAdapter(BaseAdapter):
                 ev = json.loads(line)
                 if isinstance(ev, dict):
                     events.append(ev)
-                    if on_event and callable(on_event):
-                        try:
-                            res = on_event(ev)
-                            if asyncio.iscoroutine(res):
-                                await res
-                        except Exception:
-                            pass
+                    await _dispatch_event(on_event, ev)
             except json.JSONDecodeError:
                 pass
 
-        branch_session_id = None
-        for ev in events:
-            if ev.get("type") == "session" and ev.get("id"):
-                branch_session_id = ev["id"]
+        branch_session_id = _session_id_from_events(events)
 
         text = _final_text(events)
         if not text and inner_stdout and not events:
@@ -237,8 +233,7 @@ class SandboxPiAdapter(BaseAdapter):
         if output is not None and network_data:
             output["network"] = network_data
 
-        settled = any(ev.get("type") == "agent_settled" for ev in events)
-        status = "success" if output is not None and (container_exit_code == 0 or settled) else "failed"
+        status = _outcome_status(output, container_exit_code, events)
 
         stderr_final = inner_stderr or decoded_stderr
         if policy_error and not stderr_final:
