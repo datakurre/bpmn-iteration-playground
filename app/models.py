@@ -208,6 +208,82 @@ class TemplateSummary(BaseModel):
     description: str = ""
     category: str = "general"
     variables: list[dict[str, Any]] = Field(default_factory=list)
+    is_project: bool = Field(
+        default=False,
+        description="Template declares itself a Project (process-level camunda:property 'project')",
+    )
+
+
+class CreateProjectRequest(BaseModel):
+    name: str = Field(
+        min_length=1,
+        max_length=200,
+        description="Human-readable Project name; its slug becomes the addressing key",
+        json_schema_extra={"example": "Firmware Rewrite"},
+    )
+    bpmn_path: str = Field(
+        default="workflows/project.bpmn",
+        description="Path to a BPMN template that declares itself a Project",
+    )
+    variables: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional initial workflow variables",
+    )
+
+    @field_validator("variables")
+    @classmethod
+    def validate_vars(cls, v: dict[str, Any]) -> dict[str, Any]:
+        return _validate_variables(v)
+
+
+class SpawnTaskRequest(BaseModel):
+    task_brief: str = Field(
+        min_length=1,
+        description="What the spawned child task should do",
+        json_schema_extra={"example": "Add CRC validation to the bootloader."},
+    )
+    payload: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional keys merged into the spawn message payload",
+    )
+
+    @field_validator("payload")
+    @classmethod
+    def validate_payload(cls, v: dict[str, Any]) -> dict[str, Any]:
+        return _validate_variables(v)
+
+
+class ProjectChild(BaseModel):
+    workflow_id: str
+    status: str | None = None
+    process_id: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    task_brief: str | None = None
+    failure_reason: str | None = None
+
+
+class ProjectSummary(BaseModel):
+    workflow_id: str
+    slug: str
+    name: str
+    status: str | None = None
+    process_id: str | None = None
+    bpmn_path: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    child_count: int = 0
+    open_child_count: int = 0
+
+
+class ProjectDetail(ProjectSummary):
+    children: list[ProjectChild] = Field(default_factory=list)
+    state: dict[str, Any] = Field(default_factory=dict)
+
+
+class SaveWorkflowRequest(BaseModel):
+    name: str
+    xml: str
 
 
 class SaveWorkflowResponse(BaseModel):

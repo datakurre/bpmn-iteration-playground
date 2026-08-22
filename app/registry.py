@@ -16,6 +16,7 @@ class WorkflowTemplate:
     description: str = ""
     category: str = "general"
     variables: list[dict[str, Any]] = field(default_factory=list)
+    is_project: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -25,6 +26,7 @@ class WorkflowTemplate:
             "description": self.description,
             "category": self.category,
             "variables": list(self.variables),
+            "is_project": self.is_project,
         }
 
 
@@ -96,4 +98,24 @@ class WorkflowRegistry:
             name=name,
             path=str(path),
             description=description,
+            is_project=self._declares_project(process, ns),
         )
+
+    @staticmethod
+    def _declares_project(process: Any, ns: dict[str, str]) -> bool:
+        """Whether this process declares itself a Project template.
+
+        A Project is convention, not a record (see plans/concepts.md "Project identity is
+        convention, not a record"): the process opts in with a process-level
+        ``camunda:property name="project"``. Read only from the process element's own
+        extensions -- a task inside the process carrying the same property must not make the
+        whole template a Project.
+        """
+        camunda_ns = dict(ns)
+        camunda_ns["camunda"] = "http://camunda.org/schema/1.0/bpmn"
+        for prop in process.findall(
+            "./bpmn:extensionElements/camunda:properties/camunda:property", camunda_ns
+        ):
+            if prop.get("name") == "project":
+                return prop.get("value", "").strip().lower() in ("true", "1", "yes")
+        return False

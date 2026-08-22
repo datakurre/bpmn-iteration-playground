@@ -3,6 +3,11 @@
   <bpmn:message id="Message_Spawn_Requested" name="spawn_requested" />
   <bpmn:process id="project" name="Project" isExecutable="true">
     <bpmn:documentation>A long-running Project: stays open indefinitely and spawns a child subprocess for each spawn_requested message it receives (payload key: task_brief), while a human can close the Project explicitly from the open task. See AGENTS.md for the spawn contract.</bpmn:documentation>
+    <bpmn:extensionElements>
+      <camunda:properties>
+        <camunda:property name="project" value="true" />
+      </camunda:properties>
+    </bpmn:extensionElements>
     <bpmn:startEvent id="Start_Project" name="Project Started">
       <bpmn:outgoing>Flow_Project_1</bpmn:outgoing>
     </bpmn:startEvent>

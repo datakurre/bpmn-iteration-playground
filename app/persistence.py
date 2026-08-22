@@ -341,6 +341,42 @@ class WorkflowStore:
                 root["metadata"] = OOBTree()
             if "webhooks" not in root:
                 root["webhooks"] = OOBTree()
+            if "projects" not in root:
+                root["projects"] = OOBTree()
+
+    @_retry_on_conflict()
+    def get_project_state(self, workflow_id: str) -> dict[str, Any]:
+        """Project-scoped state for a root workflow, or ``{}`` if it has none.
+
+        A **side store, not an identity record** (plans/concepts.md "Project identity is
+        convention, not a record"). It answers "what has been hung on this Project" -- repo
+        assignment, sandbox policy, issues, decision log -- and never "does this Project
+        exist"; a Project is valid with no entry here at all, so a miss is an empty dict
+        rather than a ``KeyError``.
+
+        It lives outside ``workflow.data`` on purpose: this state grows for the life of a
+        Project (months), and everything in ``workflow.data`` is deep-copied into every
+        savepoint. It is consequently **not** carried by a fork.
+        """
+        with self.db.transaction() as connection:
+            state = connection.root()["projects"].get(workflow_id)
+            return dict(state) if state else {}
+
+    @_retry_on_conflict()
+    def set_project_state(self, workflow_id: str, state: dict[str, Any]) -> dict[str, Any]:
+        """Replace the Project-scoped state for a root workflow."""
+        with self.db.transaction() as connection:
+            connection.root()["projects"][workflow_id] = dict(state)
+            return dict(state)
+
+    @_retry_on_conflict()
+    def delete_project_state(self, workflow_id: str) -> bool:
+        with self.db.transaction() as connection:
+            projects = connection.root()["projects"]
+            if workflow_id not in projects:
+                return False
+            del projects[workflow_id]
+            return True
 
     def close(self) -> None:
         self.db.close()
@@ -872,6 +908,8 @@ class WorkflowStore:
             del workflows[workflow_id]
             if workflow_id in root["metadata"]:
                 del root["metadata"][workflow_id]
+            if workflow_id in root["projects"]:
+                del root["projects"][workflow_id]
             return True
 
     @_retry_on_conflict()
@@ -882,6 +920,7 @@ class WorkflowStore:
             root["workflows"].clear()
             root["save_points"].clear()
             root["metadata"].clear()
+            root["projects"].clear()
             return count
 
     @_retry_on_conflict()
