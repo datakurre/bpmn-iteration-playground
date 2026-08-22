@@ -1,37 +1,3 @@
-```toml agent-sandbox
-[network]
-allowed_hosts = [
-    "cache.nixos.org:443",
-    "channels.nixos.org:443",
-    "codeload.github.com:443",
-    "devenv.cachix.org:443",
-    "files.pythonhosted.org:443",
-    "github.com:443,22",
-    "opencode.ai:443",
-    "registry.npmjs.org:443",
-    "releases.nixos.org:443",
-]
-
-[ports]
-web = 8000
-
-[[network.allowed_routes]]
-header = "Authorization"
-host = "opencode.ai:443"
-method = "POST"
-path = "/zen/**"
-prefix = "Bearer "
-secret = "OPENCODE_ZEN_API_KEY"
-
-[[network.allowed_routes]]
-header = "Authorization"
-host = "opencode.ai:443"
-method = "POST"
-path = "/go/**"
-prefix = "Bearer "
-secret = "OPENCODE_GO_API_KEY"
-```
-
 # Agent Guidelines & Project Insights
 
 This document captures operational experience and technical details for AI agents working in this repository.
@@ -81,8 +47,21 @@ It:
 ```
 app/
   api/
-    server.py        – FastAPI app factory; all REST + WS routes
+    server.py        – FastAPI app factory: lifespan, static mounts, includes routers/ below
     ui.py            – Server-side HTML page renderers (inline HTML)
+    routers/         – One APIRouter per OpenAPI tag; each builds from `get_service`/
+                        `get_project_service` closures passed in by server.py
+      pages.py        – UI tag: dashboard, history, admin, editor, instance HTML pages
+      system.py       – health check + Prometheus /metrics
+      websocket.py     – /ws/instance/{id} live push
+      templates.py     – harness/template discovery + save-BPMN-XML endpoint
+      webhooks.py       – webhook subscription CRUD
+      history.py        – /api/history/* storage stats, pack, browse
+      admin.py          – legacy /admin/* endpoints (kept for existing clients)
+      instance.py       – /instance/* : state, diagram, workspace, forms, savepoints, fork,
+                          messaging, retry, cancel, SSE event stream (largest router)
+      workflow.py       – original pre-/instance API surface (start, submit-task, form)
+      projects.py       – /project : create/list/detail/spawn over ProjectService
   adapters/
     base.py          – BaseAdapter ABC (run + prepare_workspace hook) + AgentResult dataclass
     sandbox_policy.py – agent-sandbox network policy rendered into a workspace AGENTS.md
@@ -94,12 +73,24 @@ app/
   templates/         – Jinja2-rendered HTML (dashboard, instance, history, admin, editor)
   static/            – App-level CSS / JS assets
   engine.py          – WorkflowRunner: loads BPMN, starts runs, task snapshots, prompt builder
-  workflow_service.py – WorkflowService: orchestration, savepoints, fork, retry, jobs
+  workflow_service.py – WorkflowService: instance lifecycle, messaging, timers; a façade whose
+                        savepoint/fork/job-loop/child-sync method bodies live in orchestration/
+  orchestration/
+    savepoints.py     – recording, reading, and purging durable checkpoints
+    fork.py           – branching a new instance from a past savepoint
+    jobs.py           – the agent-turn job loop: dispatch / run_pi / complete_pi
+    children.py       – mirrors CallActivity / event-subprocess children into the store
+  paths.py           – shared workspace-containment check (`contained_path`), used by both
+                       the orchestrator and ShellAdapter
   persistence.py     – WorkflowStore + WorkflowMetadata backed by ZODB / BlobStorage / ZEO
-  pi_client.py       – PiClient: non-interactive CLI runner, extracts sessionId & JSON contract
+  pi_client.py       – PiClient: non-interactive CLI runner, extracts sessionId & JSON contract;
+                       also the shared home for `_final_text`/`_parse_json`/`_kill_process_group`
+                       and the other event-parsing helpers PiAdapter and SandboxPiAdapter both use
   events.py          – EventBus: persists audit events + async webhook delivery (httpx, 3 retries)
   auth.py            – Role enum + require_role() FastAPI dependency
-  registry.py        – WorkflowRegistry: discovers workflows/*.bpmn templates
+  registry.py        – WorkflowRegistry: discovers workflows/*.bpmn templates, flags Project ones
+  projects.py        – ProjectService: read/write surface for Projects, a projection over
+                       instances + metadata (see plans/concepts.md); no state of its own
   workspace.py       – tar.zst pack/unpack helpers for ZODB Blob workspace storage
   sync_children.py   – thin wrapper over WorkflowService._sync_children
   models.py          – Pydantic models for all API request/response bodies
@@ -154,7 +145,7 @@ vendor/operaton-element-templates{,-validator,-json-schema} – git submodules: 
 - **Executable Fallback**: `PI_EXECUTABLE` defaults to `node_modules/.bin/pi` in devenv. Falls back to `scripts/pi-demo` when `PI_OFFLINE=1`, `.pi_offline` file exists, or no `OPENAI_API_KEY` is set.
 - **Demo fallback is opt-in**: a *failed* real Pi run only retries against `scripts/pi-demo` when `PI_ALLOW_DEMO_FALLBACK=1`. Off by default — otherwise a misconfigured provider silently feeds fabricated agent output into BPMN gateway conditions.
 - **Deterministic Showcase**: `scripts/pi-demo` is a fast RPC-compatible mock that always emits the 5-key JSON result contract without model credentials.
-- **Pi Provider Config**: `PI_PROVIDER=opencode-go`, `PI_MODEL=gpt-5.6-luna`, `OPENAI_BASE_URL=https://opencode.ai/zen/v1` set by devenv; passed through `ALLOWED_ENV_VARS` filter in `pi_rpc.py`.
+- **Pi Provider Config**: `PI_PROVIDER=opencode-go`, `PI_MODEL=gpt-5.6-luna`, `OPENAI_BASE_URL=https://opencode.ai/zen/v1` set by devenv; passed through the `ALLOWED_ENV_VARS` filter in `pi_client.py`.
 - **Timeout**: Default 1800 s (`PI_TIMEOUT_SECONDS`). Configurable per-deployment. On timeout or cancellation the whole process *group* is killed, since Pi runs with `start_new_session=True`.
 - **Workspace**: every instance runs in its own unpacked workspace. `PI_WORKDIR` is a *seed* copied into a fresh workspace (never the agent's cwd), so concurrent instances cannot collide and savepoints capture what the agent actually touched.
 - **Resource Limits**: Pi subprocess runs with `RLIMIT_AS=2GB` and optionally drops privileges to `PI_RUN_AS_USER`.
@@ -260,6 +251,13 @@ vendor/operaton-element-templates{,-validator,-json-schema} – git submodules: 
   reuse). The template shape (park-and-spawn) is convention, not enforced by
   `WorkflowRegistry`; nothing currently validates that a template calling itself a Project
   actually has a trigger spec.
+- **Projects API**: `ProjectService` (`app/projects.py`) is a read/write projection over
+  Project-declaring root instances — no record of its own, see plans/concepts.md "Project
+  identity is convention, not a record". `POST /project` (name + optional bpmn_path) opens
+  one, `GET /project` lists them, `GET /project/{slug}` returns detail + children +
+  Project-scoped side-store state, `POST /project/{slug}/spawn` is a thin wrapper over
+  `send_message(..., "spawn_requested", ...)`. The dashboard still lists raw instances, not
+  Projects — the UI half of plans/concepts.md's Backlog item 2/3 is still open.
 
 ## 4b. Agent Sandbox Integration
 
@@ -284,7 +282,7 @@ vendor/operaton-element-templates{,-validator,-json-schema} – git submodules: 
 - **Roles**: `ADMIN > OPERATOR > VIEWER` via `ADMIN_TOKEN` and `API_KEYS` env vars (`key:role` CSV).
 - **No auth configured**: All requests implicitly receive `ADMIN` role (dev mode).
 - **Headers**: `X-Admin-Token` → `ADMIN`; `X-Api-Key` → mapped role.
-- **Output sanitization**: Agent output strings truncated at 50 000 characters (`_sanitize_output` in `workflow_service.py`).
+- **Output sanitization**: Agent output strings truncated at 50 000 characters (`_sanitize_output` in `app/orchestration/jobs.py`).
 
 ## 6. Persistence (ZODB)
 
@@ -308,3 +306,40 @@ vendor/operaton-element-templates{,-validator,-json-schema} – git submodules: 
 3. Set `harness_type` in the BPMN task's Camunda properties to your `adapter_type` string.
 
 See §4b for the `SandboxPiAdapter` as a worked example of a second agent adapter, and §4c for `ShellAdapter` as a worked example of a *non-agent* harness — the case where `prompt` is ignored and the task is defined entirely by its BPMN properties.
+
+## Agent Sandbox
+
+```toml agent-sandbox
+[network]
+allowed_hosts = [
+    "cache.nixos.org:443",
+    "channels.nixos.org:443",
+    "codeload.github.com:443",
+    "devenv.cachix.org:443",
+    "files.pythonhosted.org:443",
+    "github.com:443,22",
+    "opencode.ai:443",
+    "registry.npmjs.org:443",
+    "releases.nixos.org:443",
+]
+
+# [ports]
+# web = 8000
+
+[[network.allowed_routes]]
+header = "Authorization"
+host = "opencode.ai:443"
+method = "POST"
+path = "/zen/**"
+prefix = "Bearer "
+secret = "OPENCODE_ZEN_API_KEY"
+
+[[network.allowed_routes]]
+header = "Authorization"
+host = "opencode.ai:443"
+method = "POST"
+path = "/go/**"
+prefix = "Bearer "
+secret = "OPENCODE_GO_API_KEY"
+```
+

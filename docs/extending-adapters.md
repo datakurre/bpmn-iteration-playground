@@ -1,13 +1,21 @@
 # Extending Adapters
 
+> This is the worked-example, narrative version. AGENTS.md §4 ("Adapter Capabilities") and
+> §8 ("Adding a New Adapter") are the terser, more current reference — check there first if
+> something here looks out of date, since AGENTS.md is what changes first.
+
 The engine dispatches AI and tool tasks through pluggable adapters registered in `AdapterRegistry`.
 
 ## Implementing `BaseAdapter`
 
-Create a subclass of `BaseAdapter` in `app/adapters/`:
+Create a subclass of `BaseAdapter` in `app/adapters/`. `run()`'s signature must include
+`on_event` — the orchestrator always calls it as a keyword argument
+(`adapter.run(prompt, config, cwd, on_event=...)`) so it can stream live turn events to the
+UI, and a `run()` that omits the parameter raises `TypeError` on the very first real turn:
 
 ```python
-from app.adapters.base import BaseAdapter, AgentResult
+from typing import Any
+from app.adapters.base import AdapterCapabilities, BaseAdapter, AgentResult
 
 
 class ClaudeCodeAdapter(BaseAdapter):
@@ -15,13 +23,23 @@ class ClaudeCodeAdapter(BaseAdapter):
     def adapter_type(self) -> str:
         return "claude_code"
 
+    @property
+    def capabilities(self) -> AdapterCapabilities:
+        # Optional -- the default is a conservative "no session, agent view" declaration.
+        # Override it if your harness carries conversational state across turns (see
+        # "Declaring capabilities" below) or needs a different timeout/UI.
+        return AdapterCapabilities(display_name="Claude Code", supports_sessions=True)
+
     async def run(
         self,
         prompt: str,
         config: dict[str, str],
         cwd: str,
+        on_event: Any = None,
     ) -> AgentResult:
-        # Custom execution logic, subprocess call, or LLM API invocation
+        # Custom execution logic, subprocess call, or LLM API invocation.
+        # Call on_event(parsed_event) as events arrive if your harness streams; the
+        # orchestrator forwards it to the instance's WebSocket. Fine to ignore if it doesn't.
         # ...
         return AgentResult(
             status="success",
@@ -38,6 +56,16 @@ class ClaudeCodeAdapter(BaseAdapter):
             exit_code=0,
         )
 ```
+
+## Declaring capabilities
+
+`AdapterCapabilities` (`app/adapters/base.py`) is how a harness tells the orchestrator what
+it is, instead of the orchestrator special-casing `harness_type` strings. The field worth
+understanding before you skip it: `supports_sessions` — true for harnesses that carry
+conversational state across turns (LLM agents), false for anything deterministic. A harness
+that doesn't declare it correctly either loses context it should have kept, or a
+deterministic step ends up holding a stale session id and colliding with a real agent turn
+running the same session. `GET /api/harnesses` shows what every registered adapter declares.
 
 ## Registering the Adapter
 

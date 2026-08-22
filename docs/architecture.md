@@ -1,5 +1,9 @@
 # Architecture Overview
 
+> AGENTS.md's "Architecture & Module Map" is the file-by-file reference and changes first;
+> this doc goes deeper on the subsystems below (savepoints, concurrency, Project children) as
+> prose. If the two disagree, AGENTS.md is the one to trust.
+
 **BPMN Pi Workflow** is a durable BPMN 2.0 orchestration engine combining local AI execution with transactional persistence and human-in-the-loop task forms.
 
 ```mermaid
