@@ -115,9 +115,13 @@ Deletes every savepoint older than an anchor, releasing its workspace blob. Requ
 { "purged": 2, "remaining": 3 }
 ```
 
-Every savepoint belonging to the anchor task is kept, along with everything newer. Supplying
-neither anchor or both returns `400` — a malformed request is never read as "purge all".
-Retention is deliberately manual; there is no scheduled or automatic expiry.
+Both anchors satisfy one invariant: **a task's savepoints are never split.** An agent task
+records both a `before_harness` and an `after_harness` savepoint, so a cut-off landing between
+them resolves back to that task's oldest savepoint and the task survives whole; a task
+entirely older than the cut-off is still removed whole.
+
+Supplying neither anchor or both returns `400` — a malformed request is never read as
+"purge all". Retention is deliberately manual; there is no scheduled or automatic expiry.
 
 ---
 

@@ -604,11 +604,15 @@ class WorkflowService:
         Deliberately manual-only, per plans/concepts.md "Savepoint retention is a manual
         purge" -- an age/count policy can't judge which past states are still worth forking
         from, only the user can. Exactly one anchor is required: `before` (an ISO-8601
-        timestamp) or `before_task_id` (resolved to the *oldest* savepoint carrying that task,
-        whose created_at becomes the cutoff). Every savepoint of the anchor task is kept, not
-        just its newest: an agent task records both `before_harness` and `after_harness`, the
-        request carries only the task id, and the UI lets the operator click either one -- so
-        anchoring on the newest would delete the very savepoint they clicked Purge on.
+        timestamp) or `before_task_id` (an element).
+
+        **Both anchors satisfy one invariant: a task's savepoints are never split.** An agent
+        task records both a `before_harness` and an `after_harness` savepoint, so a cut-off
+        landing between them would delete the task's entry state while keeping its exit state
+        -- and via the UI, which sends only a task id and lets the operator click either row,
+        it would delete the very savepoint they clicked Purge on. Both anchors therefore
+        resolve to the *oldest* savepoint of whichever task owns the boundary, so that task
+        survives whole. A task entirely older than the cut-off is still removed whole.
         """
         if bool(before) == bool(before_task_id):
             raise ValueError("purge requires exactly one of 'before' or 'before_task_id'")
@@ -619,12 +623,24 @@ class WorkflowService:
             points = record.get("save_points", [])
 
             if before_task_id is not None:
-                task_points = [p for p in points if p.get("task_id") == before_task_id]
-                if not task_points:
+                boundary_task_id: str | None = before_task_id
+                if not any(p.get("task_id") == before_task_id for p in points):
                     raise ValueError(f"no savepoints found for task {before_task_id!r}")
-                cutoff = min(p["created_at"] for p in task_points)
             else:
+                # Snap the timestamp to the task that straddles it. With nothing at or after
+                # the cut-off no task straddles it, so the raw timestamp is already safe.
+                at_or_after = sorted(
+                    (p for p in points if p.get("created_at") >= before),
+                    key=lambda p: p["created_at"],
+                )
+                boundary_task_id = at_or_after[0].get("task_id") if at_or_after else None
+
+            if boundary_task_id is None:
                 cutoff = before
+            else:
+                cutoff = min(
+                    p["created_at"] for p in points if p.get("task_id") == boundary_task_id
+                )
 
             purge_ids = {p["id"] for p in points if p.get("created_at") < cutoff and p.get("id")}
             if purge_ids:

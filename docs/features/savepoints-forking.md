@@ -97,8 +97,12 @@ Content-Type: application/json
 
 Exactly one anchor is required — `before_task_id`, or `before` with an ISO-8601 timestamp. A
 request carrying neither or both is rejected with `400`, so a malformed call can never be
-interpreted as "purge everything". Forks already taken from a purged instance keep working;
-they own their own copies.
+interpreted as "purge everything".
+
+Both anchors obey the same invariant: **a task's savepoints are never split.** A timestamp
+landing between a task's `before_harness` and `after_harness` snaps back to that task's oldest
+savepoint, so the task survives whole rather than losing its entry state. Forks already taken
+from a purged instance keep working; they own their own copies.
 
 ---
 

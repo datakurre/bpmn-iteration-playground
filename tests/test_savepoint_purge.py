@@ -159,3 +159,31 @@ async def test_purge_before_task_keeps_all_of_the_anchor_tasks_savepoints(
     for p in older:
         assert p["id"] not in remaining_ids
     assert result["purged"] == len(older)
+
+
+@pytest.mark.anyio
+async def test_purge_before_timestamp_never_splits_a_task(service: WorkflowService) -> None:
+    """A `before` timestamp landing mid-task keeps that task whole, like `before_task_id` does.
+
+    Both anchors on this endpoint must satisfy one invariant: a task's savepoints are never
+    split. Without snapping, passing the timestamp of an agent task's `after_harness` deleted
+    its `before_harness` sibling -- the same defect todo 10 fixed for the element anchor,
+    surviving on the timestamp path.
+    """
+    started = await _start_and_wait(service)
+    wf_id = started["workflow_id"]
+
+    points = _sorted_points(service, wf_id)
+    by_task: dict[str, list[dict[str, Any]]] = {}
+    for p in points:
+        by_task.setdefault(p["task_id"], []).append(p)
+    anchor_points = next(pts for pts in by_task.values() if len(pts) >= 2)
+
+    # A cut-off strictly inside the anchor task: after its first savepoint, at its last.
+    result = await service.purge_save_points(wf_id, before=anchor_points[-1]["created_at"])
+
+    remaining_ids = {p["id"] for p in service.store.load(wf_id)["save_points"]}  # type: ignore[index]
+    for p in anchor_points:
+        assert p["id"] in remaining_ids, "a mid-task cut-off must not split the task"
+    older = [p for p in points if p["created_at"] < anchor_points[0]["created_at"]]
+    assert result["purged"] == len(older)
