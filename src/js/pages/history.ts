@@ -1,4 +1,4 @@
-import { $, escapeHtml } from "../lib/dom";
+import { $, escapeHtml, renderList } from "../lib/dom";
 
 interface StorageStats {
   size_human: string;
@@ -96,14 +96,10 @@ function render(): void {
 
   const container = $("list");
   if (!container) return;
-  if (!filtered.length) {
-    container.innerHTML = '<div class="text-muted text-center py-8 text-xs">No process instances match the selected filter.</div>';
-    return;
-  }
-
-  container.innerHTML = filtered
-    .map(
-      (item) => `
+  renderList(
+    container,
+    filtered,
+    (item) => `
     <article class="bg-panel border border-line rounded-lg p-3.5 mb-2 flex flex-col md:flex-row justify-between md:items-center gap-3 hover:border-line-highlight transition-colors shadow-md ${item.parent_workflow_id ? "ml-5 border-l-4 !border-l-accent" : ""}">
       <div>
         <div class="text-sm font-semibold text-ink">
@@ -128,8 +124,8 @@ function render(): void {
       </div>
     </article>
   `,
-    )
-    .join("");
+    '<div class="text-muted text-center py-8 text-xs">No process instances match the selected filter.</div>',
+  );
 }
 
 document.querySelectorAll<HTMLButtonElement>(".tab").forEach((tab) => {

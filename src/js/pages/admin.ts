@@ -1,4 +1,4 @@
-import { $, escapeHtml } from "../lib/dom";
+import { $, escapeHtml, renderList } from "../lib/dom";
 
 interface StorageStats {
   size_human: string;
@@ -48,10 +48,10 @@ async function load(): Promise<void> {
     return;
   }
   const items = (await response.json()) as AdminInstance[];
-  root.innerHTML = items.length
-    ? items
-        .map(
-          (item) => `
+  renderList(
+    root,
+    items,
+    (item) => `
     <div class="flex justify-between gap-3.5 items-center bg-panel border border-line rounded-lg p-3 my-1.5 hover:border-line-highlight transition-colors shadow-md">
       <div>
         <strong class="block text-[13.5px] text-ink"><a href="/instance/${encodeURIComponent(item.workflow_id)}" class="text-inherit no-underline hover:text-accent transition-colors">${escapeHtml(item.workflow_id)}</a></strong>
@@ -60,9 +60,8 @@ async function load(): Promise<void> {
       <button class="btn btn-danger text-xs px-2.5 py-1" data-delete="${escapeHtml(item.workflow_id)}">Delete</button>
     </div>
   `,
-        )
-        .join("")
-    : '<p class="text-muted text-xs">No persisted instances.</p>';
+    '<p class="text-muted text-xs">No persisted instances.</p>',
+  );
 
   document.querySelectorAll<HTMLButtonElement>("[data-delete]").forEach((button) => {
     button.onclick = async () => {

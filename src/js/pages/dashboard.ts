@@ -1,4 +1,4 @@
-import { $, escapeHtml } from "../lib/dom";
+import { $, escapeHtml, renderList } from "../lib/dom";
 import "../lib/accordion";
 import { withDocumentContentFallback } from "../lib/form-data-fallback";
 import type { FormInstance } from "../types/globals";
@@ -208,13 +208,10 @@ async function loadPendingTasks(): Promise<void> {
     const listEl = $("pending-tasks-list");
     if (countEl) countEl.textContent = String(instances.length);
     if (!listEl) return;
-    if (instances.length === 0) {
-      listEl.innerHTML =
-        '<div class="text-muted text-xs py-3 text-center bg-card rounded-md border border-line-subtle">✓ No pending tasks needing action.</div>';
-      return;
-    }
-    listEl.innerHTML = instances
-      .map((inst) => {
+    renderList(
+      listEl,
+      instances,
+      (inst) => {
         const wfId = inst.workflow_id || inst.id || "";
         return `
       <div class="p-2.5 rounded-md bg-card border border-amber-border/60 hover:border-amber transition-colors flex flex-col gap-1.5 shadow-sm">
@@ -228,8 +225,9 @@ async function loadPendingTasks(): Promise<void> {
           <a href="/instance/${encodeURIComponent(wfId)}" class="btn text-[11px] px-2.5 py-1 inline-flex items-center gap-1">Open &amp; Review →</a>
         </div>
       </div>`;
-      })
-      .join("");
+      },
+      '<div class="text-muted text-xs py-3 text-center bg-card rounded-md border border-line-subtle">✓ No pending tasks needing action.</div>',
+    );
   } catch (err) {
     console.error("Failed to load pending tasks:", err);
   }
