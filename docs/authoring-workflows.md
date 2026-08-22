@@ -152,11 +152,16 @@ rather than something the agent is trusted to have run:
 ```
 
 `fail_on_error="false"` is what makes the failure branchable: the turn completes even on a
-non-zero exit, publishing `build_status = 'failed'`, so a gateway can send `${build_log}`
-back to the authoring agent instead of parking the instance. `workflows/beamer_slides.bpmn`
-is a working example — LaTeX errors loop back to the slide agent, and the human only reviews
-a deck that compiled. See [Extending Adapters](extending-adapters.md) for every property the
-shell harness accepts.
+non-zero exit, publishing `build_status = 'failed'`, so a gateway can route on it instead of
+parking the instance in `failed`. `workflows/beamer_slides.bpmn` is a working example — a
+LaTeX error reaches a human diagnosis gate holding `${build_log}`, who either hands it back
+to the slide agent or abandons the deck, and the human deck review is only reached by a deck
+that compiled.
+
+Note the shape of that bound. Condition expressions here are dict lookups and comparisons,
+not a scripting language, so a workflow cannot count its own iterations; putting a person on
+the failure branch is how a repair loop terminates without one. See
+[Extending Adapters](extending-adapters.md) for every property the shell harness accepts.
 
 ### FormJS Field Types
 - `string`, `text` $\rightarrow$ textfield

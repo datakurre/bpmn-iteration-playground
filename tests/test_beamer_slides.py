@@ -198,8 +198,33 @@ async def test_a_clean_build_renders_images_and_waits_for_the_human() -> None:
 
 
 @pytest.mark.anyio
-async def test_a_failed_compile_routes_back_to_the_agent_with_the_log() -> None:
-    """The point of the deterministic harness: LaTeX failure is data, not a halt."""
+async def test_a_failed_compile_parks_on_the_diagnosis_gate_instead_of_halting() -> None:
+    """The point of the deterministic harness: LaTeX failure is data, not a halt.
+
+    The turn itself succeeded, so the instance is not in `failed` awaiting a Retry -- it is
+    waiting on a human at the diagnosis gate, with the log published for them to read.
+    """
+    pi = FakePi()
+    service = WorkflowService(WorkflowStore(":memory:"), pi)
+    shell = ScriptedShell(build_exit_codes=[1])
+    service.registry.register(shell)
+
+    workflow_id = await _to_slide_loop(service)
+    state = service.state(workflow_id)
+
+    assert state["status"] == "waiting_human"
+    assert state.get("failure_reason") is None
+    assert state["data"]["build_status"] == "failed"
+    assert state["data"]["build_exit_code"] == 1
+    assert "Undefined control sequence" in state["data"]["build_log"]
+    assert any(task["bpmn_id"] == "Task_Diagnose_Build" for task in state["tasks"])
+    # the agent is not re-run until a human says so
+    assert shell.commands == ["make pdf"]
+    assert len(pi.prompts) == 2
+
+
+@pytest.mark.anyio
+async def test_retrying_a_failed_build_hands_the_log_to_the_slide_agent() -> None:
     pi = FakePi()
     service = WorkflowService(WorkflowStore(":memory:"), pi)
     shell = ScriptedShell(build_exit_codes=[1, 0, 0])
@@ -207,13 +232,37 @@ async def test_a_failed_compile_routes_back_to_the_agent_with_the_log() -> None:
 
     workflow_id = await _to_slide_loop(service)
     state = service.state(workflow_id)
+    await service.submit_task(
+        workflow_id,
+        _task_id(state, "Task_Diagnose_Build"),
+        {"build_decision": "retry", "build_feedback": "metropolis needs \\metroset, not \\metropolisset"},
+    )
+    await _settle(service)
+    state = service.state(workflow_id)
 
     assert shell.commands == ["make pdf", "make pdf", "make images"]
-    # plan + first slides attempt + repair attempt
-    assert len(pi.prompts) == 3
     assert "Undefined control sequence" in pi.prompts[2]
-    assert state["status"] == "waiting_human"
+    assert "metroset" in pi.prompts[2]
     assert state["data"]["build_status"] == "success"
+    assert any(task["bpmn_id"] == "Task_Review_Deck" for task in state["tasks"])
+
+
+@pytest.mark.anyio
+async def test_abandoning_a_failed_build_ends_the_instance_without_another_turn() -> None:
+    pi = FakePi()
+    service = WorkflowService(WorkflowStore(":memory:"), pi)
+    shell = ScriptedShell(build_exit_codes=[1])
+    service.registry.register(shell)
+
+    workflow_id = await _to_slide_loop(service)
+    state = service.state(workflow_id)
+    completed = await service.submit_task(
+        workflow_id, _task_id(state, "Task_Diagnose_Build"), {"build_decision": "abandon"}
+    )
+
+    assert completed["status"] == "completed"
+    assert shell.commands == ["make pdf"]
+    assert len(pi.prompts) == 2
 
 
 @pytest.mark.anyio

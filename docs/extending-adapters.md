@@ -108,14 +108,17 @@ the instance parks for a human `Retry` — right for a step that is simply broke
 exclusive gateway can branch on it:
 
 ```xml
-<bpmn:sequenceFlow id="Flow_Build_Failed" sourceRef="GW_Build" targetRef="Task_Slides">
+<bpmn:sequenceFlow id="Flow_Build_Failed" sourceRef="GW_Build" targetRef="Task_Diagnose">
   <bpmn:conditionExpression>build_status != 'success'</bpmn:conditionExpression>
 </bpmn:sequenceFlow>
 ```
 
-That flow is what puts a compiler inside the agent loop: `workflows/beamer_slides.bpmn`
-sends a failed LaTeX build's `${build_log}` straight back to the slide-writing agent, and
-only reaches the human review once the deck actually compiles.
+That flow is what puts a compiler inside the agent loop. In `workflows/beamer_slides.bpmn`
+it leads to a human diagnosis gate carrying `${build_log}`, from which you either hand the
+log back to the slide-writing agent or abandon the deck. Routing through a person rather
+than straight back to the agent is deliberate: the expression language is not a scripting
+language, so there is no loop counter to branch on, and an automatic repair loop against a
+compiler the agent cannot satisfy would never terminate.
 
 ### Workspace templates
 

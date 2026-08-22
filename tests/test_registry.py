@@ -101,3 +101,50 @@ def test_registry_get_template_matches_by_path_stem_and_returns_none_for_unknown
 def test_registry_list_templates_on_missing_directory() -> None:
     registry = WorkflowRegistry("/no/such/directory")
     assert registry.list_templates() == []
+
+
+def test_shipped_workflows_do_not_share_flow_node_ids() -> None:
+    """Flow-node ids must be unique across every file in `workflows/`.
+
+    `WorkflowRunner._load_extensions` loads every `*.bpmn` in the directory (that is how
+    CallActivity targets resolve) and applies each element's extensions to *any* loaded spec
+    declaring a task of that id, without checking which process it came from. Two templates
+    sharing a task id therefore cross-apply each other's `camunda:properties`,
+    `formData` and `inputOutput` -- silently, and in filesystem glob order, so it does not
+    even fail the same way twice.
+    """
+    import collections
+
+    from app.xml_utils import safe_parse_xml
+
+    ns = "{http://www.omg.org/spec/BPMN/20100524/MODEL}"
+    flow_node_tags = {
+        f"{ns}{tag}"
+        for tag in (
+            "serviceTask",
+            "userTask",
+            "scriptTask",
+            "manualTask",
+            "task",
+            "callActivity",
+            "subProcess",
+            "exclusiveGateway",
+            "parallelGateway",
+            "inclusiveGateway",
+            "startEvent",
+            "endEvent",
+            "intermediateCatchEvent",
+            "intermediateThrowEvent",
+            "boundaryEvent",
+        )
+    }
+
+    owners: dict[str, set[str]] = collections.defaultdict(set)
+    for path in sorted(Path("workflows").glob("*.bpmn")):
+        root = safe_parse_xml(str(path)).getroot()
+        for element in root.iter():
+            if element.tag in flow_node_tags and (node_id := element.get("id")):
+                owners[node_id].add(path.name)
+
+    collisions = {node_id: sorted(files) for node_id, files in owners.items() if len(files) > 1}
+    assert not collisions, f"flow-node ids shared between templates: {collisions}"

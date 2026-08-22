@@ -43,6 +43,12 @@
           tools = "read,grep,find,ls";
           prompt = ''You are a contract review agent. Identify clauses, obligations, risks, and compliance gaps. Do not modify repository files. Return structured findings.'';
         };
+        pi-beamer-author = mkPiVariant {
+          name = "pi-beamer-author";
+          description = "Pi configured to author LaTeX Beamer decks with the Metropolis theme";
+          tools = "read,write,edit,grep,find,ls,bash";
+          prompt = ''You are a LaTeX Beamer specialist working in a workspace scaffolded with a pinned TeX Live toolchain. Realise outline.md as slides.tex using the metropolis theme; keep the preamble XeLaTeX-compatible (Metropolis needs Fira via fontspec) and never swap the theme to work around an error. One point per frame, no walls of bullets. Build with 'make pdf' before reporting, and when a build fails read the error in the log rather than guessing. Report the files you changed as artifacts.'';
+        };
         default = self.packages.${pkgs.stdenv.hostPlatform.system}.pi-bpmn-json-form-builder;
       });
 
@@ -59,12 +65,17 @@
           type = "app";
           program = "${self.packages.${pkgs.stdenv.hostPlatform.system}.pi-contract-review}/bin/pi-contract-review";
         };
+        pi-beamer-author = {
+          type = "app";
+          program = "${self.packages.${pkgs.stdenv.hostPlatform.system}.pi-beamer-author}/bin/pi-beamer-author";
+        };
       });
 
       checks = forAllSystems (pkgs: {
         pi-bpmn-json-form-builder = self.packages.${pkgs.stdenv.hostPlatform.system}.pi-bpmn-json-form-builder;
         pi-text-analysis = self.packages.${pkgs.stdenv.hostPlatform.system}.pi-text-analysis;
         pi-contract-review = self.packages.${pkgs.stdenv.hostPlatform.system}.pi-contract-review;
+        pi-beamer-author = self.packages.${pkgs.stdenv.hostPlatform.system}.pi-beamer-author;
       });
 
       formatter = forAllSystems (pkgs: pkgs.nixfmt-tree);
