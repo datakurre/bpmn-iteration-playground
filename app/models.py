@@ -159,6 +159,7 @@ class WorkflowState(BaseModel):
     parent_workflow_id: str | None = None
     forked_from: str | None = None
     forked_from_save_point: str | None = None
+    workspace_metadata: dict[str, Any] | None = None
 
 
 class WorkflowResponse(BaseModel):

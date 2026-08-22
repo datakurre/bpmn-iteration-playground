@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from app.workflow_service import WorkflowService
 from app.workspace import (
     cleanup_workspace,
     extract_workspace_file,
@@ -246,3 +247,24 @@ def test_cleanup_workspace_ignores_non_bpmn_and_missing_paths() -> None:
     cleanup_workspace("")
     cleanup_workspace("/tmp/not-a-bpmn-prefixed-dir")
     cleanup_workspace("/no/such/bpmn-directory-at-all")
+
+
+@pytest.mark.anyio
+async def test_state_exposes_workspace_metadata(service: WorkflowService) -> None:
+    """The instance view's workspace-files panel renders from `state()`, not from a second fetch.
+
+    `_dispatch` persists `record["workspace_metadata"]` after every agent turn, and
+    `GET /instance/{id}/workspace/files` served it, but `_public_state` never surfaced it --
+    so the panel's guard was always falsy and the card stayed `hidden` forever.
+    """
+    import asyncio
+
+    started = await service.start("workflows/contract_review.bpmn", None, {"contract": "text"})
+    await asyncio.gather(*list(service.jobs.values()))
+    wf_id = started["workflow_id"]
+
+    state = service.state(wf_id)
+    meta = state.get("workspace_metadata")
+    assert meta is not None, "state() must expose workspace_metadata for the instance UI"
+    assert set(meta) >= {"file_count", "total_size", "files", "artifacts"}
+    assert meta == service.store.get_workspace_metadata(wf_id)

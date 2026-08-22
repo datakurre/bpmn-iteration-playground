@@ -45,3 +45,21 @@ describe("describePurge", () => {
     expect(describePurge(points, oldestId)).toContain("nothing");
   });
 });
+
+describe("agreement with the API's element anchor", () => {
+  // The request carries only `before_task_id`, so the server cannot tell which of a task's
+  // savepoints was clicked. Both layers therefore have to treat the whole task as the
+  // anchor, or the dialog undercounts an irreversible delete. See
+  // todos/05-savepoint-purge-api.md and todos/06-savepoint-purge-ui.md.
+  it("keeps every savepoint sharing the anchor's task", () => {
+    expect(selectPurgedIds(points, "sp2")).toEqual([]);
+  });
+
+  it("selects the same set from either savepoint of the anchor task", () => {
+    expect(selectPurgedIds(points, "sp1")).toEqual(selectPurgedIds(points, "sp2"));
+  });
+
+  it("describes nothing to purge when only the anchor task is older", () => {
+    expect(describePurge(points, "sp2")).toContain("nothing");
+  });
+});

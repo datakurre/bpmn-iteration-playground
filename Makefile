@@ -44,7 +44,13 @@ test:
 pack:
 	PORT=$(PORT) $(UV) run python scripts/pack_db.py
 
+# The sandbox image ships DejaVu + Liberation only, so the UI's emoji (zoom controls,
+# minimap, file icons) render as boxes unless an emoji font is on the fontconfig path.
 screenshots:
+	FONTCONFIG_FILE=$$(nix build --impure --no-link --print-out-paths --expr \
+	  'with (builtins.getFlake "nixpkgs").legacyPackages.$${builtins.currentSystem}; \
+	   makeFontsConf { fontDirectories = [ dejavu_fonts liberation_ttf noto-fonts-color-emoji ]; }' \
+	  2>/dev/null || echo $$FONTCONFIG_FILE) \
 	playwright-python scripts/generate_docs_screenshots.py
 
 docs: screenshots

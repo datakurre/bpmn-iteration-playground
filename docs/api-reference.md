@@ -91,7 +91,70 @@ Re-triggers the execution harness for a failed agent task using the prior checkp
 }
 ```
 
-Creates a new branched instance rooted at the specified savepoint with duplicate workspace blob.
+Creates a new branched instance rooted at the specified savepoint, with an independent
+duplicate of that savepoint's workspace blob.
+
+---
+
+### Purge Save Points
+`DELETE /instance/{workflow_id}/savepoints`
+
+Deletes every savepoint older than an anchor, releasing its workspace blob. Requires
+`OPERATOR` or higher, like the other destructive routes.
+
+**Request Body** — exactly one anchor:
+```json
+{ "before_task_id": "7fae39ca-8cb1-4b73-8ffa-9c17aea56859" }
+```
+```json
+{ "before": "2026-08-21T18:43:32+00:00" }
+```
+
+**Response:**
+```json
+{ "purged": 2, "remaining": 3 }
+```
+
+Every savepoint belonging to the anchor task is kept, along with everything newer. Supplying
+neither anchor or both returns `400` — a malformed request is never read as "purge all".
+Retention is deliberately manual; there is no scheduled or automatic expiry.
+
+---
+
+### Workspace Access
+- `GET /instance/{workflow_id}/workspace` — Download the whole workspace as a `tar.zst` archive.
+- `GET /instance/{workflow_id}/workspace/files` — File manifest (`file_count`, `total_size`, `files[]`, `artifacts[]`).
+- `GET /instance/{workflow_id}/workspace/file?path=document.md` — Stream a single file out of the archive without unpacking it.
+
+The manifest is also included on the instance state as `workspace_metadata`, which is what the
+instance view's **Workspace Files** panel renders.
+
+---
+
+## Events, Messages & Timers
+
+### Deliver an External Message
+`POST /instance/{workflow_id}/message/{message_name}`
+
+Delivers a payload to a waiting message catch event, or spawns a child from an event
+subprocess whose message start event matches.
+
+**Request Body:**
+```json
+{ "payload": { "task_brief": "Audit the docs tree against shipped features" } }
+```
+
+The payload lands on the receiving scope's data, including a subprocess created by this very
+message — so a freshly spawned child can read what it was spawned to do.
+
+### Inspect What an Instance Is Waiting On
+`GET /instance/{workflow_id}/events/pending`
+
+Lists the message and timer events the instance is currently parked on.
+
+### Audit Log & Streams
+- `GET /instance/{workflow_id}/events` — Full audit event log for the instance.
+- `GET /instance/{workflow_id}/events/stream` — Server-sent events stream of state transitions.
 
 ---
 
@@ -119,6 +182,13 @@ Creates a new branched instance rooted at the specified savepoint with duplicate
 - `GET /api/webhooks` — List active webhook subscriptions.
 - `POST /api/webhooks` — Register a webhook URL for lifecycle events (`workflow_started`, `pi_completed`, etc.).
 - `DELETE /api/webhooks/{id}` — Delete a webhook registration.
+
+---
+
+## Observability
+
+- `GET /health` — Public, unauthenticated liveness check.
+- `GET /metrics` — Prometheus exposition: instance counts by status, ZODB size, active jobs.
 
 ---
 

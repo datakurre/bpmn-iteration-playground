@@ -22,12 +22,23 @@ export function buildPurgeRequest(point: SavePointSummary): PurgeRequest {
   return { before_task_id: point.task_id };
 }
 
-/** Every savepoint strictly older than the anchor's own savepoint -- never the anchor itself. */
+/**
+ * Every savepoint strictly older than the anchor *task* -- never the anchor's own points.
+ *
+ * The anchor is the task, not the clicked savepoint, because that is all `before_task_id`
+ * can express on the wire. A task normally has two savepoints (`before_harness`,
+ * `after_harness`); counting from the clicked one instead would undercount, and the server
+ * would delete a savepoint this dialog had promised to keep.
+ */
 export function selectPurgedIds(points: SavePointSummary[], anchorId: string): string[] {
   const anchor = points.find((p) => p.id === anchorId);
   if (!anchor || !anchor.created_at) return [];
-  const cutoff = anchor.created_at;
-  return points.filter((p) => p.id !== anchorId && (p.created_at ?? "") < cutoff).map((p) => p.id);
+  const cutoff = points
+    .filter((p) => p.task_id === anchor.task_id && p.created_at)
+    .reduce((min, p) => (p.created_at! < min ? p.created_at! : min), anchor.created_at);
+  return points
+    .filter((p) => p.task_id !== anchor.task_id && (p.created_at ?? "") < cutoff)
+    .map((p) => p.id);
 }
 
 export function describePurge(points: SavePointSummary[], anchorId: string): string {

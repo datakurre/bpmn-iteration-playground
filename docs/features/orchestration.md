@@ -13,10 +13,10 @@ Pi Workflow Studio combines the formal execution semantics of **BPMN 2.0** with 
                               |
                               v
 +-------------------------------------------------------------+
-|                      WorkflowService                        |
+|                       WorkflowService                       |
 |  - Manages SpiffWorkflow engine instances                   |
 |  - Synchronizes task and workflow variable scope            |
-|  - Triggers Pi RPC subprocess execution                     |
+|  - Dispatches agent turns via the AdapterRegistry           |
 |  - Creates and manages savepoint checkpoints                |
 +-------------------------------------------------------------+
          |                                           |

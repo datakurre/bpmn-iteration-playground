@@ -51,7 +51,7 @@ The system defaults to the `opencode-go` provider (and optionally supports `open
 DEFAULT_PROVIDER = "opencode-go"
 ```
 
-To prevent client libraries from aborting before initiating HTTP requests, `PiRpcClient` passes a placeholder authorization key:
+To prevent client libraries from aborting before initiating HTTP requests, `PiClient` passes a placeholder authorization key:
 
 ```python
 env = {
@@ -73,7 +73,7 @@ For local testing, offline development, or environments without live model crede
 export PI_OFFLINE=1
 ```
 
-When offline or when the remote model is unavailable, `PiRpcClient` automatically routes execution to `scripts/pi-demo`, returning a validated mock analysis instantly and allowing the BPMN workflow to continue seamlessly.
+When offline or when the remote model is unavailable, `PiClient` automatically routes execution to `scripts/pi-demo`, returning a validated mock analysis instantly and allowing the BPMN workflow to continue seamlessly.
 
 ---
 

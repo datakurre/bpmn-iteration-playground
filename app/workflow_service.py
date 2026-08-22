@@ -293,6 +293,8 @@ class WorkflowService:
             "pi_session_id": record.get("pi_session_id") or record.get("data", {}).get("pi_session_id"),
             "network": record.get("network") or record.get("data", {}).get("network"),
             "policy_error": record.get("policy_error") or record.get("data", {}).get("policy_error"),
+            "workspace_metadata": record.get("workspace_metadata")
+            or record.get("data", {}).get("workspace_metadata"),
             "save_points": [self._save_point_summary(point) for point in record.get("save_points", [])],
             "events": record.get("events", []),
             "parent_workflow_id": record.get("parent_workflow_id"),
@@ -602,8 +604,11 @@ class WorkflowService:
         Deliberately manual-only, per plans/concepts.md "Savepoint retention is a manual
         purge" -- an age/count policy can't judge which past states are still worth forking
         from, only the user can. Exactly one anchor is required: `before` (an ISO-8601
-        timestamp) or `before_task_id` (resolved to the newest savepoint carrying that task,
-        whose created_at becomes the cutoff). The savepoint at the cutoff itself is kept.
+        timestamp) or `before_task_id` (resolved to the *oldest* savepoint carrying that task,
+        whose created_at becomes the cutoff). Every savepoint of the anchor task is kept, not
+        just its newest: an agent task records both `before_harness` and `after_harness`, the
+        request carries only the task id, and the UI lets the operator click either one -- so
+        anchoring on the newest would delete the very savepoint they clicked Purge on.
         """
         if bool(before) == bool(before_task_id):
             raise ValueError("purge requires exactly one of 'before' or 'before_task_id'")
@@ -617,7 +622,7 @@ class WorkflowService:
                 task_points = [p for p in points if p.get("task_id") == before_task_id]
                 if not task_points:
                     raise ValueError(f"no savepoints found for task {before_task_id!r}")
-                cutoff = max(p["created_at"] for p in task_points)
+                cutoff = min(p["created_at"] for p in task_points)
             else:
                 cutoff = before
 

@@ -61,6 +61,7 @@ It:
 - Implements fork/resume **savepoints** at every durable boundary (`before_harness`, `after_harness`, `human_wait`), preserving `session_id` to continue context trees. Superseded attempts of the same turn are pruned (`SAVEPOINT_ATTEMPT_RETENTION`, default 1).
 - Parks the graph on **message and timer catch events**, so external systems and deadlines are nodes in the diagram rather than out-of-band polling.
 - Ships focused **Nix flake apps** (`pi-bpmn-json-form-builder`, `pi-text-analysis`, `pi-contract-review`) wrapping Pi with task-specific prompts.
+- Runs deterministic, non-LLM build steps as first-class BPMN nodes through **`ShellAdapter`** (`harness_type: shell`) — a declared command executed in the instance workspace, whose exit code the graph can branch on (`workflows/beamer_slides.bpmn` compiles LaTeX this way).
 - Runs Pi inside **[agent-sandbox](https://github.com/datakurre/agent-sandbox)** (vendored as a git submodule, `vendor/agent-sandbox`) — a Podman-based sandbox that enforces per-task network/secret policy — via `SandboxPiAdapter`, as an alternative to the bare-subprocess `PiAdapter`.
 
 **Key capabilities:**
@@ -87,6 +88,7 @@ app/
     sandbox_policy.py – agent-sandbox network policy rendered into a workspace AGENTS.md
     pi_adapter.py    – PiAdapter: wraps PiClient as a BaseAdapter
     sandbox_adapter.py – SandboxPiAdapter: runs Pi via `agent-sandbox --programmatic` (Podman isolation)
+    shell_adapter.py – ShellAdapter: runs a BPMN-declared command in the workspace (non-LLM harness)
     mock_adapter.py  – MockAdapter: deterministic in-process stub for tests
     registry.py      – AdapterRegistry: maps harness_type → adapter
   templates/         – Jinja2-rendered HTML (dashboard, instance, history, admin, editor)
@@ -253,6 +255,16 @@ vendor/agent-sandbox – git submodule: Rust CLI + Podman sandbox, isolates Pi's
 - **Per-task network policy**: `build_agents_md()` (`app/adapters/sandbox_policy.py`) generates/merges a `toml agent-sandbox` block — `allowed_hosts`, `allowed_routes` (proxied secret injection), `ports` — from BPMN task `camunda:properties` (`sandbox_policy` / `network_policy` / `allowed_hosts` / `allowed_routes` / `ports`), layered on the repo's own `AGENTS.md` policy block at the top of this file.
 - **Output contract**: the sandbox wraps Pi's stdout in an envelope (`{"status", "stdout", "stderr", "network", "policy_error"}`); the adapter unwraps it, then parses inner lines as Pi JSON events same as the direct adapter.
 
+## 4c. Shell Harness (deterministic pipeline steps)
+
+- **Adapter**: `ShellAdapter` (`app/adapters/shell_adapter.py`), registered as `harness_type` `shell`. This is the non-LLM half the adapter registry exists for — a compiler, slicer, or CAM step is a BPMN node like any other.
+- **Trust boundary**: the adapter *ignores the generated prompt entirely*. `command` comes only from the task's `camunda:properties`, never from workflow data, for the same reason `resolve_input()` refuses to evaluate workflow data as code: that data is largely agent-written.
+- **Properties**: `command` (required unless `template` is set), `shell` (run via `/bin/sh -c`), `workdir`, `template`, `timeout`, `artifacts` (globs), `fail_on_error`, `env` (JSON), `log_tail`.
+- **Failure is data, not a halt**: by default a non-zero exit fails the turn, which parks the instance for a human Retry. Setting `fail_on_error="false"` inverts that — the *turn* succeeds while the published `${status}` is `failed`, so an exclusive gateway can route the failure (e.g. back to the agent with `${log}`) instead of stalling. This is what makes a compiler-in-the-loop possible.
+- **Output contract**: mirrors the agent JSON contract (`status`, `summary`, `findings`, `artifacts`, `next_action`) plus `exit_code`, `stdout`, `stderr`, `log`, so the same `camunda:outputParameter` idiom works for agent and non-agent tasks alike.
+- **Workspace templates**: `template="<name>"` copies `workspace_templates/<name>/` into the instance workspace via the `prepare_workspace` hook, **never overwriting existing files** — so agent edits survive later turns re-running the scaffold. A task declaring only `template` (no `command`) is a pure scaffold step.
+- **Streaming**: each output line is emitted as a `shell_output` event through the same `on_event` channel Pi turns use, so a long build tails live in the instance UI. Output is chunk-read, not `readline()`-read, because a LaTeX log line can exceed `StreamReader`'s 64 KiB limit.
+
 ## 5. Auth & Security
 
 - **Roles**: `ADMIN > OPERATOR > VIEWER` via `ADMIN_TOKEN` and `API_KEYS` env vars (`key:role` CSV).
@@ -281,4 +293,4 @@ vendor/agent-sandbox – git submodule: Rust CLI + Podman sandbox, isolates Pi's
 2. Register via `AdapterRegistry.register(MyAdapter())` in `WorkflowService.__init__` or at app startup.
 3. Set `harness_type` in the BPMN task's Camunda properties to your `adapter_type` string.
 
-See §4b for the `SandboxPiAdapter` as a worked example of a second adapter alongside the default `PiAdapter`.
+See §4b for the `SandboxPiAdapter` as a worked example of a second agent adapter, and §4c for `ShellAdapter` as a worked example of a *non-agent* harness — the case where `prompt` is ignored and the task is defined entirely by its BPMN properties.

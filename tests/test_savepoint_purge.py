@@ -126,3 +126,36 @@ async def test_purge_does_not_affect_existing_forks(service: WorkflowService) ->
     fork_record = service.store.load(fork_id)
     assert fork_record is not None
     assert service.store.get_workspace(fork_id) == fork_workspace_before
+
+
+@pytest.mark.anyio
+async def test_purge_before_task_keeps_all_of_the_anchor_tasks_savepoints(
+    service: WorkflowService,
+) -> None:
+    """Anchoring on a task keeps *every* savepoint of that task, not just its newest.
+
+    An agent task records two savepoints (`before_harness`, `after_harness`). Resolving the
+    anchor to the task's newest point silently deleted its `before_harness` sibling -- which
+    is the very savepoint the operator clicked Purge on in the UI, and which the confirmation
+    dialog had promised to keep. See plans/concepts.md "Savepoint retention is a manual purge".
+    """
+    started = await _start_and_wait(service)
+    wf_id = started["workflow_id"]
+
+    points = _sorted_points(service, wf_id)
+    counts: dict[str, list[dict[str, Any]]] = {}
+    for p in points:
+        counts.setdefault(p["task_id"], []).append(p)
+    anchor_task_id, anchor_points = next(
+        (tid, pts) for tid, pts in counts.items() if len(pts) >= 2
+    )
+    older = [p for p in points if p["created_at"] < min(a["created_at"] for a in anchor_points)]
+
+    result = await service.purge_save_points(wf_id, before_task_id=anchor_task_id)
+
+    remaining_ids = {p["id"] for p in service.store.load(wf_id)["save_points"]}  # type: ignore[index]
+    for p in anchor_points:
+        assert p["id"] in remaining_ids, "the anchor task's own savepoints must all survive"
+    for p in older:
+        assert p["id"] not in remaining_ids
+    assert result["purged"] == len(older)

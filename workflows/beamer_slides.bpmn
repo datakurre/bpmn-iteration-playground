@@ -1,0 +1,266 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_BeamerSlides" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="beamer_slides" name="Beamer Slide Deck" isExecutable="true">
+    <bpmn:documentation>Produce a LaTeX Beamer deck (Metropolis theme) from a brief. Two loops, deliberately separated: a planning loop where a human settles the outline before any LaTeX exists, and an iteration loop where the agent revises slides.tex. The compiler is a first-class participant -- `make pdf` runs through the deterministic `shell` harness, and a non-zero exit is routed as data (build_status) back to the slide agent together with the log, rather than halting the instance. Slides are then rendered to PNG so the human reviews the deck as it actually looks. Toolchain is pinned by the workspace flake (texliveBasic.withPackages + poppler_utils), scaffolded by the Prepare Workspace task. Note: the build-repair loop is unbounded by design of the graph -- if LaTeX can never be satisfied it will keep iterating, so watch the instance or cancel it.</bpmn:documentation>
+    <bpmn:startEvent id="Start_Deck" name="Receive Brief">
+      <bpmn:outgoing>Flow_To_Plan</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_To_Plan" sourceRef="Start_Deck" targetRef="Task_Plan" />
+    <bpmn:serviceTask id="Task_Plan" name="Plan Deck Outline">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="presentation_planner" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="brief">Plan a ${duration_minutes}-minute talk on ${topic} for ${audience}. Write the agreed structure to outline.md in the workspace: one section per major beat, with the intended slide titles and the single point each slide must land. Do not write LaTeX yet.</camunda:inputParameter>
+          <camunda:inputParameter name="outline_feedback">${outline_feedback}</camunda:inputParameter>
+          <camunda:outputParameter name="plan_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="plan_summary">${summary}</camunda:outputParameter>
+          <camunda:outputParameter name="plan_artifacts">${artifacts}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_To_Plan</bpmn:incoming>
+      <bpmn:incoming>Flow_Outline_Revise</bpmn:incoming>
+      <bpmn:outgoing>Flow_Plan_Review</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_Plan_Review" sourceRef="Task_Plan" targetRef="Task_Review_Outline" />
+    <bpmn:userTask id="Task_Review_Outline" name="Review Outline">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="outline_preview" label="### Proposed outline&#10;Read `outline.md` in the workspace browser. Settle the structure here -- revising an outline is cheap, revising a compiled deck is not." type="markdown" />
+          <camunda:formField id="outline_decision" label="Decision" type="string" defaultValue="approved" />
+          <camunda:formField id="outline_feedback" label="What should change? (when requesting revisions)" type="textarea" />
+        </camunda:formData>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Plan_Review</bpmn:incoming>
+      <bpmn:outgoing>Flow_Review_GW</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="Flow_Review_GW" sourceRef="Task_Review_Outline" targetRef="GW_Outline" />
+    <bpmn:exclusiveGateway id="GW_Outline" name="Outline agreed?">
+      <bpmn:incoming>Flow_Review_GW</bpmn:incoming>
+      <bpmn:outgoing>Flow_Outline_OK</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Outline_Revise</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_Outline_OK" name="Approved" sourceRef="GW_Outline" targetRef="Task_Scaffold">
+      <bpmn:conditionExpression>outline_decision == 'approved'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Outline_Revise" name="Replan" sourceRef="GW_Outline" targetRef="Task_Plan">
+      <bpmn:conditionExpression>outline_decision != 'approved'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:serviceTask id="Task_Scaffold" name="Prepare Workspace">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="shell" />
+          <camunda:property name="template" value="beamer" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:outputParameter name="scaffold_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="scaffold_summary">${summary}</camunda:outputParameter>
+          <camunda:outputParameter name="scaffold_artifacts">${artifacts}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Outline_OK</bpmn:incoming>
+      <bpmn:outgoing>Flow_Scaffold_Slides</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_Scaffold_Slides" sourceRef="Task_Scaffold" targetRef="Task_Slides" />
+    <bpmn:serviceTask id="Task_Slides" name="Write / Revise Slides">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="beamer_slide_author" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="brief">Edit slides.tex so it realises outline.md as a ${duration_minutes}-minute Metropolis deck for ${audience}. Keep the metropolis theme and the XeLaTeX-compatible preamble; build with `make pdf` yourself before reporting. Report artifacts you changed.</camunda:inputParameter>
+          <camunda:inputParameter name="outline_summary">${plan_summary}</camunda:inputParameter>
+          <camunda:inputParameter name="build_log">${build_log}</camunda:inputParameter>
+          <camunda:inputParameter name="deck_feedback">${deck_feedback}</camunda:inputParameter>
+          <camunda:outputParameter name="slides_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="slides_summary">${summary}</camunda:outputParameter>
+          <camunda:outputParameter name="slides_artifacts">${artifacts}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Scaffold_Slides</bpmn:incoming>
+      <bpmn:incoming>Flow_Build_Failed</bpmn:incoming>
+      <bpmn:incoming>Flow_Deck_Revise</bpmn:incoming>
+      <bpmn:outgoing>Flow_Slides_Build</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_Slides_Build" sourceRef="Task_Slides" targetRef="Task_Build" />
+    <bpmn:serviceTask id="Task_Build" name="Build PDF">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="shell" />
+          <camunda:property name="command" value="make pdf" />
+          <camunda:property name="artifacts" value="slides.pdf" />
+          <camunda:property name="timeout" value="1800" />
+          <camunda:property name="fail_on_error" value="false" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:outputParameter name="build_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="build_log">${log}</camunda:outputParameter>
+          <camunda:outputParameter name="build_exit_code">${exit_code}</camunda:outputParameter>
+          <camunda:outputParameter name="build_artifacts">${artifacts}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Slides_Build</bpmn:incoming>
+      <bpmn:outgoing>Flow_Build_GW</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_Build_GW" sourceRef="Task_Build" targetRef="GW_Build" />
+    <bpmn:exclusiveGateway id="GW_Build" name="LaTeX compiled?">
+      <bpmn:incoming>Flow_Build_GW</bpmn:incoming>
+      <bpmn:outgoing>Flow_Build_OK</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Build_Failed</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_Build_OK" name="Compiled" sourceRef="GW_Build" targetRef="Task_Images">
+      <bpmn:conditionExpression>build_status == 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Build_Failed" name="Repair (log to agent)" sourceRef="GW_Build" targetRef="Task_Slides">
+      <bpmn:conditionExpression>build_status != 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:serviceTask id="Task_Images" name="Render Slide Images">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="shell" />
+          <camunda:property name="command" value="make images" />
+          <camunda:property name="artifacts" value="images/*.png, slides.pdf" />
+          <camunda:property name="timeout" value="600" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:outputParameter name="images_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="image_artifacts">${artifacts}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Build_OK</bpmn:incoming>
+      <bpmn:outgoing>Flow_Images_Review</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_Images_Review" sourceRef="Task_Images" targetRef="Task_Review_Deck" />
+    <bpmn:userTask id="Task_Review_Deck" name="Review Rendered Deck">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="deck_preview" label="### Rendered deck&#10;Open `images/slide-*.png` in the workspace browser to see the slides as they compiled, or download `slides.pdf`." type="markdown" />
+          <camunda:formField id="deck_decision" label="Decision" type="string" defaultValue="approved" />
+          <camunda:formField id="deck_feedback" label="Requested changes (when not approving)" type="textarea" />
+        </camunda:formData>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Images_Review</bpmn:incoming>
+      <bpmn:outgoing>Flow_Review_Deck_GW</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="Flow_Review_Deck_GW" sourceRef="Task_Review_Deck" targetRef="GW_Deck" />
+    <bpmn:exclusiveGateway id="GW_Deck" name="Deck approved?">
+      <bpmn:incoming>Flow_Review_Deck_GW</bpmn:incoming>
+      <bpmn:outgoing>Flow_Deck_Approved</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Deck_Revise</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_Deck_Approved" name="Approved" sourceRef="GW_Deck" targetRef="End_Deck">
+      <bpmn:conditionExpression>deck_decision == 'approved'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Deck_Revise" name="Iterate slides" sourceRef="GW_Deck" targetRef="Task_Slides">
+      <bpmn:conditionExpression>deck_decision != 'approved'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:endEvent id="End_Deck" name="Deck Ready">
+      <bpmn:incoming>Flow_Deck_Approved</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_BeamerSlides">
+    <bpmndi:BPMNPlane id="BPMNPlane_BeamerSlides" bpmnElement="beamer_slides">
+      <bpmndi:BPMNShape id="Start_Deck_di" bpmnElement="Start_Deck">
+        <dc:Bounds x="60" y="222" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Plan_di" bpmnElement="Task_Plan">
+        <dc:Bounds x="140" y="200" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Review_Outline_di" bpmnElement="Task_Review_Outline">
+        <dc:Bounds x="330" y="200" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_Outline_di" bpmnElement="GW_Outline" isMarkerVisible="true">
+        <dc:Bounds x="530" y="215" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Scaffold_di" bpmnElement="Task_Scaffold">
+        <dc:Bounds x="620" y="200" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Slides_di" bpmnElement="Task_Slides">
+        <dc:Bounds x="820" y="200" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Build_di" bpmnElement="Task_Build">
+        <dc:Bounds x="1020" y="200" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_Build_di" bpmnElement="GW_Build" isMarkerVisible="true">
+        <dc:Bounds x="1220" y="215" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Images_di" bpmnElement="Task_Images">
+        <dc:Bounds x="1310" y="200" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Review_Deck_di" bpmnElement="Task_Review_Deck">
+        <dc:Bounds x="1510" y="200" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_Deck_di" bpmnElement="GW_Deck" isMarkerVisible="true">
+        <dc:Bounds x="1710" y="215" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Deck_di" bpmnElement="End_Deck">
+        <dc:Bounds x="1810" y="222" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_To_Plan_di" bpmnElement="Flow_To_Plan">
+        <di:waypoint x="96" y="240" />
+        <di:waypoint x="140" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Plan_Review_di" bpmnElement="Flow_Plan_Review">
+        <di:waypoint x="280" y="240" />
+        <di:waypoint x="330" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Review_GW_di" bpmnElement="Flow_Review_GW">
+        <di:waypoint x="480" y="240" />
+        <di:waypoint x="530" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Outline_OK_di" bpmnElement="Flow_Outline_OK">
+        <di:waypoint x="580" y="240" />
+        <di:waypoint x="620" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Outline_Revise_di" bpmnElement="Flow_Outline_Revise">
+        <di:waypoint x="555" y="265" />
+        <di:waypoint x="555" y="380" />
+        <di:waypoint x="210" y="380" />
+        <di:waypoint x="210" y="280" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Scaffold_Slides_di" bpmnElement="Flow_Scaffold_Slides">
+        <di:waypoint x="770" y="240" />
+        <di:waypoint x="820" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Slides_Build_di" bpmnElement="Flow_Slides_Build">
+        <di:waypoint x="970" y="240" />
+        <di:waypoint x="1020" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Build_GW_di" bpmnElement="Flow_Build_GW">
+        <di:waypoint x="1170" y="240" />
+        <di:waypoint x="1220" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Build_OK_di" bpmnElement="Flow_Build_OK">
+        <di:waypoint x="1270" y="240" />
+        <di:waypoint x="1310" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Build_Failed_di" bpmnElement="Flow_Build_Failed">
+        <di:waypoint x="1245" y="265" />
+        <di:waypoint x="1245" y="440" />
+        <di:waypoint x="895" y="440" />
+        <di:waypoint x="895" y="280" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Images_Review_di" bpmnElement="Flow_Images_Review">
+        <di:waypoint x="1460" y="240" />
+        <di:waypoint x="1510" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Review_Deck_GW_di" bpmnElement="Flow_Review_Deck_GW">
+        <di:waypoint x="1660" y="240" />
+        <di:waypoint x="1710" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Deck_Approved_di" bpmnElement="Flow_Deck_Approved">
+        <di:waypoint x="1760" y="240" />
+        <di:waypoint x="1810" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Deck_Revise_di" bpmnElement="Flow_Deck_Revise">
+        <di:waypoint x="1735" y="215" />
+        <di:waypoint x="1735" y="120" />
+        <di:waypoint x="895" y="120" />
+        <di:waypoint x="895" y="200" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

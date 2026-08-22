@@ -8,6 +8,7 @@ from pathlib import Path
 from app.adapters.base import BaseAdapter
 from app.adapters.pi_adapter import PiAdapter
 from app.adapters.sandbox_adapter import SandboxPiAdapter
+from app.adapters.shell_adapter import ShellAdapter
 
 logger = logging.getLogger("bpmn.adapters")
 
@@ -17,11 +18,12 @@ class AdapterRegistry:
 
     def __init__(self, auto_discover: bool = True) -> None:
         self._adapters: dict[str, BaseAdapter] = {}
-        # Register default Pi adapter and Sandbox adapter
+        # Register default Pi adapter, Sandbox adapter and the deterministic Shell adapter
         pi_adapter = PiAdapter()
         sandbox_adapter = SandboxPiAdapter()
         self.register(pi_adapter)
         self.register(sandbox_adapter)
+        self.register(ShellAdapter())
         # Register alias for agent_sandbox
         self._adapters["agent_sandbox"] = sandbox_adapter
 

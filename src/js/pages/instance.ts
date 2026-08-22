@@ -48,7 +48,8 @@ interface WorkflowState {
   tasks: TaskSummary[];
   jobs?: Record<string, JobStatus>;
   save_points?: SavePointSummary[];
-  data: Record<string, unknown> & { workspace_metadata?: WorkspaceMetadata };
+  data: Record<string, unknown>;
+  workspace_metadata?: WorkspaceMetadata;
 }
 
 const id = window.__WORKFLOW_ID__ ?? "";
@@ -278,7 +279,7 @@ function renderState(next: WorkflowState): void {
   const dataEl = $("data");
   if (dataEl) dataEl.textContent = JSON.stringify(next.data, null, 2);
 
-  const wsMeta = next.data.workspace_metadata;
+  const wsMeta = next.workspace_metadata;
   const wsFiles = wsMeta?.files;
   if (wsFiles && wsFiles.length > 0) {
     const wsCard = $("workspace-files-card");

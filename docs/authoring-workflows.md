@@ -64,6 +64,100 @@ All executable workflows are standard BPMN 2.0 XML files placed in `workflows/`.
 - `harness_type`: Adapter to dispatch (`pi_agent`, `mock_agent`, or custom).
 - `agent_role`: Role prompt identifier passed to the AI harness.
 
+### Input Parameters — feeding data into a prompt
+
+`camunda:inputParameter` builds the values an agent turn sees. Values are resolved by
+`resolve_input()` (`app/engine.py`), a plain dict/list lookup with string interpolation —
+**no `eval`, no script engine**, so nothing in workflow data can execute.
+
+```xml
+<bpmn:serviceTask id="Task_Revise" name="Revise Draft">
+  <bpmn:extensionElements>
+    <camunda:inputOutput>
+      <camunda:inputParameter name="brief">${topic}</camunda:inputParameter>
+      <camunda:inputParameter name="first_finding">${qa_findings.0}</camunda:inputParameter>
+      <camunda:inputParameter name="author">${reviewer.profile.name}</camunda:inputParameter>
+      <camunda:inputParameter name="header">Revision of "${topic}" for ${reviewer.profile.name}</camunda:inputParameter>
+    </camunda:inputOutput>
+  </bpmn:extensionElements>
+</bpmn:serviceTask>
+```
+
+| Form | Resolves to |
+| :--- | :--- |
+| `${name}` | `workflow.data["name"]`, **preserving its type** — an int stays an int, a list stays a list |
+| `${a.b.c}` | Dotted path through nested dicts |
+| `${findings.0.title}` | Numeric segments index into lists |
+| `Text ${a} and ${b}` | Mixed strings interpolate; the result is always a string |
+| `literal` | No `${…}`, so passed through untouched |
+
+Any miss along a path — a missing key, an out-of-range index, or a path running into a
+non-container — yields `None` rather than raising, and an interpolated miss contributes an
+empty string instead of leaking `${…}` into the prompt.
+
+Arithmetic, comparisons, function calls and filters are deliberately **not** supported.
+
+### Output Parameters — scoping what a task publishes
+
+A service task publishes its result to the workflow only through declared
+`camunda:outputParameter` entries, so gateways route on task-scoped names and parallel agent
+turns cannot overwrite one another:
+
+```xml
+<camunda:outputParameter name="draft_status">status</camunda:outputParameter>
+<camunda:outputParameter name="draft_summary">summary</camunda:outputParameter>
+<camunda:outputParameter name="draft_artifacts">artifacts</camunda:outputParameter>
+```
+
+The gateway then routes on `draft_status == 'success'` rather than a shared `agent_status`.
+
+### Spawning children from a long-running process
+
+A `subProcess` with `triggeredByEvent="true"` and a message start event spawns one child
+instance per message received, while the parent stays open:
+
+```xml
+<bpmn:message id="Message_Spawn_Requested" name="spawn_requested" />
+
+<bpmn:subProcess id="Spawn" name="Spawn Child Task" triggeredByEvent="true">
+  <bpmn:startEvent id="Spawn_Start" name="Spawn Requested">
+    <bpmn:messageEventDefinition messageRef="Message_Spawn_Requested" />
+  </bpmn:startEvent>
+  <!-- … the child's own tasks … -->
+</bpmn:subProcess>
+```
+
+Deliver a spawn with `POST /instance/{id}/message/spawn_requested` and a JSON `payload`; the
+payload lands on the new child's data. `workflows/project.bpmn` is a working example.
+
+### Putting a build tool in the loop
+
+A `shell` task runs a command declared in the diagram, so a compiler or converter is a node
+rather than something the agent is trusted to have run:
+
+```xml
+<bpmn:serviceTask id="Task_Build" name="Build PDF">
+  <bpmn:extensionElements>
+    <camunda:properties>
+      <camunda:property name="harness_type" value="shell" />
+      <camunda:property name="command" value="make pdf" />
+      <camunda:property name="fail_on_error" value="false" />
+    </camunda:properties>
+    <camunda:inputOutput>
+      <camunda:outputParameter name="build_status">${status}</camunda:outputParameter>
+      <camunda:outputParameter name="build_log">${log}</camunda:outputParameter>
+    </camunda:inputOutput>
+  </bpmn:extensionElements>
+</bpmn:serviceTask>
+```
+
+`fail_on_error="false"` is what makes the failure branchable: the turn completes even on a
+non-zero exit, publishing `build_status = 'failed'`, so a gateway can send `${build_log}`
+back to the authoring agent instead of parking the instance. `workflows/beamer_slides.bpmn`
+is a working example — LaTeX errors loop back to the slide agent, and the human only reviews
+a deck that compiled. See [Extending Adapters](extending-adapters.md) for every property the
+shell harness accepts.
+
 ### FormJS Field Types
 - `string`, `text` $\rightarrow$ textfield
 - `long`, `double` $\rightarrow$ number

@@ -1,0 +1,32 @@
+% Deck skeleton. The slide-writing agent edits this file; the Makefile compiles it
+% with XeLaTeX (Metropolis' Fira fonts need it) and renders PNG previews.
+\documentclass[aspectratio=169, 11pt]{beamer}
+
+\usetheme{metropolis}
+\metroset{progressbar=frametitle, numbering=fraction, block=fill}
+
+\usepackage{booktabs}
+\usepackage{microtype}
+\usepackage{appendixnumberbeamer}
+
+\title{Deck Title}
+\subtitle{Subtitle}
+\author{Author}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{frame}{Agenda}
+  \tableofcontents
+\end{frame}
+
+\section{Introduction}
+
+\begin{frame}{Placeholder}
+  The planning task writes \texttt{outline.md}; the slide task turns that outline
+  into the frames below and removes this placeholder.
+\end{frame}
+
+\end{document}

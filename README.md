@@ -48,6 +48,31 @@ Every wait boundary creates a durable save point: `before_harness`,
 `Fork` action for each save point. Forking before the harness reruns Pi;
 forking after the harness resumes orchestration without rerunning Pi.
 
+## Deterministic steps: the shell harness
+
+Not every node in a pipeline is an agent. A task with `harness_type: shell` runs a command
+declared in its BPMN properties inside the instance workspace, and publishes the result
+through the same output contract agent tasks use:
+
+```xml
+<camunda:property name="harness_type" value="shell" />
+<camunda:property name="command" value="make pdf" />
+<camunda:property name="artifacts" value="slides.pdf" />
+<camunda:property name="fail_on_error" value="false" />
+```
+
+The command never comes from workflow data — only from the diagram — because workflow data
+is largely agent-written. `fail_on_error="false"` is the interesting part: a non-zero exit
+then completes the turn with `${status}` set to `failed` instead of halting the instance, so
+a gateway can *route* on the failure. That turns a compiler into a participant in the loop.
+
+`workflows/beamer_slides.bpmn` is the worked example: an agent plans a deck outline, a human
+settles the outline, `template="beamer"` scaffolds a pinned TeX Live toolchain
+(`workspace_templates/beamer/` — `texliveBasic.withPackages` + a `Makefile`), an agent writes
+`slides.tex`, and `make pdf` compiles it. If LaTeX rejects the deck, the log is fed straight
+back to the slide agent for another attempt; once it compiles, `make images` renders one PNG
+per slide so the human reviews the deck as it actually looks rather than approving source.
+
 For a deterministic local showcase without model credentials:
 
 ```bash
