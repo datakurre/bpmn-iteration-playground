@@ -91,7 +91,16 @@ def test_e2e_full_workflow_lifecycle(e2e_client: TestClient) -> None:
     assert submit_resp.status_code == 200
     assert submit_resp.json()["status"] == "completed"
 
-    # 10. Check history detail page
+    # 10. The instance state must carry the manifest the Workspace Files panel binds to.
+    #     It renders from `state.workspace_metadata`; when that key was missing the panel
+    #     stayed hidden forever while /workspace/files still answered correctly, so assert
+    #     both halves agree. scripts/verify_workspace_files_ui.py covers the rendering.
+    ws_state = e2e_client.get(f"/instance/{wf_id}/state").json()
+    ws_meta = ws_state.get("workspace_metadata")
+    assert ws_meta is not None, "state() must expose workspace_metadata for the instance UI"
+    assert e2e_client.get(f"/instance/{wf_id}/workspace/files").json() == ws_meta
+
+    # 11. Check history detail page
     detail_resp = e2e_client.get(f"/history/{wf_id}")
     assert detail_resp.status_code == 200
     assert "Save Point Payload" in detail_resp.text
@@ -99,7 +108,14 @@ def test_e2e_full_workflow_lifecycle(e2e_client: TestClient) -> None:
 
 def test_playwright_scripts_syntax_and_structure() -> None:
     # Verify that verify scripts in scripts/ are valid python files
-    for script_name in ["verify_instance_ui.py", "verify_history_ui.py", "verify_savepoints.py", "verify_retry_ui.py"]:
+    for script_name in [
+        "verify_instance_ui.py",
+        "verify_history_ui.py",
+        "verify_savepoints.py",
+        "verify_retry_ui.py",
+        "verify_savepoint_purge.py",
+        "verify_workspace_files_ui.py",
+    ]:
         script_path = os.path.join("scripts", script_name)
         assert os.path.exists(script_path), f"{script_path} must exist"
         with open(script_path, encoding="utf-8") as f:
