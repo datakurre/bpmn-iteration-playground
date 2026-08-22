@@ -9,7 +9,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from app.adapters.base import AgentResult, BaseAdapter
+from app.adapters.base import AdapterCapabilities, AgentResult, BaseAdapter
 from app.adapters.sandbox_policy import build_agents_md
 from app.pi_client import _final_text, _parse_json
 
@@ -43,6 +43,16 @@ class SandboxPiAdapter(BaseAdapter):
     @property
     def adapter_type(self) -> str:
         return "sandbox_pi"
+
+    @property
+    def capabilities(self) -> AdapterCapabilities:
+        return AdapterCapabilities(
+            display_name="Pi Agent (sandboxed)",
+            supports_sessions=True,
+            timeout_env_var="PI_TIMEOUT_SECONDS",
+            default_timeout_seconds=1800.0,
+            view="agent",
+        )
 
     async def prepare_workspace(self, workdir: str, config: dict[str, str]) -> None:
         """Render this BPMN task's network policy into the workspace AGENTS.md."""

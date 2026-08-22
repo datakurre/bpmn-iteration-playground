@@ -12,6 +12,11 @@ from app.adapters.shell_adapter import ShellAdapter
 
 logger = logging.getLogger("bpmn.adapters")
 
+# A plugin module that imports a built-in adapter must not thereby re-register it.
+# Previously only BaseAdapter and PiAdapter were excluded, so importing ShellAdapter in a
+# plugin silently replaced the registered instance.
+_BUILTIN_ADAPTER_CLASSES = (BaseAdapter, PiAdapter, SandboxPiAdapter, ShellAdapter)
+
 
 class AdapterRegistry:
     """Registry managing pluggable agent adapters keyed by harness_type."""
@@ -35,6 +40,21 @@ class AdapterRegistry:
 
     def register(self, adapter: BaseAdapter) -> None:
         self._adapters[adapter.adapter_type] = adapter
+
+    def replace(self, adapter: BaseAdapter) -> None:
+        """Register `adapter`, taking over every name the previous instance answered to.
+
+        `register()` writes one key. Aliases (`agent_sandbox`) and env-driven bindings
+        (`PI_SANDBOX_ENABLED` rebinding `pi_agent`) point at an *instance*, so a plain
+        re-register silently leaves them on the old one.
+        """
+        previous = self._adapters.get(adapter.adapter_type)
+        self.register(adapter)
+        if previous is None:
+            return
+        for key, existing in list(self._adapters.items()):
+            if existing is previous:
+                self._adapters[key] = adapter
 
     def get(self, harness_type: str) -> BaseAdapter | None:
         return self._adapters.get(harness_type)
@@ -78,7 +98,7 @@ class AdapterRegistry:
                                 if (
                                     inspect.isclass(attr)
                                     and issubclass(attr, BaseAdapter)
-                                    and attr not in (BaseAdapter, PiAdapter)
+                                    and attr not in _BUILTIN_ADAPTER_CLASSES
                                 ):
                                     self.register(attr())
                                     discovered += 1

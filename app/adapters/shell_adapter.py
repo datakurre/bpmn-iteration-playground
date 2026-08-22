@@ -11,7 +11,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from app.adapters.base import AgentResult, BaseAdapter
+from app.adapters.base import AdapterCapabilities, AgentResult, BaseAdapter, resolve_timeout
 
 logger = logging.getLogger("bpmn.shell_adapter")
 
@@ -101,12 +101,28 @@ class ShellAdapter(BaseAdapter):
         point is that a LaTeX log gets fed back into the next agent prompt, not stored.
     """
 
-    def __init__(self, timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS) -> None:
-        self.timeout_seconds = timeout_seconds
+    def __init__(self, timeout_seconds: float | None = None) -> None:
+        self.timeout_seconds = (
+            timeout_seconds if timeout_seconds is not None else resolve_timeout(self.capabilities)
+        )
 
     @property
     def adapter_type(self) -> str:
         return "shell"
+
+    @property
+    def capabilities(self) -> AdapterCapabilities:
+        return AdapterCapabilities(
+            display_name="Shell Command",
+            # A command has no conversation to continue. Declaring this keeps the
+            # orchestrator from handing a build step an agent session id it would only
+            # hold hostage from the agent turns that actually need it.
+            supports_sessions=False,
+            consumes_prompt=False,
+            timeout_env_var="SHELL_TIMEOUT_SECONDS",
+            default_timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+            view="console",
+        )
 
     async def prepare_workspace(self, workdir: str, config: dict[str, str]) -> None:
         """Lay down the task's declared scaffold template, without clobbering existing work."""

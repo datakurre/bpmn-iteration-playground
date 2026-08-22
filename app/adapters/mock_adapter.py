@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.adapters.base import AgentResult, BaseAdapter
+from app.adapters.base import AdapterCapabilities, AgentResult, BaseAdapter
 
 
 class MockAdapter(BaseAdapter):
@@ -22,6 +22,11 @@ class MockAdapter(BaseAdapter):
     @property
     def adapter_type(self) -> str:
         return "mock_agent"
+
+    @property
+    def capabilities(self) -> AdapterCapabilities:
+        # Stands in for an agent, so it reports agent-shaped capabilities.
+        return AdapterCapabilities(display_name="Mock Agent", supports_sessions=True)
 
     async def run(
         self,

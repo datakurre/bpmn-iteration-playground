@@ -19,7 +19,7 @@ from SpiffWorkflow.bpmn.util import BpmnEvent
 from SpiffWorkflow.task import TaskState
 from ZODB.blob import Blob
 
-from app.adapters.base import AgentResult, BaseAdapter
+from app.adapters.base import AdapterCapabilities, AgentResult, BaseAdapter
 from app.adapters.pi_adapter import PiAdapter
 from app.adapters.registry import AdapterRegistry
 from app.adapters.sandbox_adapter import SandboxPiAdapter
@@ -44,6 +44,11 @@ logger = logging.getLogger("bpmn.workflow")
 # success re-triggers _dispatch instance-wide and silently re-runs the agent against a
 # workspace it never actually agreed on, defeating the whole point of the conflict check.
 # Only an explicit retry_task() call clears the flag.
+# The harness a task gets when its BPMN declares none. Existing templates omit
+# harness_type entirely, so this stays pi_agent -- but it is the *default*, not a
+# fallback: an explicitly declared harness that is not registered must fail loudly.
+DEFAULT_HARNESS_TYPE = "pi_agent"
+
 WORKSPACE_CONFLICT_MESSAGE = "workspace changed during this turn; re-run against current state"
 
 CAMUNDA_TO_FORMJS_TYPE: dict[str, str] = {
@@ -234,6 +239,12 @@ class WorkflowService:
                     def adapter_type(self) -> str:
                         return "pi_agent"
 
+                    @property
+                    def capabilities(self) -> AdapterCapabilities:
+                        # Wraps a Pi-shaped client, so it is an agent: it must opt into
+                        # session threading or every turn starts a fresh context.
+                        return AdapterCapabilities(display_name="Pi Agent", supports_sessions=True)
+
                     async def run(self, prompt: str, config: dict[str, str], cwd: str, on_event: Any = None) -> AgentResult:
                         sig = inspect.signature(self.target.run)
                         kwargs: dict[str, Any] = {}
@@ -264,7 +275,11 @@ class WorkflowService:
             except (ValueError, TypeError):
                 default_timeout = 1800.0
             self.registry.register(PiAdapter(PiClient(timeout_seconds=default_timeout)))
-            self.registry.register(SandboxPiAdapter(timeout_seconds=default_timeout))
+            # register() keys off adapter_type only, so re-registering the sandbox adapter
+            # here used to leave the `agent_sandbox` alias and the PI_SANDBOX_ENABLED
+            # binding pointing at the instance the registry built, with a different
+            # timeout. Rebind every name that referred to the old one.
+            self.registry.replace(SandboxPiAdapter(timeout_seconds=default_timeout))
 
         self.jobs: dict[str, asyncio.Task[None]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
@@ -272,6 +287,16 @@ class WorkflowService:
 
     def _lock(self, workflow_id: str) -> asyncio.Lock:
         return self._locks.setdefault(workflow_id, asyncio.Lock())
+
+    def _capabilities(self, task: Any) -> AdapterCapabilities:
+        """What the harness behind this task declares about itself.
+
+        Falls back to a bare declaration named after the harness type so an unregistered
+        or third-party harness still produces readable diagnostics.
+        """
+        harness_type = self.runner.pi_config(task).get("harness_type", DEFAULT_HARNESS_TYPE)
+        adapter = self.registry.get(harness_type)
+        return adapter.capabilities if adapter else AdapterCapabilities(display_name=harness_type)
 
     @property
     def pi_client(self) -> Any:
@@ -887,7 +912,7 @@ class WorkflowService:
                 raise ValueError("task is not failed and waiting for retry")
             job = record.setdefault("jobs", {}).get(task_id)
             if not job or job.get("status") != "failed":
-                raise ValueError("task does not have a failed Pi attempt")
+                raise ValueError("task does not have a failed harness attempt")
             job["status"] = "retry_requested"
             job["attempts"] = 0
             job["generation"] = int(job.get("generation", 0)) + 1
@@ -1136,8 +1161,9 @@ class WorkflowService:
                 if task.task_spec.__class__.__name__ != "ServiceTask":
                     continue
                 config = self.runner.pi_config(task)
-                harness_type = config.get("harness_type", "pi_agent")
-                if harness_type not in ("pi_agent", "mock_agent") and not self.registry.get(harness_type):
+                harness_type = config.get("harness_type", DEFAULT_HARNESS_TYPE)
+                adapter = self.registry.get(harness_type)
+                if adapter is None:
                     task_key = str(task.id)
                     task_name = getattr(task.task_spec, "bpmn_name", task.task_spec.name)
                     if jobs.get(task_key, {}).get("status") != "failed":
@@ -1185,7 +1211,12 @@ class WorkflowService:
                     f":run_{generation}:attempt_{attempts}",
                 )
                 task_name = getattr(task.task_spec, "bpmn_name", task.task_spec.name)
-                inherited = self._inherited_session(workflow, task)
+                # Only harnesses that carry conversational state take part in session
+                # threading. A deterministic step holding an inherited id would register
+                # as a colliding sibling below and force real agent turns to fork for
+                # nothing.
+                sessions = adapter.capabilities.supports_sessions
+                inherited = self._inherited_session(workflow, task) if sessions else None
                 # Continue the branch's session, but fork it whenever this turn is a
                 # re-roll (retry / forked instance) or a sibling branch is already
                 # running against the same session.
@@ -1293,11 +1324,16 @@ class WorkflowService:
                 if "fork" not in config:
                     config["fork"] = "true" if job_entry.get("session_fork") else "false"
 
-            harness_type = config.get("harness_type", "pi_agent")
+            harness_type = config.get("harness_type", DEFAULT_HARNESS_TYPE)
 
-            adapter = self.registry.get(harness_type) or self.registry.get("pi_agent")
+            # No fallback: running a shell task's prompt through Pi because ShellAdapter
+            # happened not to be registered is worse than failing.
+            adapter = self.registry.get(harness_type)
             if not adapter:
-                raise ValueError(f"No adapter registered for harness_type: {harness_type}")
+                raise ValueError(
+                    f"No adapter registered for harness_type {harness_type!r} "
+                    f"(registered: {', '.join(sorted(self.registry.list_types()))})"
+                )
 
             # Unpack per-instance workspace archive (TODO 05)
             blob_or_bytes = self.store.get_workspace(workflow_id)
@@ -1409,19 +1445,24 @@ class WorkflowService:
                 record["policy_error"] = policy_err
                 task.data["policy_error"] = policy_err
 
+            # Name the harness that actually ran. A failing `make pdf` reporting
+            # "Pi exited with code 2" sends the reader hunting for a model misconfiguration.
+            harness_caps = self._capabilities(task)
+            harness_label = harness_caps.display_name
+
             failure_reason = None
             if result.status != "success":
                 failure_reason = result.stderr.strip()
                 if not failure_reason and result.exit_code not in (None, 0):
-                    failure_reason = f"Pi exited with code {result.exit_code}"
+                    failure_reason = f"{harness_label} exited with code {result.exit_code}"
                 elif not failure_reason and not result.text:
-                    failure_reason = (
-                        "Pi exited successfully without producing an assistant result. "
-                        "This usually means no authenticated provider/model is configured; "
-                        "check OpenCode Zen credentials, OPENAI_API_KEY, OPENAI_BASE_URL, and PI_MODEL."
-                    )
+                    failure_reason = f"{harness_label} exited successfully without producing a result."
+                    if harness_caps.no_output_hint:
+                        failure_reason = f"{failure_reason} {harness_caps.no_output_hint}"
                 elif not failure_reason:
-                    failure_reason = "Pi returned text that did not match the required JSON result schema"
+                    failure_reason = (
+                        f"{harness_label} returned output that did not match the required JSON result schema"
+                    )
 
             job.update({"status": result.status, "exit_code": result.exit_code, "stderr": result.stderr[-4000:]})
             if failure_reason:

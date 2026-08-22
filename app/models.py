@@ -187,6 +187,20 @@ class PackResult(BaseModel):
     reclaimed_human: str
 
 
+class HarnessSummary(BaseModel):
+    """A registered harness and what it declares about itself.
+
+    Lets a client (BPMN editor palette, instance UI) discover the available
+    `harness_type` values and how to render a turn, instead of hardcoding them.
+    """
+
+    harness_type: str
+    display_name: str
+    supports_sessions: bool = False
+    consumes_prompt: bool = True
+    view: str = "agent"
+
+
 class TemplateSummary(BaseModel):
     id: str
     name: str

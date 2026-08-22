@@ -20,6 +20,7 @@ from app.models import (
     DeleteInstanceResponse,
     DeleteWebhookResponse,
     ForkRequest,
+    HarnessSummary,
     MessageRequest,
     PackResult,
     PurgeSavePointsRequest,
@@ -219,6 +220,26 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:  # noqa: C901
             ws_manager.disconnect(workflow_id, websocket)
 
     # Template Registry (TODO 08)
+    @app.get("/api/harnesses", response_model=list[HarnessSummary], tags=["Templates"], summary="List registered harness types")
+    async def list_harnesses(
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
+    ) -> list[dict[str, Any]]:
+        registry = get_service().registry
+        harnesses = []
+        for harness_type in sorted(registry.list_types()):
+            adapter = registry.get(harness_type)
+            if adapter is None:
+                continue
+            caps = adapter.capabilities
+            harnesses.append({
+                "harness_type": harness_type,
+                "display_name": caps.display_name,
+                "supports_sessions": caps.supports_sessions,
+                "consumes_prompt": caps.consumes_prompt,
+                "view": caps.view,
+            })
+        return harnesses
+
     @app.get("/api/templates", response_model=list[TemplateSummary], tags=["Templates"], summary="List available BPMN templates")
     async def list_templates(
         role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),

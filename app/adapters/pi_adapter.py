@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.adapters.base import AgentResult, BaseAdapter
+from app.adapters.base import AdapterCapabilities, AgentResult, BaseAdapter
 from app.pi_client import PiClient, PiResult
 
 
@@ -15,6 +15,19 @@ class PiAdapter(BaseAdapter):
     @property
     def adapter_type(self) -> str:
         return "pi_agent"
+
+    @property
+    def capabilities(self) -> AdapterCapabilities:
+        return AdapterCapabilities(
+            display_name="Pi Agent",
+            supports_sessions=True,
+            timeout_env_var="PI_TIMEOUT_SECONDS",
+            default_timeout_seconds=1800.0,
+            no_output_hint=(
+                "This usually means no authenticated provider/model is configured; check OpenCode Zen credentials, OPENAI_API_KEY, OPENAI_BASE_URL, and PI_MODEL."
+            ),
+            view="agent",
+        )
 
     async def run(
         self,
