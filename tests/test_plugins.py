@@ -37,6 +37,7 @@ def test_adapter_registry_and_custom_adapter_execution() -> None:
         sec = CustomSecurityAdapter()
         registry.register(mock)
         registry.register(sec)
+        registry.bind("pi_agent", mock)
 
         assert "pi_agent" in registry.list_types()
         assert "mock_agent" in registry.list_types()

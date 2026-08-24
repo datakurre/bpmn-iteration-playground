@@ -4,7 +4,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.adapters.mock_adapter import MockAdapter
-from app.adapters.registry import AdapterRegistry
 from app.api.server import create_app
 from app.persistence import WorkflowStore
 from app.workflow_service import WorkflowService
@@ -13,15 +12,14 @@ from app.workflow_service import WorkflowService
 @pytest.fixture
 def e2e_client():
     store = WorkflowStore(":memory:")
-    registry = AdapterRegistry()
-    registry.register(MockAdapter(status="success", output={
+    mock = MockAdapter(status="success", output={
         "status": "success",
         "summary": "E2E review completed successfully",
         "findings": ["finding-1", "finding-2"],
         "artifacts": ["document.md"],
         "next_action": "continue",
-    }))
-    service = WorkflowService(store, adapter_registry=registry)
+    })
+    service = WorkflowService(store, mock)
     app = create_app(service=service)
     with TestClient(app) as client:
         yield client

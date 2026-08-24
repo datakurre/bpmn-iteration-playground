@@ -5,6 +5,7 @@ import contextlib
 import inspect
 import logging
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,7 @@ from app.adapters.base import AdapterCapabilities, AgentResult, BaseAdapter
 from app.adapters.pi_adapter import PiAdapter
 from app.adapters.registry import AdapterRegistry
 from app.adapters.sandbox_adapter import SandboxPiAdapter
-from app.engine import WorkflowRunner, resolve_output_mapping, resolve_scope_inputs
+from app.engine import WorkflowRunner, resolve_output_mapping
 from app.events import EventBus
 from app.orchestration import children, jobs, savepoints
 from app.orchestration import fork as fork_module
@@ -114,7 +115,7 @@ class WorkflowService:
                         )
 
                 self.registry.register(GenericAdapter(pi_client))
-        else:
+        elif adapter_registry is None:
             try:
                 default_timeout = float(os.getenv("PI_TIMEOUT_SECONDS", "1800"))
             except (ValueError, TypeError):
