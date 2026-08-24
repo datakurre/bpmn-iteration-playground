@@ -217,14 +217,70 @@ def test_service_task_publishes_only_declared_output_parameters() -> None:
         for implicit in ("agent_status", "agent_output", "agent_text", "status"):
             assert implicit not in state["data"], f"{implicit} leaked into workflow data"
 
-        # ...but still available task-locally for inspection in the UI
-        record = service.store.load(wf_id)
-        assert record is not None
-        task = next(
-            t for t in record["workflow"].get_tasks() if getattr(t.task_spec, "bpmn_id", None) == "ServiceTask_Extract"
-        )
-        assert task.data["agent_status"] == "success"
-        assert task.data["agent_output"]["summary"] == "complete"
+        # ...but still available task-locally for inspection in the UI, via the job
+        # entry -- never via SpiffWorkflow's own task.data, which is inherited by
+        # successor tasks and merged into workflow.data on completion (see
+        # test_completed_instance_data_excludes_harness_scratch_keys for the leak that
+        # writing it there used to cause).
+        extract_task = next(t for t in state["tasks"] if t["bpmn_id"] == "ServiceTask_Extract")
+        job = state["jobs"][extract_task["id"]]
+        assert job["status"] == "success"
+        assert job["output"]["summary"] == "complete"
+
+    asyncio.run(scenario())
+
+
+def test_completed_instance_data_excludes_harness_scratch_keys() -> None:
+    """A task that fails once and then succeeds on retry must not leave its
+    failure_reason (or any other harness-internal key) sitting in the *completed*
+    instance's workflow data.
+
+    Regression test: SpiffWorkflow merges the terminal task's own `task.data` into
+    `workflow.data` when the instance completes, so a scratch key written there (rather
+    than onto the job/record) survives every retry and resurfaces at completion even
+    though a plain mid-workflow snapshot (as in
+    test_service_task_publishes_only_declared_output_parameters, which never reaches
+    "completed") would not show it.
+    """
+
+    class FlakyThenOkPi:
+        calls = 0
+
+        async def run(self, prompt: str, cwd: str) -> PiResult:
+            self.calls += 1
+            if self.calls == 1:
+                return PiResult("failed", None, "", [], "boom: first attempt fails", 1)
+            return PiResult(
+                "success",
+                {"status": "success", "summary": "complete", "findings": [], "artifacts": [], "next_action": "continue"},
+                "result",
+                [],
+                "",
+                0,
+            )
+
+    async def scenario() -> None:
+        pi = FlakyThenOkPi()
+        service = WorkflowService(WorkflowStore(":memory:"), pi)
+        started = await service.start("workflows/contract_review.bpmn", None, {"contract": "text"})
+        wf_id = started["workflow_id"]
+        await asyncio.gather(*list(service.jobs.values()))
+        state = service.state(wf_id)
+        assert state["status"] == "failed"
+        assert state["data"].get("failure_reason") is None or "boom" not in str(state["data"].get("failure_reason"))
+        assert "boom" in (state.get("failure_reason") or "")
+
+        extract_task = next(t for t in state["tasks"] if t["bpmn_id"] == "ServiceTask_Extract")
+        await service.retry_task(wf_id, extract_task["id"])
+        await asyncio.gather(*[job for job in service.jobs.values() if not job.done()])
+        state = service.state(wf_id)
+
+        review_task = next(t for t in state["tasks"] if t["bpmn_id"] == "ServiceTask_Review")
+        state = await service.submit_task(wf_id, review_task["id"], {"decision": "approved"})
+        assert state["status"] == "completed"
+
+        for scratch in ("failure_reason", "agent_status", "agent_output", "agent_text", "status", "policy_error", "network"):
+            assert scratch not in state["data"], f"{scratch} leaked into completed instance data"
 
     asyncio.run(scenario())
 

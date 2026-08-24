@@ -745,8 +745,11 @@ class WorkflowService:
         task_id: str,
         result: AgentResult | PiResult,
         workspace_metadata: dict[str, Any] | None = None,
+        prompt: str | None = None,
     ) -> None:
-        await jobs.complete_pi(self, workflow_id, task_id, result, workspace_metadata=workspace_metadata)
+        await jobs.complete_pi(
+            self, workflow_id, task_id, result, workspace_metadata=workspace_metadata, prompt=prompt
+        )
 
     @staticmethod
     def _status(workflow: Any) -> str:

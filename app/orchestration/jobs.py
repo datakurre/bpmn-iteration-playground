@@ -342,6 +342,7 @@ async def run_pi(service: WorkflowService, workflow_id: str, task_id: str) -> No
     workflow_id = service._get_root_workflow_id(workflow_id)
     workdir = None
     ws_meta: dict[str, Any] | None = None
+    prompt: str | None = None
     try:
         record = service._record(workflow_id)
         task = service.runner.find_task(record["workflow"], task_id)
@@ -432,7 +433,7 @@ async def run_pi(service: WorkflowService, workflow_id: str, task_id: str) -> No
         if workdir:
             cleanup_workspace(workdir)
 
-    await service._complete_pi(workflow_id, task_id, result, workspace_metadata=ws_meta)
+    await service._complete_pi(workflow_id, task_id, result, workspace_metadata=ws_meta, prompt=prompt)
 
 
 async def complete_pi(  # noqa: C901, PLR0912, PLR0915 -- reconciles one agent-turn result into job/task/record/event state across every outcome (success/cancelled/failed); pre-existing complexity
@@ -441,6 +442,7 @@ async def complete_pi(  # noqa: C901, PLR0912, PLR0915 -- reconciles one agent-t
     task_id: str,
     result: AgentResult | PiResult,
     workspace_metadata: dict[str, Any] | None = None,
+    prompt: str | None = None,
 ) -> None:
     workflow_id = service._get_root_workflow_id(workflow_id)
     async with service._lock(workflow_id):
@@ -457,7 +459,6 @@ async def complete_pi(  # noqa: C901, PLR0912, PLR0915 -- reconciles one agent-t
         net_data = getattr(result, "network", None)
         if net_data:
             record["network"] = net_data
-            task.data["network"] = net_data
             with contextlib.suppress(Exception):
                 await ws_manager.broadcast(workflow_id, {
                     "type": "network_summary",
@@ -469,7 +470,6 @@ async def complete_pi(  # noqa: C901, PLR0912, PLR0915 -- reconciles one agent-t
         policy_err = getattr(result, "policy_error", None)
         if policy_err:
             record["policy_error"] = policy_err
-            task.data["policy_error"] = policy_err
 
         # Name the harness that actually ran. A failing `make pdf` reporting
         # "Pi exited with code 2" sends the reader hunting for a model misconfiguration.
@@ -490,7 +490,36 @@ async def complete_pi(  # noqa: C901, PLR0912, PLR0915 -- reconciles one agent-t
                     f"{harness_label} returned output that did not match the required JSON result schema"
                 )
 
-        job.update({"status": result.status, "exit_code": result.exit_code, "stderr": result.stderr[-4000:]})
+        sanitized_output = _sanitize_output(result.output)
+
+        # Task scope: everything needed to see how this task actually ran (command/
+        # prompt, raw output, stderr) lives on `job` -- record["jobs"][task_id] -- never
+        # on SpiffWorkflow's own `task.data`. `task.data` is *inherited* by successor
+        # tasks along a branch and, on the terminal task, merged wholesale into
+        # `workflow.data` when the instance completes (SpiffWorkflow's own engine
+        # behavior, not something this codebase calls). A key written there for "task-
+        # local inspection" doesn't stay task-local: it survives every retry (nothing
+        # clears it, since a later *successful* attempt only ever adds keys, never
+        # removes the previous failure's) and resurfaces in the completed instance's
+        # `workflow.data` the moment any task on that branch finishes the workflow --
+        # not just a failed turn's own `failure_reason`, but the raw `agent_output` of
+        # whichever task happened to run last. `job`, by contrast, is never read by
+        # SpiffWorkflow at all, so nothing here can leak into process-level data no
+        # matter how the graph completes.
+        job.update(
+            {
+                "status": result.status,
+                "exit_code": result.exit_code,
+                "stderr": result.stderr[-4000:],
+                "prompt": prompt[:4000] if prompt else prompt,
+                "output": sanitized_output,
+                "text": result.text,
+            }
+        )
+        if net_data:
+            job["network"] = net_data
+        if policy_err:
+            job["policy_error"] = policy_err
         if failure_reason:
             job["failure_reason"] = failure_reason
             record["failure_reason"] = failure_reason
@@ -502,21 +531,10 @@ async def complete_pi(  # noqa: C901, PLR0912, PLR0915 -- reconciles one agent-t
                     "reason": failure_reason,
                 }
             )
+        else:
+            job.pop("failure_reason", None)
 
-        sanitized_output = _sanitize_output(result.output)
         sources = _output_sources(result, sanitized_output, failure_reason)
-
-        # Task-local scope. Agent results never reach workflow.data implicitly: a
-        # service task publishes to the workflow only through camunda:outputParameters,
-        # so parallel agent turns cannot overwrite each other's verdict.
-        task.data.update(
-            {
-                "agent_status": result.status,
-                "status": sources["status"],
-                "agent_output": sanitized_output,
-                "agent_text": result.text,
-            }
-        )
 
         extensions = getattr(task.task_spec, "extensions", {}) or {}
         output_params = extensions.get("outputParameters", {})
@@ -545,13 +563,8 @@ async def complete_pi(  # noqa: C901, PLR0912, PLR0915 -- reconciles one agent-t
             task.data.update(published)
             task.workflow.data.update(published)
 
-        if failure_reason:
-            task.data["failure_reason"] = failure_reason
-
         if result.status == "success" and getattr(result, "session_id", None):
             record["pi_session_id"] = result.session_id
-            record.setdefault("data", {})["pi_session_id"] = result.session_id
-            task.data["pi_session_id"] = result.session_id
             service._record_session(workflow, task, str(result.session_id))
 
         attempt = job.get("attempts", 1)

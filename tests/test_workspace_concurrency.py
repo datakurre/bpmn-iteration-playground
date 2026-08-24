@@ -67,9 +67,13 @@ async def test_concurrent_turns_do_not_silently_lose_files(service: WorkflowServ
     results: list[tuple[str, AgentResult]] = []
     original_complete_pi = service._complete_pi
 
-    async def _capture(workflow_id: str, task_id: str, result: Any, workspace_metadata: Any = None) -> None:
+    async def _capture(
+        workflow_id: str, task_id: str, result: Any, workspace_metadata: Any = None, prompt: str | None = None
+    ) -> None:
         results.append((task_id, result))
-        return await original_complete_pi(workflow_id, task_id, result, workspace_metadata=workspace_metadata)
+        return await original_complete_pi(
+            workflow_id, task_id, result, workspace_metadata=workspace_metadata, prompt=prompt
+        )
 
     service._complete_pi = _capture  # type: ignore[method-assign]
 
