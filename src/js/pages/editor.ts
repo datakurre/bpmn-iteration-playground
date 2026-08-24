@@ -64,23 +64,69 @@ async function init(): Promise<void> {
       propertiesPanel?: { parent: string };
       additionalModules?: unknown[];
       moddleExtensions?: Record<string, unknown>;
+      linting?: { bpmnlint: { config: { rules: Record<string, string> }; resolver: unknown }; active: boolean };
+      elementTemplateIconRenderer?: { iconProperty: string };
     }) => BpmnDiagramInstance
   )({
     container: "#modeler",
     propertiesPanel: {
       parent: "#properties-panel",
     },
-    additionalModules: [window.BpmnPropertiesPanelModule, window.BpmnPropertiesProviderModule, window.CamundaPlatformPropertiesProviderModule, window.minimapModule].filter(Boolean),
+    additionalModules: [
+      window.BpmnPropertiesPanelModule,
+      window.BpmnPropertiesProviderModule,
+      // ElementTemplatesPropertiesProviderModule (the Operaton/Camunda 7 element-templates
+      // fork) already includes the Camunda-platform property groups itself, so it replaces
+      // CamundaPlatformPropertiesProviderModule rather than sitting alongside it -- both
+      // registered together crash on render (duplicate group registration).
+      window.ElementTemplatesPropertiesProviderModule,
+      window.minimapModule,
+      window.CreateAppendAnythingModule,
+      window.CreateAppendElementTemplatesModule,
+      window.TokenSimulationModule,
+      window.BpmnlintModule,
+      window.ElementTemplateChooserModule,
+      window.ElementTemplateIconRendererModule,
+      window.ElementTemplatesExtendModule,
+    ].filter(Boolean),
     moddleExtensions: {
-      camunda: window.camundaModdleDescriptor || {},
+      camunda: window.camundaWithIconModdle || window.camundaModdleDescriptor || {},
     },
+    linting: window.BpmnlintRecommendedConfig
+      ? {
+          bpmnlint: window.BpmnlintRecommendedConfig,
+          active: true,
+        }
+      : undefined,
+    elementTemplateIconRenderer: {
+      iconProperty: "camunda:modelerTemplateIcon",
+    },
+  });
+
+  modeler.on("elementTemplates.errors", (event) => {
+    const { errors } = event as { errors?: unknown[] };
+    if (errors?.length) console.warn("Element template errors:", errors);
   });
 
   await modeler.importXML(blankBPMN);
   fitDiagram(modeler);
   void loadTemplatesList();
+  void loadElementTemplates();
   setupResizer();
   setupShortcuts();
+}
+
+async function loadElementTemplates(): Promise<void> {
+  if (!modeler) return;
+  try {
+    const res = await fetch("/api/element-templates");
+    if (res.ok) {
+      const templates: unknown[] = await res.json();
+      modeler.get("elementTemplatesLoader").setTemplates(templates);
+    }
+  } catch {
+    // element templates are optional; the editor works fine without them
+  }
 }
 
 async function loadTemplatesList(): Promise<void> {

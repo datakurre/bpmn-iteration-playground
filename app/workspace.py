@@ -1,12 +1,41 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
 
 from ZODB.blob import Blob
+
+# Bounds every workspace pack/unpack step against a genuinely unbounded hang
+# (a corrupted/adversarial archive, e.g.), on top of subprocess.run()'s own
+# `timeout=` below.
+WORKSPACE_OP_TIMEOUT_SECONDS = float(os.getenv("WORKSPACE_OP_TIMEOUT_SECONDS", "20"))
+
+
+async def _run_tar(*args: str, timeout: float = WORKSPACE_OP_TIMEOUT_SECONDS) -> subprocess.CompletedProcess[bytes]:
+    """Run `tar` via the synchronous subprocess module in a worker thread.
+
+    Deliberately not asyncio.create_subprocess_exec(): that registers the
+    child with asyncio's event-loop-bound child watcher, and creating many
+    short-lived event loops that each spawn a subprocess this way corrupts
+    the watcher's process-global state -- confirmed by reproduction outside
+    pytest entirely (plain repeated asyncio.run() calls, no test framework):
+    around a dozen rounds in, a *later*, unrelated loop's shutdown
+    (`_cancel_all_tasks`) hangs forever trying to reap a task that has
+    nothing to do with it. This happens regardless of whether the spawned
+    process even succeeds -- only avoiding asyncio's subprocess API entirely
+    stopped it. subprocess.run() reaps synchronously via os.waitpid() on the
+    one worker thread it runs in, never touching that machinery.
+    """
+
+    def _run() -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(args, capture_output=True, timeout=timeout, check=False)
+
+    return await asyncio.to_thread(_run)
 
 
 async def unpack_workspace(blob_or_bytes: Blob | bytes | None, prefix: str = "bpmn-ws-") -> str:
@@ -39,16 +68,7 @@ async def unpack_workspace(blob_or_bytes: Blob | bytes | None, prefix: str = "bp
     try:
         content_bytes = Path(source_path).read_bytes()
         if content_bytes.startswith(b"\x28\xb5\x2f\xfd"):
-            proc = await asyncio.create_subprocess_exec(
-                "tar",
-                "--zstd",
-                "-xf",
-                str(source_path),
-                "-C",
-                workdir,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await proc.communicate()
+            await _run_tar("tar", "--zstd", "-xf", str(source_path), "-C", workdir)
         elif content_bytes.startswith(b"\x1f\x8b"):
             import io
             import tarfile
@@ -57,7 +77,7 @@ async def unpack_workspace(blob_or_bytes: Blob | bytes | None, prefix: str = "bp
                 with tarfile.open(fileobj=io.BytesIO(content_bytes), mode="r:gz") as tar:
                     tar.extractall(workdir)
 
-            await asyncio.to_thread(_extract_gz)
+            await asyncio.wait_for(asyncio.to_thread(_extract_gz), timeout=WORKSPACE_OP_TIMEOUT_SECONDS)
         else:
             import io
             import tarfile
@@ -69,7 +89,7 @@ async def unpack_workspace(blob_or_bytes: Blob | bytes | None, prefix: str = "bp
                 except Exception:
                     pass
 
-            await asyncio.to_thread(_extract_tar)
+            await asyncio.wait_for(asyncio.to_thread(_extract_tar), timeout=WORKSPACE_OP_TIMEOUT_SECONDS)
     except Exception:
         pass
     finally:
@@ -84,21 +104,10 @@ async def pack_workspace(workdir: str) -> Blob:
     blob = Blob()
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "tar",
-            "--zstd",
-            "-cf",
-            "-",
-            "-C",
-            workdir,
-            ".",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        if proc.returncode == 0 and stdout:
+        proc = await _run_tar("tar", "--zstd", "-cf", "-", "-C", workdir, ".")
+        if proc.returncode == 0 and proc.stdout:
             with blob.open("w") as f:
-                f.write(stdout)
+                f.write(proc.stdout)
             return blob
     except Exception:
         pass
@@ -120,20 +129,9 @@ async def pack_workspace(workdir: str) -> Blob:
 async def pack_workspace_to_bytes(workdir: str) -> bytes:
     """Pack a directory into a tar.zst bytes archive."""
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "tar",
-            "--zstd",
-            "-cf",
-            "-",
-            "-C",
-            workdir,
-            ".",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        if proc.returncode == 0 and stdout:
-            return stdout
+        proc = await _run_tar("tar", "--zstd", "-cf", "-", "-C", workdir, ".")
+        if proc.returncode == 0 and proc.stdout:
+            return proc.stdout
     except Exception:
         pass
 

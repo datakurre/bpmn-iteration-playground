@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from app.api.ui import admin_page, editor_page, history_detail_page, history_page, instance_page, page
 from app.auth import Role, _is_require_auth, parse_auth_config, require_role
+from app.element_templates_registry import ElementTemplatesRegistry
 from app.logging_config import RequestLoggingMiddleware, configure_logging
 from app.models import (
     ClearInstancesResponse,
@@ -49,6 +50,7 @@ class SaveWorkflowRequest(BaseModel):
 def create_app(service: WorkflowService | None = None) -> FastAPI:  # noqa: C901, PLR0915 -- FastAPI's route-factory pattern nests every route in this one function by convention; splitting it up would fight the framework, not the complexity
     _service = service
     registry = WorkflowRegistry()
+    element_templates_registry = ElementTemplatesRegistry()
 
     def get_service() -> WorkflowService:
         nonlocal _service
@@ -73,6 +75,8 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:  # noqa: C901
         try:
             yield
         finally:
+            with suppress(Exception):
+                await get_service().shutdown()
             with suppress(Exception):
                 await get_service().stop_timer_loop()
 
@@ -243,6 +247,17 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:  # noqa: C901
         if not path.is_file():
             raise HTTPException(404, "template file not found")
         return PlainTextResponse(await asyncio.to_thread(path.read_text, encoding="utf-8"), media_type="application/xml")
+
+    @app.get(
+        "/api/element-templates",
+        response_model=list[dict[str, Any]],
+        tags=["Templates"],
+        summary="List bpmn-js element templates for the modeler's template chooser",
+    )
+    async def list_element_templates(
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
+    ) -> list[dict[str, Any]]:
+        return element_templates_registry.list_templates()
 
     # Workflow Save Endpoint (TODO 20)
     @app.post("/api/workflows/save", response_model=SaveWorkflowResponse, tags=["Templates"], summary="Save or update BPMN XML file")

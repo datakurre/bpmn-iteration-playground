@@ -22,11 +22,27 @@ dev = [
     "httpx>=0.27",
     "mypy>=1.14",
     "pytest-cov>=6.0",
+    "pytest-timeout>=2.3",
     "ruff>=0.16.4",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+# Guards against a known pre-existing hang, not caused by any single test: a
+# request that fires a background job (asyncio.create_task, e.g. a pi_agent/shell
+# turn in WorkflowService) can outlive the request. Starlette's TestClient opens
+# a fresh event-loop thread per call and joins it on exit; if that job is still
+# pending when the call's portal tries to shut down, cancelling it doesn't
+# always let the loop finish tearing down (most likely an abandoned
+# asyncio.to_thread() worker, since a started thread can't actually be
+# interrupted -- only stopped being awaited), and `thread.join()` blocks
+# forever. Which test trips it varies by run (cumulative, not deterministic).
+# `thread` mode hard-exits the process on timeout -- a `Thread.join()`-style
+# hang doesn't reliably respond to signal-based timeouts -- turning a silent
+# CI hang into a fast, loud failure with a full stack trace naming the actual
+# stuck call.
+timeout = 60
+timeout_method = "thread"
 
 [tool.ruff]
 target-version = "py311"

@@ -1,4 +1,4 @@
-.PHONY: help watch run start demo test lint typecheck install setup clean pack screenshots docs docs-serve submodules submodule submodule-update
+.PHONY: help watch run start demo test lint typecheck install setup clean pack screenshots docs docs-serve submodules submodule submodule-update vendor-build
 
 HOST ?= 0.0.0.0
 PORT ?= 8000
@@ -19,7 +19,8 @@ help:
 	@echo "  make install          - Install Python and Node dependencies"
 	@echo "  make submodules       - Initialize and checkout git submodules"
 	@echo "  make submodule-update - Update git submodules to latest remote HEAD"
-	@echo "  make setup            - Install dependencies and initialize submodules"
+	@echo "  make vendor-build     - Build vendored element-templates submodules (dist/ is gitignored)"
+	@echo "  make setup            - Install dependencies, initialize submodules, and build vendored packages"
 	@echo "  make clean            - Remove Python and pytest cache files"
 
 watch:
@@ -71,7 +72,16 @@ submodule: submodules
 submodule-update:
 	git submodule update --init --recursive --remote
 
-setup: install submodules
+# vendor/operaton-element-templates depends on vendor/operaton-element-templates-validator
+# (via a `file:` dependency), which in turn depends on vendor/operaton-element-templates-json-schema
+# (also `file:`), so these must be installed/built in dependency order. Each submodule's dist/ is
+# gitignored in its own repo (it's build output, not source), so this must be re-run after checkout.
+vendor-build: submodules
+	cd vendor/operaton-element-templates-json-schema && npm install && npm run build
+	cd vendor/operaton-element-templates-validator && npm install
+	cd vendor/operaton-element-templates && npm install
+
+setup: install submodules vendor-build
 
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true

@@ -65,6 +65,18 @@ def test_template_registry_endpoints(client: TestClient) -> None:
     assert missing_resp.status_code == 404
 
 
+def test_element_templates_endpoint(client: TestClient) -> None:
+    response = client.get("/api/element-templates")
+    assert response.status_code == 200
+    templates = response.json()
+    ids = {t["id"] for t in templates}
+    assert "playground.pi-agent-task" in ids
+    assert "playground.shell-task" in ids
+    for template in templates:
+        assert template["appliesTo"] == ["bpmn:ServiceTask"]
+        assert isinstance(template["properties"], list)
+
+
 def test_workflow_save_endpoint(client: TestClient) -> None:
     valid_xml = """<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_Test" targetNamespace="http://bpmn.io/schema/bpmn">

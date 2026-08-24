@@ -1,3 +1,12 @@
 [submodule "vendor/agent-sandbox"]
 	path = vendor/agent-sandbox
 	url = git@github.com:datakurre/agent-sandbox.git
+[submodule "vendor/operaton-element-templates"]
+	path = vendor/operaton-element-templates
+	url = https://gitlab.com/vasara-bpm/operaton-element-templates.git
+[submodule "vendor/operaton-element-templates-validator"]
+	path = vendor/operaton-element-templates-validator
+	url = https://gitlab.com/vasara-bpm/operaton-element-templates-validator.git
+[submodule "vendor/operaton-element-templates-json-schema"]
+	path = vendor/operaton-element-templates-json-schema
+	url = https://gitlab.com/vasara-bpm/operaton-element-templates-json-schema.git

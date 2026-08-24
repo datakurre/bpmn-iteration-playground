@@ -27,7 +27,13 @@ from app.engine import WorkflowRunner
 from app.events import EventBus
 from app.persistence import WorkflowStore, WorkspaceConflictError
 from app.pi_client import PiClient, PiResult
-from app.workspace import cleanup_workspace, get_workspace_metadata, pack_workspace_to_bytes, unpack_workspace
+from app.workspace import (
+    WORKSPACE_OP_TIMEOUT_SECONDS,
+    cleanup_workspace,
+    get_workspace_metadata,
+    pack_workspace_to_bytes,
+    unpack_workspace,
+)
 from app.ws import manager as ws_manager
 
 logger = logging.getLogger("bpmn.workflow")
@@ -1003,6 +1009,21 @@ class WorkflowService:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
 
+    async def shutdown(self) -> None:
+        """Cancel and await every still-running background job (agent turns).
+
+        Without this, a job fired by asyncio.create_task() during a request
+        outlives the app's own event loop shutdown, left to finish (or hang)
+        on borrowed time. Bounded workspace I/O (see app.workspace) means a
+        cancelled job now always finishes within WORKSPACE_OP_TIMEOUT_SECONDS
+        rather than hanging indefinitely, so this itself stays bounded too.
+        """
+        pending = [job for job in self.jobs.values() if not job.done()]
+        for job in pending:
+            job.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
     async def _dispatch(self, workflow_id: str, _lock_held: bool = False) -> None:  # noqa: PLR0915 -- scans/launches every STARTED ServiceTask for the instance in one pass; pre-existing complexity
         workflow_id = self._get_root_workflow_id(workflow_id)
         guard: Any = contextlib.nullcontext() if _lock_held else self._lock(workflow_id)
@@ -1173,7 +1194,7 @@ class WorkflowService:
             workspace_version = self.store.get_workspace_version(workflow_id)
             workdir = await unpack_workspace(blob_or_bytes, prefix=f"bpmn-{workflow_id[:8]}-")
             if not blob_or_bytes:
-                await asyncio.to_thread(_seed_workspace, workdir)
+                await asyncio.wait_for(asyncio.to_thread(_seed_workspace, workdir), timeout=WORKSPACE_OP_TIMEOUT_SECONDS)
             cwd = workdir
 
             # Harness-specific workspace setup is the adapter's business, not ours
@@ -1198,12 +1219,15 @@ class WorkflowService:
 
             # Capture generated artifacts and documents into the isolated instance workspace
             wf_data = record["workflow"].data
-            _artifacts_list, ws_meta = await asyncio.to_thread(
-                _process_workspace_artifacts,
-                cwd,
-                workdir,
-                result.output,
-                wf_data.get("document_content"),
+            _artifacts_list, ws_meta = await asyncio.wait_for(
+                asyncio.to_thread(
+                    _process_workspace_artifacts,
+                    cwd,
+                    workdir,
+                    result.output,
+                    wf_data.get("document_content"),
+                ),
+                timeout=WORKSPACE_OP_TIMEOUT_SECONDS,
             )
             record["workspace_metadata"] = ws_meta
 

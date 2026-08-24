@@ -3,6 +3,7 @@
 // `import`, so they can only be declared, never statically resolved.
 
 import type { BpmnDiagramInstance } from "../lib/bpmn-types";
+import type { ModdleDescriptor } from "../lib/moddle-types";
 
 export interface FormInstanceState {
   data: Record<string, unknown>;
@@ -29,11 +30,20 @@ declare global {
     minimapModule?: unknown;
     BpmnPropertiesPanelModule?: unknown;
     BpmnPropertiesProviderModule?: unknown;
-    CamundaPlatformPropertiesProviderModule?: unknown;
-    camundaModdleDescriptor?: Record<string, unknown>;
+    camundaModdleDescriptor?: ModdleDescriptor;
     AutoLayout?: { layoutProcess(xml: string): Promise<string> };
     FormJS?: FormJSNamespace;
     FormViewer?: FormJSNamespace;
+    CreateAppendAnythingModule?: unknown;
+    CreateAppendElementTemplatesModule?: unknown;
+    TokenSimulationModule?: unknown;
+    BpmnlintModule?: unknown;
+    BpmnlintRecommendedConfig?: { config: { rules: Record<string, string> }; resolver: unknown };
+    ElementTemplatesPropertiesProviderModule?: unknown;
+    ElementTemplateChooserModule?: unknown;
+    ElementTemplateIconRendererModule?: unknown;
+    ElementTemplatesExtendModule?: unknown;
+    camundaWithIconModdle?: ModdleDescriptor;
   }
 }
 

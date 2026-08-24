@@ -24,6 +24,10 @@ export interface BpmnCommandStack {
   redo(): void;
 }
 
+export interface BpmnElementTemplatesLoader {
+  setTemplates(templates: unknown[]): void;
+}
+
 export interface BpmnImportResult {
   warnings: string[];
 }
@@ -41,5 +45,7 @@ export interface BpmnDiagramInstance {
   get(name: "zoomScroll"): BpmnZoomScroll;
   get(name: "minimap"): BpmnMinimap;
   get(name: "commandStack"): BpmnCommandStack;
+  get(name: "elementTemplatesLoader"): BpmnElementTemplatesLoader;
   get(name: string): unknown;
+  on(event: string, callback: (event: unknown) => void): void;
 }

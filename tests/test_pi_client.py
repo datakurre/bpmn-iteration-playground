@@ -233,24 +233,24 @@ def test_set_resource_limits_does_not_raise() -> None:
     _set_resource_limits()
 
 
-@pytest.mark.anyio
-async def test_kill_process_group_noop_when_already_exited() -> None:
-    from app.pi_client import _kill_process_group
+def test_kill_process_group_noop_when_already_exited() -> None:
+    from app.pi_client import _kill_process_group_popen
 
     class FakeProcess:
-        returncode = 0
+        def poll(self) -> int:
+            return 0
 
-    await _kill_process_group(FakeProcess())  # type: ignore[arg-type]
+    _kill_process_group_popen(FakeProcess())  # type: ignore[arg-type]
 
 
-@pytest.mark.anyio
-async def test_kill_process_group_kills_running_process(tmp_path: Path) -> None:
-    import asyncio
+def test_kill_process_group_kills_running_process() -> None:
+    import subprocess
 
-    from app.pi_client import _kill_process_group
+    from app.pi_client import _kill_process_group_popen
 
-    proc = await asyncio.create_subprocess_exec("sleep", "30", start_new_session=True)
-    await _kill_process_group(proc)
+    proc = subprocess.Popen(["sleep", "30"], start_new_session=True)
+    _kill_process_group_popen(proc)
+    proc.wait(timeout=5)
     assert proc.returncode is not None
 
 
