@@ -152,14 +152,14 @@ async def test_unpack_workspace_unopenable_blob_returns_bare_workdir() -> None:
 
 @pytest.mark.anyio
 async def test_pack_workspace_falls_back_to_gzip_when_tar_subprocess_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    import asyncio
+    import subprocess
 
     from app.workspace import pack_workspace
 
-    async def boom(*args, **kwargs):
+    def boom(*args, **kwargs):
         raise FileNotFoundError("no tar binary")
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", boom)
+    monkeypatch.setattr(subprocess, "run", boom)
 
     workdir = tempfile.mkdtemp(prefix="bpmn-test-fallback-")
     try:
@@ -174,14 +174,14 @@ async def test_pack_workspace_falls_back_to_gzip_when_tar_subprocess_fails(monke
 
 @pytest.mark.anyio
 async def test_pack_workspace_to_bytes_falls_back_to_gzip_when_tar_subprocess_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    import asyncio
+    import subprocess
 
     from app.workspace import pack_workspace_to_bytes
 
-    async def boom(*args, **kwargs):
+    def boom(*args, **kwargs):
         raise FileNotFoundError("no tar binary")
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", boom)
+    monkeypatch.setattr(subprocess, "run", boom)
 
     workdir = tempfile.mkdtemp(prefix="bpmn-test-fallback-bytes-")
     try:
