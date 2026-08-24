@@ -24,16 +24,24 @@ declare module "diagram-js-minimap" {
 declare module "bpmn-js-properties-panel" {
   export const BpmnPropertiesPanelModule: unknown;
   export const BpmnPropertiesProviderModule: unknown;
-  export const CamundaPlatformPropertiesProviderModule: unknown;
 }
 
 declare module "camunda-bpmn-moddle/resources/camunda.json" {
-  const camundaModdleDescriptor: Record<string, unknown>;
+  import type { ModdleDescriptor } from "../lib/moddle-types";
+  const camundaModdleDescriptor: ModdleDescriptor;
   export default camundaModdleDescriptor;
 }
 
 declare module "bpmn-auto-layout" {
   export function layoutProcess(xml: string): Promise<string>;
+}
+
+declare module "bpmn-js/lib/util/ModelUtil" {
+  interface BusinessObject {
+    set(key: string, value: unknown): void;
+    get(key: string): unknown;
+  }
+  export function getBusinessObject(element: unknown): BusinessObject;
 }
 
 declare module "bpmn-js-create-append-anything" {
@@ -72,4 +80,23 @@ declare module "bpmnlint/lib/resolver/static-resolver" {
 declare module "bpmnlint/rules/*" {
   const rule: BpmnLintRuleFactory;
   export default rule;
+}
+
+// vendor/operaton-element-templates, aliased over the package name it publishes
+// under (see scripts/build-assets.mjs). Typed against the actual named exports of
+// its dist/index.esm.js, not the upstream bpmn-js-element-templates API surface,
+// since this is the Operaton/Camunda 7 fork.
+declare module "bpmn-js-element-templates" {
+  export const ElementTemplatesCoreModule: unknown;
+  export const ElementTemplatesPropertiesProviderModule: unknown;
+}
+
+declare module "@bpmn-io/element-template-chooser" {
+  const ElementTemplateChooserModule: unknown;
+  export default ElementTemplateChooserModule;
+}
+
+declare module "@bpmn-io/element-template-icon-renderer" {
+  const ElementTemplateIconRendererModule: unknown;
+  export default ElementTemplateIconRendererModule;
 }

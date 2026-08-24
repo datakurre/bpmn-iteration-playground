@@ -22,6 +22,7 @@ function fakeInstance(overrides: Partial<Record<string, unknown>> = {}): BpmnDia
     attachTo: vi.fn(),
     destroy: vi.fn(),
     get: ((name: string) => services[name]) as BpmnDiagramInstance["get"],
+    on: vi.fn(),
   };
 }
 

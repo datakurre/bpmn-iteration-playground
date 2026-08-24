@@ -32,6 +32,7 @@ from app.models import (
     WorkflowState,
 )
 from app.persistence import WorkflowStore
+from app.element_templates_registry import ElementTemplatesRegistry
 from app.registry import WorkflowRegistry
 from app.workflow_service import WorkflowNotFoundError, WorkflowService
 from app.ws import manager as ws_manager
@@ -49,6 +50,7 @@ class SaveWorkflowRequest(BaseModel):
 def create_app(service: WorkflowService | None = None) -> FastAPI:  # noqa: C901, PLR0915 -- FastAPI's route-factory pattern nests every route in this one function by convention; splitting it up would fight the framework, not the complexity
     _service = service
     registry = WorkflowRegistry()
+    element_templates_registry = ElementTemplatesRegistry()
 
     def get_service() -> WorkflowService:
         nonlocal _service
@@ -243,6 +245,17 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:  # noqa: C901
         if not path.is_file():
             raise HTTPException(404, "template file not found")
         return PlainTextResponse(await asyncio.to_thread(path.read_text, encoding="utf-8"), media_type="application/xml")
+
+    @app.get(
+        "/api/element-templates",
+        response_model=list[dict[str, Any]],
+        tags=["Templates"],
+        summary="List bpmn-js element templates for the modeler's template chooser",
+    )
+    async def list_element_templates(
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
+    ) -> list[dict[str, Any]]:
+        return element_templates_registry.list_templates()
 
     # Workflow Save Endpoint (TODO 20)
     @app.post("/api/workflows/save", response_model=SaveWorkflowResponse, tags=["Templates"], summary="Save or update BPMN XML file")

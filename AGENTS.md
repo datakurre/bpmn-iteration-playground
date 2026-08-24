@@ -108,6 +108,8 @@ app/
 workflows/           – Executable BPMN 2.0 templates (plan_and_execute, document_generation,
                        bug_triage, contract_review, pr_review, external_gate,
                        composed_delivery + its callable child agent_review_cycle, project)
+element_templates/   – bpmn-js element templates (JSON) for the editor's template chooser,
+                       served by ElementTemplatesRegistry via GET /api/element-templates
 scripts/
   pi-demo            – Deterministic Pi CLI-compatible mock (no credentials needed)
   verify_*.py        – Playwright-based smoke tests for UI pages
@@ -116,7 +118,8 @@ devenv.nix           – devenv: Python 3.14 + Node 22 + uvicorn process + scrip
 vendor/agent-sandbox – git submodule: Rust CLI + Podman sandbox, isolates Pi's fs/network/secrets
 vendor/operaton-element-templates{,-validator,-json-schema} – git submodules: Operaton/Camunda 7
                        fork of bpmn-js-element-templates + its validator + JSON schema, sibling-linked
-                       via `file:` deps; not yet wired into the modeler bundle (see `make vendor-build`)
+                       via `file:` deps; aliased into the modeler bundle in place of the upstream
+                       npm package (see `make vendor-build`, scripts/build-assets.mjs)
 ```
 
 **Data flow for a Pi service task:**
