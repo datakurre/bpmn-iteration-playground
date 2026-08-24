@@ -29,15 +29,24 @@
   };
 
   env = {
+    # make watch tees its console output to WATCH_LOG (see Makefile); unbuffered stdout
+    # keeps that mirror live instead of arriving in delayed block-sized chunks once
+    # stdout is a pipe rather than a tty.
+    PYTHONUNBUFFERED = "1";
     PI_EXECUTABLE = "${config.devenv.root}/node_modules/.bin/pi";
     PI_TIMEOUT_SECONDS = "1800";
     # PI_WORKDIR is a *seed* copied into each instance workspace, not the agent's cwd.
     # Left unset by default so instances start from an empty, isolated workspace.
+    LOG_LEVEL = "debug";
     PI_OFFLINE = "0";
     PI_PROVIDER = "opencode-go";
     PI_MODEL = "gpt-5.6-luna";
     OPENAI_BASE_URL = "https://opencode.ai/go/v1";
     OPENAI_API_KEY = "secret-injected-by-proxy";
+    # Route the default pi_agent harness through SandboxPiAdapter (agent-sandbox
+    # --workspace --proxy --secrets) instead of the bare-subprocess PiAdapter, so every
+    # BPMN-driven Pi turn is isolated the same way the coding agent itself is.
+    PI_SANDBOX_ENABLED = "1";
   };
 
   processes.api = {

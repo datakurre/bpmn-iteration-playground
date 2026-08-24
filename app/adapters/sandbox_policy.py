@@ -1,16 +1,117 @@
 """agent-sandbox network policy rendered into a workspace AGENTS.md.
 
-Only the sandbox adapter runs agents under agent-sandbox, so policy generation lives
-here rather than in the BPMN engine.
+Only the sandbox adapters run things under agent-sandbox, so policy generation and the
+other per-workspace setup they share (executable resolution, secretspec) lives here
+rather than in the BPMN engine.
 """
 
 from __future__ import annotations
 
 import contextlib
 import json
+import os
 import re
+import shutil
 import tomllib
+from pathlib import Path
 from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+TEMPLATE_ROOT = REPO_ROOT / "workspace_templates"
+DEFAULT_SANDBOX_TEMPLATE = "agent_sandbox"
+# A shell task's default posture is "no secrets": see workspace_templates/sandbox_shell.
+DEFAULT_SHELL_SANDBOX_TEMPLATE = "sandbox_shell"
+
+
+def resolve_sandbox_command_prefix(explicit: str | None = None) -> list[str]:
+    """Resolve the argv prefix that invokes agent-sandbox.
+
+    Priority: an explicit override (adapter constructor arg or `AGENT_SANDBOX_EXECUTABLE`)
+    > the vendored release build > `nix run` against the vendored flake > a bare
+    `agent-sandbox` resolved from `$PATH`.
+
+    `nix run` ranks above `$PATH` deliberately: a system-wide `agent-sandbox` install can
+    predate the vendored submodule (no `--programmatic` support, for example) and fails in
+    a way that looks like a flag typo rather than a version mismatch, while `nix run`
+    always builds from the checked-out submodule.
+    """
+    if explicit:
+        return [explicit]
+    env_override = os.getenv("AGENT_SANDBOX_EXECUTABLE")
+    if env_override:
+        return [env_override]
+    vendor_dir = REPO_ROOT / "vendor" / "agent-sandbox"
+    vendor_bin = vendor_dir / "cli" / "target" / "release" / "agent-sandbox"
+    if vendor_bin.is_file():
+        return [str(vendor_bin)]
+    if (vendor_dir / "flake.nix").is_file():
+        return ["nix", "run", str(vendor_dir), "--"]
+    on_path = shutil.which("agent-sandbox")
+    if on_path:
+        return [on_path]
+    return ["agent-sandbox"]
+
+
+def prepare_sandbox_workspace(
+    workdir: str, task_config: dict[str, str], default_template: str = DEFAULT_SANDBOX_TEMPLATE
+) -> None:
+    """Render this task's network policy into the workspace AGENTS.md, and make a
+    secretspec.toml resolvable from the workspace.
+
+    `--secrets` resolves `secretspec.toml` from agent-sandbox's own cwd, which for a
+    sandboxed adapter is the per-instance workspace `--workspace` mounts -- not the repo
+    checkout -- so without a copy here every sandboxed turn fails secretspec resolution
+    outright once a task's policy actually requests a secret-bearing route.
+
+    Both files are seeded from `workspace_templates/<sandbox_template>/`, `default_template`
+    unless the task's own `sandbox_template` property names another one -- this is
+    deliberately the *task's own* base, not this repo's own root AGENTS.md/secretspec.toml,
+    which describe the coding agent's dev sandbox and would otherwise leak that unrelated
+    policy into every task's workspace by default. `default_template` lets each sandboxed
+    adapter pick its own starting posture (`SandboxPiAdapter` needs a model route by
+    default, `SandboxShellAdapter` needs none) without every task declaring one.
+    """
+    target = Path(workdir)
+    template_name = (task_config.get("sandbox_template") or default_template).strip()
+    template_dir = TEMPLATE_ROOT / template_name
+
+    agents_md = target / "AGENTS.md"
+    base_md = agents_md.read_text("utf-8") if agents_md.is_file() else None
+    if not base_md:
+        template_agents_md = template_dir / "AGENTS.md"
+        if template_agents_md.is_file():
+            base_md = template_agents_md.read_text("utf-8")
+    agents_md.write_text(build_agents_md(task_config, base_agents_md=base_md), encoding="utf-8")
+
+    secretspec = target / "secretspec.toml"
+    template_secretspec = template_dir / "secretspec.toml"
+    if not secretspec.is_file() and template_secretspec.is_file():
+        shutil.copy2(template_secretspec, secretspec)
+
+
+def workspace_policy_declares_routes(workdir: str) -> bool:
+    """Whether the workspace AGENTS.md (already rendered by `prepare_sandbox_workspace`)
+    declares any `[[network.allowed_routes]]`.
+
+    `--secrets` resolves *every* declared route eagerly at launch and refuses to start at
+    all if any of them can't be satisfied (see `cli/src/secrets.rs`'s
+    `missing required secret`) -- so passing `--secrets` unconditionally would make a
+    shell task that needs no secrets at all (a compiler, a slicer) fail to launch just
+    because the default policy happens to declare an unrelated route nobody configured a
+    key for. A caller should only add `--secrets` when this returns true.
+    """
+    agents_md = Path(workdir) / "AGENTS.md"
+    if not agents_md.is_file():
+        return False
+    toml_text = parse_agents_md_toml(agents_md.read_text("utf-8"))
+    if not toml_text:
+        return False
+    try:
+        parsed = tomllib.loads(toml_text)
+    except Exception:
+        return False
+    routes = parsed.get("network", {}).get("allowed_routes")
+    return bool(routes)
 
 
 def parse_agents_md_toml(content: str) -> str:

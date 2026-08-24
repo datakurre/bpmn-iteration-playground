@@ -64,9 +64,11 @@ app/
       projects.py       – /project : create/list/detail/spawn over ProjectService
   adapters/
     base.py          – BaseAdapter ABC (run + prepare_workspace hook) + AgentResult dataclass
-    sandbox_policy.py – agent-sandbox network policy rendered into a workspace AGENTS.md
+    sandbox_policy.py – shared agent-sandbox setup: executable resolution, workspace
+                        AGENTS.md/secretspec.toml seeding, network policy rendering
     pi_adapter.py    – PiAdapter: wraps PiClient as a BaseAdapter
-    sandbox_adapter.py – SandboxPiAdapter: runs Pi via `agent-sandbox --programmatic` (Podman isolation)
+    sandbox_adapter.py – SandboxPiAdapter: runs Pi via `agent-sandbox --json --prompt -` (Podman isolation)
+    sandbox_shell_adapter.py – SandboxShellAdapter: ShellAdapter's command via agent-sandbox
     shell_adapter.py – ShellAdapter: runs a BPMN-declared command in the workspace (non-LLM harness)
     mock_adapter.py  – MockAdapter: deterministic in-process stub for tests
     registry.py      – AdapterRegistry: maps harness_type → adapter
@@ -130,6 +132,44 @@ vendor/operaton-element-templates{,-validator,-json-schema} – git submodules: 
 
 ---
 
+## Development Setups
+
+This project is developed under more than one environment topology. Know which one you're
+currently in before assuming how to reach the app or run commands — check for a running
+process on `localhost:8000` and for `agent-sandbox`/container markers rather than guessing.
+
+### Setup: sandboxed agent, app on host, host browser
+
+- **You (the agent) run inside a restricted `agent-sandbox` container.** Network access is
+  limited to what the `toml agent-sandbox` policy block below allows (§ Agent Sandbox); reaching
+  anything else requires the sandbox's proxy and otherwise fails in a policy-shaped way (a bare
+  `403 Forbidden`, "Could not resolve host") — see the `agent-sandbox` skill and § 4b.
+- **The app runs on the host**, started by the user with `devenv shell -- make watch`
+  (auto-reloading uvicorn) — not by you, and not inside your container. Treat it as already
+  running; if it isn't reachable, ask the user to start it rather than trying to launch it
+  yourself from inside the sandbox.
+- **You reach the live app via the host browser**, using the browser skill's host-browser mode
+  (CDP against the *host's* browser, not a sandboxed one) at `http://localhost:8000` — see
+  § 3 Host Browser CDP Automation for the CDP wiring. `Makefile`'s `HOST ?= 127.0.0.1` binds the
+  server to loopback, consistent with it being served for the host and not exposed into the
+  container.
+- **Every command or subprocess you run yourself** (tests, lint, `pi`, shell/harness
+  executions) must go through `vendor/agent-sandbox` using the policy defined in the
+  `toml agent-sandbox` block below (§ Agent Sandbox), including `--secrets` so the sandbox's
+  proxy injects the credential (`OPENCODE_API_KEY`, shared by both the Zen and Go routes since
+  `/zen/**` covers `/zen/go/**` too) instead of exposing it to your process directly — see
+  § 4b Agent Sandbox Integration.
+- **Follow the running server through `watch.log`, at the repo root.** `make watch` tees its
+  full console output (uvicorn's banner and reload notices, plus the app's own structured
+  JSON request/event log) to `WATCH_LOG` (default `watch.log`, overridable like `HOST`/`PORT`)
+  so the user's terminal and this file always show the same thing — the file is truncated
+  fresh on every `make watch` start, so it only ever holds the current session. You can read
+  it directly because `/workspace` is bind-mounted into your container, the same path on both
+  sides — no CDP or proxy involved, just `tail -n 200 watch.log` or similar. This is distinct
+  from `app.log`, the app's own `configure_logging()` output (`app/logging_config.py`): that
+  one only captures the app's own logger records (not uvicorn's reload/startup lines) and
+  persists across restarts rather than resetting per session.
+
 ## 1. Serving the Project (`devenv`)
 
 - **Start Process**: Use `devenv up -d` to launch background processes defined in `devenv.nix`.
@@ -174,6 +214,22 @@ vendor/operaton-element-templates{,-validator,-json-schema} – git submodules: 
   `${status}` is the agent's *self-reported* verdict, falling back to the harness verdict
   when no parseable result was produced — that is what a template means by "did the work
   succeed", and it is what the bundled templates route on (`plan_status == 'success'`).
+- **Task scope vs. process scope (Camunda's task-scope-variables model)**: the raw,
+  per-turn execution telemetry — prompt/payload, full output, stdout/stderr, the harness's
+  own `failure_reason` — lives on `record["jobs"][task_id]` (`job` in
+  `app/orchestration/jobs.py`, surfaced as the `jobs` field in the API/UI), *never* on
+  SpiffWorkflow's own `task.data`. The two look interchangeable but are not: `task.data` is
+  inherited by successor tasks along a branch, and SpiffWorkflow's own engine merges the
+  *terminal* task's `task.data` into `workflow.data` when the instance completes — so a
+  scratch key written there for "task-local inspection" doesn't stay task-local. It survives
+  every retry (a later success only *adds* keys; nothing ever popped the previous failure's),
+  and resurfaces in the *completed* instance's `workflow.data` — which is why a task that
+  failed once and then succeeded on retry could still show `failure_reason` in the final
+  workflow data. `job`, by contrast, is never read by SpiffWorkflow, so nothing written there
+  can leak into process-level data regardless of how the graph completes. Only explicitly
+  `published` `camunda:outputParameters` values are written to `task.data`/`workflow.data` —
+  that boundary is the actual task-scope/process-scope split, and `job` is where anything
+  *not* meant to cross it belongs.
   Note SpiffWorkflow merges the terminal task's data into `workflow.data` when an instance
   completes, so a completed instance's data also carries that last task's local keys.
 - **Reading data into a prompt (inputParameters)**: `camunda:inputParameter` expressions are
@@ -262,10 +318,14 @@ vendor/operaton-element-templates{,-validator,-json-schema} – git submodules: 
 ## 4b. Agent Sandbox Integration
 
 - **Submodule**: `vendor/agent-sandbox` (Rust CLI + Podman-based sandbox). Fetch with `make submodules` (`git submodule update --init --recursive`); `make submodule-update` pulls the latest upstream commit.
-- **Adapter**: `SandboxPiAdapter` (`app/adapters/sandbox_adapter.py`) shells out to `agent-sandbox --workspace --proxy --secrets --programmatic pi ...`, prefers the vendored release build at `vendor/agent-sandbox/cli/target/release/agent-sandbox`, falls back to `agent-sandbox` on `$PATH`, overridable via `AGENT_SANDBOX_EXECUTABLE`.
-- **Registration**: registered under `harness_type` `sandbox_pi` and alias `agent_sandbox`. Set `PI_SANDBOX_ENABLED=1` to make it the adapter for the default `pi_agent` harness type too (sandbox everything without touching BPMN files).
-- **Per-task network policy**: `build_agents_md()` (`app/adapters/sandbox_policy.py`) generates/merges a `toml agent-sandbox` block — `allowed_hosts`, `allowed_routes` (proxied secret injection), `ports` — from BPMN task `camunda:properties` (`sandbox_policy` / `network_policy` / `allowed_hosts` / `allowed_routes` / `ports`), layered on the repo's own `AGENTS.md` policy block at the top of this file.
-- **Output contract**: the sandbox wraps Pi's stdout in an envelope (`{"status", "stdout", "stderr", "network", "policy_error"}`); the adapter unwraps it, then parses inner lines as Pi JSON events same as the direct adapter.
+- **`pi` is baked into the sandbox image**: `vendor/agent-sandbox/pi-coding-agent.nix` packages the published `@earendil-works/pi-coding-agent` npm tarball as a real `buildNpmPackage` derivation, alongside every other agent in `agents.nix`. It used to resolve via `npx -y @earendil-works/pi-coding-agent` at every container launch — needing live registry.npmjs.org access for a basic feature and breaking outright on any registry hiccup (a transient `403`, not hypothetical). The npm fetch now happens once, at image-build time; no container launch needs npm/network access to start `pi`.
+- **Executable resolution**: `resolve_sandbox_command_prefix()` (`app/adapters/sandbox_policy.py`), shared by both sandbox adapters below. Priority: explicit override (constructor arg or `AGENT_SANDBOX_EXECUTABLE`) > the vendored release build at `vendor/agent-sandbox/cli/target/release/agent-sandbox` > `nix run vendor/agent-sandbox --`, which always builds from the checked-out submodule > a bare `agent-sandbox` resolved from `$PATH`. The `$PATH` fallback exists but ranks last on purpose: a host-wide install can predate the vendored submodule's flags entirely and fail in a way that reads like a typo (`'--programmatic' is not an agent-sandbox flag`) rather than a version mismatch — `nix run` is what actually guarantees the two stay in sync, at the cost of a slower first invocation (evaluates/builds the flake) unless already cached.
+- **Programmatic mode flags**: `--prompt -` (feed the named agent its prompt from stdin) and `--json` (machine-readable stdout) are independent — `--json --prompt -` together are what the old single `--programmatic` flag used to mean. `--json` alone, with no agent and a `-- COMMAND`, streams one `{"type": "output", "stream", "line"}` object per output line as the command runs (so a long build still tails live) followed by a closing `{"type": "exit", "status", "stdout", "stderr", "network", "policy_error"}` summary; `--json --prompt -` instead buffers the whole run and reports one such closing object once the agent exits. See `vendor/agent-sandbox/docs/usage.md`'s Programmatic mode section for the full flag table.
+- **Pi adapter**: `SandboxPiAdapter` (`app/adapters/sandbox_adapter.py`) shells out to `agent-sandbox --workspace --proxy --secrets --json --prompt - pi ...`. Registered under `harness_type` `sandbox_pi` and alias `agent_sandbox`. Set `PI_SANDBOX_ENABLED=1` to make it the adapter for the default `pi_agent` harness type too (sandbox everything without touching BPMN files).
+- **Shell adapter**: `SandboxShellAdapter` (`app/adapters/sandbox_shell_adapter.py`) subclasses `ShellAdapter`, wrapping its resolved argv as `agent-sandbox --workspace --proxy --secrets -- <argv>` — same BPMN properties (`command`/`shell`/`workdir`/`timeout`/`artifacts`/...), just sandboxed. Registered as `harness_type` `sandbox_shell`. Runs as plain passthrough today (no `--json`): the CLI's streamed-JSON mode for a bare command exists and is tested (`cli/tests/launcher_argv.rs`), but `SandboxShellAdapter` doesn't parse it yet, so `network`/`policy_error` aren't surfaced for sandboxed shell tasks the way they are for sandboxed Pi turns — wiring that up means teaching `run()` to unwrap NDJSON `type: output`/`type: exit` lines instead of inheriting `ShellAdapter.run()`'s raw-line pump unchanged.
+- **Per-task network policy and secrets**: `prepare_sandbox_workspace()` (`app/adapters/sandbox_policy.py`), the `prepare_workspace` hook for both sandbox adapters. Renders/merges a `toml agent-sandbox` AGENTS.md block — `allowed_hosts`, `allowed_routes` (proxied secret injection), `ports` — from BPMN task `camunda:properties` (`sandbox_policy` / `network_policy` / `allowed_hosts` / `allowed_routes` / `ports`), and copies a `secretspec.toml` into the workspace so `--secrets` can resolve it (agent-sandbox resolves `secretspec.toml` from its own cwd, which for a sandboxed adapter is the per-instance workspace `--workspace` mounts — not this repo's checkout — so without this every `--secrets` run fails secretspec resolution outright). Both are seeded from `workspace_templates/<sandbox_template>/`, deliberately not this repo's own root AGENTS.md/secretspec.toml (those describe the coding agent's own dev sandbox, not a BPMN task's). Each sandboxed adapter has its own default template, matching its own actual need: `SandboxPiAdapter` defaults to `agent_sandbox` (`workspace_templates/agent_sandbox/`), scoped to what a default Pi turn needs (`opencode.ai` + the OpenCode-go secret route); `SandboxShellAdapter` defaults to `sandbox_shell` (`workspace_templates/sandbox_shell/`), which declares package-registry hosts but **no routes at all**. A task opts into a different base with a `sandbox_template` property naming another `workspace_templates/<name>/` directory.
+- **`--secrets` is conditional for shell, and toggleable for Pi**: `--secrets` resolves *every* declared route eagerly and refuses to launch at all if any can't be satisfied (`cli/src/secrets.rs`'s `missing required secret`) — so a route nobody configured a key for breaks the whole launch, not just the part of the run that would have used it. `SandboxShellAdapter` only adds `--secrets` when `workspace_policy_declares_routes()` finds the rendered workspace policy actually declares one; a deterministic build step with the default `sandbox_shell` template (no routes) never passes it. `SandboxPiAdapter` passes `--secrets` (plus the `-e OPENCODE_API_KEY=...` placeholder Pi's local pre-flight check needs) whenever `PI_SANDBOX_SECRETS_ENABLED` is unset or `1`, its default — a Pi turn calling out to a model provider through the placeholder-keyed route needs it resolved to do anything useful. Set `PI_SANDBOX_SECRETS_ENABLED=0` when Pi already holds a real credential from its own `/login` (persisted in the mounted `.pi` state, resolved ahead of any env var and outside the proxy entirely) — there `--secrets` has nothing to inject and would only demand a route the host hasn't necessarily configured a key for.
+- **Output contract** (Pi): the sandbox wraps Pi's stdout in the `type: "exit"` envelope above; the adapter unwraps it, then parses inner lines as Pi JSON events same as the direct adapter.
 
 ## 4c. Shell Harness (deterministic pipeline steps)
 
@@ -323,23 +383,12 @@ allowed_hosts = [
     "releases.nixos.org:443",
 ]
 
-# [ports]
-# web = 8000
-
 [[network.allowed_routes]]
 header = "Authorization"
 host = "opencode.ai:443"
 method = "POST"
 path = "/zen/**"
 prefix = "Bearer "
-secret = "OPENCODE_ZEN_API_KEY"
-
-[[network.allowed_routes]]
-header = "Authorization"
-host = "opencode.ai:443"
-method = "POST"
-path = "/go/**"
-prefix = "Bearer "
-secret = "OPENCODE_GO_API_KEY"
+secret = "OPENCODE_API_KEY"
 ```
 

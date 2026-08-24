@@ -5,12 +5,10 @@ import contextlib
 import json
 import logging
 import os
-import shutil
-from pathlib import Path
 from typing import Any
 
 from app.adapters.base import AdapterCapabilities, AgentResult, BaseAdapter
-from app.adapters.sandbox_policy import build_agents_md
+from app.adapters.sandbox_policy import prepare_sandbox_workspace, resolve_sandbox_command_prefix
 from app.pi_client import (
     _dispatch_event,
     _final_text,
@@ -22,9 +20,35 @@ from app.pi_client import (
 
 logger = logging.getLogger("bpmn.sandbox_adapter")
 
+# Pi's own local "is a key configured" precondition check runs before it ever makes a
+# request, and reads a fixed per-provider env var (see the built package's
+# docs/providers.md API Keys table) -- unrelated to whichever secretspec.toml key name
+# this project's own AGENTS.md network policy declares for the proxy-injected route.
+# `--secrets` deliberately keeps the real credential out of the container env (only the
+# proxy injects it, into the Authorization header of a matching request, replacing
+# whatever value the client sent -- see agent-sandbox's proxy/src/inject.rs), so without
+# a placeholder value here Pi fails "No API key found" locally before any request is
+# even attempted. Only providers this project actually drives (PI_PROVIDER=opencode-go
+# in devenv.nix) are listed; add a line here when a new one is wired up.
+_PI_LOCAL_API_KEY_ENV_VAR = {
+    "opencode-go": "OPENCODE_API_KEY",
+    "opencode-zen": "OPENCODE_API_KEY",
+}
+_SANDBOX_API_KEY_PLACEHOLDER = "secret-injected-by-proxy"
+
+# Mirrors PI_SANDBOX_ENABLED's "=1" convention. Default on, matching the adapter's
+# original unconditional behavior: --secrets resolves every declared route eagerly and
+# fails the whole launch if one can't be satisfied, which is right when the sandbox's
+# own placeholder-keyed provider needs the proxy to inject a real credential. Set to "0"
+# for a host where Pi already has a real credential from its own `/login` (persisted in
+# the mounted `.pi` state, resolved before the placeholder env var and outside the proxy
+# entirely) -- there --secrets has nothing to do and would only add a route the host
+# hasn't necessarily configured a key for.
+_SECRETS_ENABLED_ENV_VAR = "PI_SANDBOX_SECRETS_ENABLED"
+
 
 class SandboxPiAdapter(BaseAdapter):
-    """Adapter executing Pi agents inside isolated Podman containers via agent-sandbox --programmatic."""
+    """Adapter executing Pi agents inside isolated Podman containers via agent-sandbox --json --prompt -."""
 
     def __init__(
         self,
@@ -32,20 +56,9 @@ class SandboxPiAdapter(BaseAdapter):
         timeout_seconds: float = 1800,
         max_events: int = 10000,
     ) -> None:
-        self.executable = executable or os.getenv("AGENT_SANDBOX_EXECUTABLE") or self._find_sandbox_executable()
+        self.command_prefix = resolve_sandbox_command_prefix(executable)
         self.timeout_seconds = timeout_seconds
         self.max_events = max_events
-
-    @staticmethod
-    def _find_sandbox_executable() -> str:
-        root_dir = Path(__file__).resolve().parents[2]
-        vendor_bin = root_dir / "vendor" / "agent-sandbox" / "cli" / "target" / "release" / "agent-sandbox"
-        if vendor_bin.is_file():
-            return str(vendor_bin)
-        on_path = shutil.which("agent-sandbox")
-        if on_path:
-            return on_path
-        return "agent-sandbox"
 
     @property
     def adapter_type(self) -> str:
@@ -58,20 +71,19 @@ class SandboxPiAdapter(BaseAdapter):
             supports_sessions=True,
             timeout_env_var="PI_TIMEOUT_SECONDS",
             default_timeout_seconds=1800.0,
+            no_output_hint=(
+                "This usually means no authenticated provider/model is configured; check PI_PROVIDER, "
+                "PI_MODEL, and that the workspace's sandbox policy declares a secret-injecting route for "
+                "the provider (see app/adapters/sandbox_policy.py, § 4b Agent Sandbox Integration)."
+            ),
             view="agent",
         )
 
     async def prepare_workspace(self, workdir: str, config: dict[str, str]) -> None:
-        """Render this BPMN task's network policy into the workspace AGENTS.md."""
-        agents_md = Path(workdir) / "AGENTS.md"
-        base_md = agents_md.read_text("utf-8") if agents_md.is_file() else None
-        if not base_md:
-            root_agents_md = Path(__file__).resolve().parents[2] / "AGENTS.md"
-            if root_agents_md.is_file():
-                base_md = root_agents_md.read_text("utf-8")
-        agents_md.write_text(build_agents_md(config, base_agents_md=base_md), encoding="utf-8")
+        """Render this BPMN task's network policy into the workspace AGENTS.md, plus secretspec.toml."""
+        prepare_sandbox_workspace(workdir, config)
 
-    async def run(  # noqa: C901, PLR0915 -- subprocess lifecycle (spawn/stream/timeout/cancel/parse) isn't naturally splittable without threading state through several helpers; left as pre-existing complexity
+    async def run(  # noqa: C901, PLR0912, PLR0915 -- subprocess lifecycle (spawn/stream/timeout/cancel/parse) isn't naturally splittable without threading state through several helpers; left as pre-existing complexity
         self,
         prompt: str,
         config: dict[str, str],
@@ -86,15 +98,21 @@ class SandboxPiAdapter(BaseAdapter):
         session_id = config.get("session_id")
         fork = config.get("fork", "").lower() in ("true", "1", "yes")
 
-        # Build agent-sandbox programmatic command
+        # Build the agent-sandbox command: --json (structured stdout, buffered until
+        # the turn exits) + --prompt - (feed `prompt` to pi over stdin) replace the
+        # old combined --programmatic flag.
+        secrets_enabled = os.getenv(_SECRETS_ENABLED_ENV_VAR, "1") == "1"
         command = [
-            self.executable,
+            *self.command_prefix,
             "--workspace",
             "--proxy",
-            "--secrets",
-            "--programmatic",
-            "pi",
         ]
+        if secrets_enabled:
+            command.append("--secrets")
+            local_key_var = _PI_LOCAL_API_KEY_ENV_VAR.get(provider or "")
+            if local_key_var:
+                command.extend(["-e", f"{local_key_var}={_SANDBOX_API_KEY_PLACEHOLDER}"])
+        command.extend(["--json", "--prompt", "-", "pi"])
         if model:
             command.extend(["--model", model])
         if provider:
@@ -190,8 +208,11 @@ class SandboxPiAdapter(BaseAdapter):
 
         decoded_stdout = raw_stdout.decode("utf-8", errors="replace").strip()
         decoded_stderr = raw_stderr.decode("utf-8", errors="replace").strip()
+        logger.debug(f"agent-sandbox raw stdout ({len(decoded_stdout)} chars): {decoded_stdout[:4000]}")
+        if decoded_stderr:
+            logger.debug(f"agent-sandbox raw stderr ({len(decoded_stderr)} chars): {decoded_stderr[:4000]}")
 
-        # Parse the outer JSON envelope from agent-sandbox --programmatic
+        # Parse the outer JSON envelope from agent-sandbox --json (type: "exit")
         inner_stdout = decoded_stdout
         inner_stderr = decoded_stderr
         container_exit_code = exit_code
@@ -238,6 +259,11 @@ class SandboxPiAdapter(BaseAdapter):
         stderr_final = inner_stderr or decoded_stderr
         if policy_error and not stderr_final:
             stderr_final = f"Sandbox policy error: {policy_error}"
+
+        logger.debug(
+            f"agent-sandbox outcome: status={status} exit_code={container_exit_code} "
+            f"events={len(events)} policy_error={policy_error!r} text={text[:2000]!r}"
+        )
 
         return AgentResult(
             status=status,

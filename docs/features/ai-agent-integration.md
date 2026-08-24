@@ -56,11 +56,15 @@ To prevent client libraries from aborting before initiating HTTP requests, `PiCl
 ```python
 env = {
     **os.environ,
-    "OPENAI_API_KEY": os.environ.get("OPENCODE_GO_API_KEY") or os.environ.get("OPENCODE_ZEN_API_KEY") or "secret-injected-by-proxy",
+    "OPENAI_API_KEY": os.environ.get("OPENCODE_API_KEY") or "secret-injected-by-proxy",
     "OPENAI_BASE_URL": os.environ.get("OPENAI_BASE_URL", "https://opencode.ai/go/v1"),
     "PI_DEFAULT_PROVIDER": os.environ.get("PI_DEFAULT_PROVIDER", "opencode-go"),
 }
 ```
+
+Both providers share the one `OPENCODE_API_KEY` secret — the sandbox's `/zen/**`
+allowed route covers `opencode-go`'s nested `/zen/go/**` path too, so there is only
+ever one credential for the proxy to inject.
 
 ---
 

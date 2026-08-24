@@ -300,6 +300,9 @@ class ShellAdapter(BaseAdapter):
 
         stdout = "".join(stdout_chunks)
         stderr = "".join(stderr_chunks)
+        logger.debug("Shell task exit_code=%d stdout (%d chars): %s", exit_code, len(stdout), stdout[:4000])
+        if stderr:
+            logger.debug("Shell task stderr (%d chars): %s", len(stderr), stderr[:4000])
         artifacts = await asyncio.to_thread(self._collect_artifacts, run_dir, Path(cwd), config.get("artifacts"))
 
         succeeded = exit_code == 0

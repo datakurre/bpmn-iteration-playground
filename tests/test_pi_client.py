@@ -300,9 +300,9 @@ print(json.dumps({"type": "agent_settled"}))
 
 
 @pytest.mark.anyio
-async def test_pi_client_env_defaults_api_key_from_opencode_go(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_pi_client_env_defaults_api_key_from_opencode_api_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setenv("OPENCODE_GO_API_KEY", "go-secret-token")
+    monkeypatch.setenv("OPENCODE_API_KEY", "opencode-secret-token")
 
     script = tmp_path / "env_pi.py"
     script.write_text("""#!/usr/bin/env python3
@@ -324,7 +324,7 @@ print(json.dumps({"type": "agent_settled"}))
     client = PiClient(executable=str(script), timeout_seconds=5)
     res = await client.run("test", cwd=str(tmp_path))
     assert res.output is not None
-    assert res.output["summary"] == "go-secret-token"
+    assert res.output["summary"] == "opencode-secret-token"
 
 
 @pytest.mark.anyio

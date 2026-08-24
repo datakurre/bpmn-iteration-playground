@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.adapters.sandbox_adapter import SandboxPiAdapter
+from app.adapters.sandbox_adapter import _SANDBOX_API_KEY_PLACEHOLDER, SandboxPiAdapter
 from app.adapters.sandbox_policy import build_agents_md
 from app.persistence import WorkflowStore
 from app.workflow_service import WorkflowService
@@ -329,6 +329,69 @@ print(json.dumps({"status": 0, "stdout": json.dumps({"type": "agent_settled", "a
         cwd=str(tmp_path),
     )
     assert res.exit_code == 0
+
+
+_ARGS_ECHO_SCRIPT = """#!/usr/bin/env python3
+import json, sys
+sys.stdin.read()
+args = sys.argv[1:]
+message = {
+    "type": "message_end",
+    "message": {
+        "role": "assistant",
+        "content": [{
+            "type": "text",
+            "text": json.dumps({
+                "status": "success",
+                "summary": "ok",
+                "findings": args,
+                "artifacts": [],
+                "next_action": "continue"
+            })
+        }]
+    }
+}
+print(json.dumps({"status": 0, "stdout": json.dumps(message), "stderr": ""}))
+"""
+
+
+@pytest.mark.anyio
+async def test_sandbox_adapter_secrets_enabled_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PI_SANDBOX_SECRETS_ENABLED", raising=False)
+    mock_sandbox = tmp_path / "mock-secrets-sandbox.py"
+    mock_sandbox.write_text(_ARGS_ECHO_SCRIPT)
+    mock_sandbox.chmod(mock_sandbox.stat().st_mode | stat.S_IEXEC)
+
+    adapter = SandboxPiAdapter(executable=str(mock_sandbox))
+    res = await adapter.run(
+        prompt="Execute task",
+        config={"provider": "opencode-go"},
+        cwd=str(tmp_path),
+    )
+    assert res.output is not None
+    args = res.output["findings"]
+    assert "--secrets" in args
+    assert "-e" in args
+    assert f"OPENCODE_API_KEY={_SANDBOX_API_KEY_PLACEHOLDER}" in args
+
+
+@pytest.mark.anyio
+async def test_sandbox_adapter_secrets_disabled_via_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PI_SANDBOX_SECRETS_ENABLED", "0")
+    mock_sandbox = tmp_path / "mock-no-secrets-sandbox.py"
+    mock_sandbox.write_text(_ARGS_ECHO_SCRIPT)
+    mock_sandbox.chmod(mock_sandbox.stat().st_mode | stat.S_IEXEC)
+
+    adapter = SandboxPiAdapter(executable=str(mock_sandbox))
+    res = await adapter.run(
+        prompt="Execute task",
+        config={"provider": "opencode-go"},
+        cwd=str(tmp_path),
+    )
+    assert res.output is not None
+    args = res.output["findings"]
+    assert "--secrets" not in args
+    assert "-e" not in args
 
 
 @pytest.mark.anyio

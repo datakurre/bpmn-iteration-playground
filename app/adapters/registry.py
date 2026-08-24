@@ -8,6 +8,7 @@ from pathlib import Path
 from app.adapters.base import BaseAdapter
 from app.adapters.pi_adapter import PiAdapter
 from app.adapters.sandbox_adapter import SandboxPiAdapter
+from app.adapters.sandbox_shell_adapter import SandboxShellAdapter
 from app.adapters.shell_adapter import ShellAdapter
 
 logger = logging.getLogger("bpmn.adapters")
@@ -15,7 +16,7 @@ logger = logging.getLogger("bpmn.adapters")
 # A plugin module that imports a built-in adapter must not thereby re-register it.
 # Previously only BaseAdapter and PiAdapter were excluded, so importing ShellAdapter in a
 # plugin silently replaced the registered instance.
-_BUILTIN_ADAPTER_CLASSES = (BaseAdapter, PiAdapter, SandboxPiAdapter, ShellAdapter)
+_BUILTIN_ADAPTER_CLASSES = (BaseAdapter, PiAdapter, SandboxPiAdapter, SandboxShellAdapter, ShellAdapter)
 
 
 class AdapterRegistry:
@@ -29,6 +30,7 @@ class AdapterRegistry:
         self.register(pi_adapter)
         self.register(sandbox_adapter)
         self.register(ShellAdapter())
+        self.register(SandboxShellAdapter())
         # Register alias for agent_sandbox
         self._adapters["agent_sandbox"] = sandbox_adapter
 

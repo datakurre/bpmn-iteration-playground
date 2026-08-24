@@ -1,12 +1,13 @@
 .PHONY: help watch run start demo test lint typecheck install setup clean pack screenshots docs docs-serve submodules submodule submodule-update vendor-build
 
-HOST ?= 0.0.0.0
+HOST ?= 127.0.0.1
 PORT ?= 8000
 UV ?= uv
+WATCH_LOG ?= watch.log
 
 help:
 	@echo "Available commands:"
-	@echo "  make watch            - Run FastAPI server with auto-reload"
+	@echo "  make watch            - Run FastAPI server with auto-reload (tees console to \$$(WATCH_LOG))"
 	@echo "  make run              - Run FastAPI server"
 	@echo "  make demo             - Run server with mock Pi demo agent (no API key required)"
 	@echo "  make lint             - Run mypy (--strict) and tsc typecheckers"
@@ -24,7 +25,7 @@ help:
 	@echo "  make clean            - Remove Python and pytest cache files"
 
 watch:
-	$(UV) run uvicorn app.api.server:app --reload --host $(HOST) --port $(PORT)
+	$(UV) run uvicorn app.api.server:app --reload --host $(HOST) --port $(PORT) 2>&1 | tee $(WATCH_LOG)
 
 run:
 	$(UV) run uvicorn app.api.server:app --host $(HOST) --port $(PORT)

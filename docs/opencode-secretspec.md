@@ -20,7 +20,9 @@ You can switch between Go and Zen by changing `PI_PROVIDER=opencode-go` or `PI_P
 
 ## secretspec
 
-The manifest requires `OPENCODE_GO_API_KEY` and `OPENCODE_ZEN_API_KEY` for the `opencode` scope. Do
+The manifest requires a single `OPENCODE_API_KEY` for the `opencode` scope, shared by
+both the Zen and Go providers — pi's own client resolves both providers' credentials
+from that one environment variable, so the proxy only ever injects one value. Do
 not run `secretspec get` or `secretspec export`; those commands print secret
 material. Check availability without values:
 
@@ -36,7 +38,7 @@ secretspec run \
   --scope opencode \
   --reason "run the BPMN Pi agent against OpenCode Go" \
   -- sh -c '
-    export OPENAI_API_KEY="$OPENCODE_GO_API_KEY"
+    export OPENAI_API_KEY="$OPENCODE_API_KEY"
     export OPENAI_BASE_URL="https://opencode.ai/go/v1"
     export PI_PROVIDER="opencode-go"
     export PI_MODEL="gpt-5.6-luna"
@@ -59,18 +61,13 @@ invent or edit fields. Editing `AGENTS.md` requires an agent-sandbox relaunch.
 host = "opencode.ai:443"
 method = "POST"
 path = "/zen/**"
-secret = "OPENCODE_ZEN_API_KEY"
-header = "Authorization"
-prefix = "Bearer "
-
-[[network.allowed_routes]]
-host = "opencode.ai:443"
-method = "POST"
-path = "/go/**"
-secret = "OPENCODE_GO_API_KEY"
+secret = "OPENCODE_API_KEY"
 header = "Authorization"
 prefix = "Bearer "
 ```
+
+`/zen/**` already covers `/zen/go/**` (the Go tier is nested under `/zen/`, not a
+sibling `/go/**` path), so one route and one secret authorize both providers.
 
 The secret is injected by the sandbox proxy only for matching HTTPS requests;
 it is not placed in the sandbox filesystem or environment. If the host has not
@@ -85,9 +82,6 @@ Pi uses `@earendil-works/pi-coding-agent` with OpenCode Go provider configuratio
 ```json
 {
   "providers": {
-    "openai": {
-      "baseUrl": "https://opencode.ai/go/v1"
-    },
     "opencode-zen": {
       "baseUrl": "https://opencode.ai/zen/v1",
       "api": "openai-completions",
@@ -143,4 +137,4 @@ When invoking `node_modules/.bin/pi` inside the sandbox:
 - `NODE_USE_ENV_PROXY=1`: Instructs Node.js (`undici` / `fetch`) to route outbound HTTPS requests through the local proxy sidecar (`$HTTP_PROXY`).
 - `NODE_EXTRA_CA_CERTS=/run/agent-sandbox-proxy-ca.pem`: Configures Node to trust the sandbox proxy session CA certificate.
 - `OPENAI_BASE_URL=https://opencode.ai/go/v1`: Points requests to the OpenCode Go API by default.
-- `OPENCODE_API_KEY=secret-injected-by-proxy`: Placeholder token substituted with `OPENCODE_GO_API_KEY` or `OPENCODE_ZEN_API_KEY` on the wire by the proxy.
+- `OPENCODE_API_KEY=secret-injected-by-proxy`: Placeholder token substituted with the real `OPENCODE_API_KEY` on the wire by the proxy.

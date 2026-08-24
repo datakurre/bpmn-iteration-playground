@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_SandboxSmokeTest" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="sandbox_smoke_test" name="Agent Sandbox Smoke Test" isExecutable="true">
+    <bpmn:documentation>Minimal two-step smoke test for agent-sandbox: one Pi turn via SandboxPiAdapter (harness_type sandbox_pi) and one deterministic command via SandboxShellAdapter (harness_type sandbox_shell), both isolated through vendor/agent-sandbox. Exists to exercise and observe the `agent-sandbox` invocation and its logging (watch.log), not as a template for real work.</bpmn:documentation>
+    <bpmn:startEvent id="Start_Smoke" name="Smoke Test Started">
+      <bpmn:outgoing>Flow_To_Pi</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_To_Pi" sourceRef="Start_Smoke" targetRef="Task_Pi_Sandbox" />
+    <bpmn:serviceTask id="Task_Pi_Sandbox" name="Pi Turn (sandboxed)">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="sandbox_pi" />
+          <camunda:property name="agent_role" value="smoke_tester" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="task_brief">${task_brief}</camunda:inputParameter>
+          <camunda:outputParameter name="pi_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="pi_summary">${summary}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_To_Pi</bpmn:incoming>
+      <bpmn:outgoing>Flow_To_Shell</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_To_Shell" sourceRef="Task_Pi_Sandbox" targetRef="Task_Shell_Sandbox" />
+    <bpmn:serviceTask id="Task_Shell_Sandbox" name="Shell Command (sandboxed)">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="sandbox_shell" />
+          <camunda:property name="shell" value="true" />
+          <camunda:property name="command" value="echo &quot;hello from agent-sandbox shell&quot; | tee sandbox_output.txt &amp;&amp; uname -a &gt;&gt; sandbox_output.txt &amp;&amp; whoami &gt;&gt; sandbox_output.txt" />
+          <camunda:property name="artifacts" value="sandbox_output.txt" />
+          <camunda:property name="timeout" value="120" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:outputParameter name="shell_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="shell_summary">${summary}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_To_Shell</bpmn:incoming>
+      <bpmn:outgoing>Flow_To_End</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_To_Smoke_End" sourceRef="Task_Shell_Sandbox" targetRef="End_Smoke" />
+    <bpmn:endEvent id="End_Smoke" name="Smoke Test Complete">
+      <bpmn:incoming>Flow_To_Smoke_End</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_SandboxSmokeTest">
+    <bpmndi:BPMNPlane id="BPMNPlane_SandboxSmokeTest" bpmnElement="sandbox_smoke_test">
+      <bpmndi:BPMNShape id="Start_Smoke_di" bpmnElement="Start_Smoke">
+        <dc:Bounds x="50" y="140" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Pi_Sandbox_di" bpmnElement="Task_Pi_Sandbox">
+        <dc:Bounds x="150" y="118" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Shell_Sandbox_di" bpmnElement="Task_Shell_Sandbox">
+        <dc:Bounds x="360" y="118" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Smoke_di" bpmnElement="End_Smoke">
+        <dc:Bounds x="570" y="140" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_To_Pi_di" bpmnElement="Flow_To_Pi">
+        <di:waypoint x="86" y="158" />
+        <di:waypoint x="150" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_To_Shell_di" bpmnElement="Flow_To_Shell">
+        <di:waypoint x="300" y="158" />
+        <di:waypoint x="360" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_To_Smoke_End_di" bpmnElement="Flow_To_Smoke_End">
+        <di:waypoint x="510" y="158" />
+        <di:waypoint x="570" y="158" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

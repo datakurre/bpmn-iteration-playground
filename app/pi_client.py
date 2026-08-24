@@ -20,8 +20,6 @@ ALLOWED_ENV_VARS = {
     "PI_MODEL",
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
-    "OPENCODE_ZEN_API_KEY",
-    "OPENCODE_GO_API_KEY",
     "OPENCODE_API_KEY",
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -336,9 +334,9 @@ class PiClient:
 
         env = {k: v for k, v in os.environ.items() if k in ALLOWED_ENV_VARS}
         if not env.get("OPENAI_API_KEY"):
-            env["OPENAI_API_KEY"] = os.getenv("OPENCODE_GO_API_KEY") or os.getenv("OPENCODE_ZEN_API_KEY") or "secret-injected-by-proxy"
+            env["OPENAI_API_KEY"] = os.getenv("OPENCODE_API_KEY") or "secret-injected-by-proxy"
         if not env.get("OPENCODE_API_KEY"):
-            env["OPENCODE_API_KEY"] = os.getenv("OPENCODE_GO_API_KEY") or os.getenv("OPENCODE_ZEN_API_KEY") or "secret-injected-by-proxy"
+            env["OPENCODE_API_KEY"] = "secret-injected-by-proxy"
         if not env.get("NODE_EXTRA_CA_CERTS") and os.getenv("AGENT_SANDBOX_PROXY_CA_FILE"):
             env["NODE_EXTRA_CA_CERTS"] = os.getenv("AGENT_SANDBOX_PROXY_CA_FILE", "")
         if "NODE_USE_ENV_PROXY" not in env:
@@ -439,6 +437,11 @@ class PiClient:
 
         if status not in ("timeout",) and not stderr_msg:
             status = _outcome_status(output, exit_code, events)
+
+        logger.debug(
+            f"Pi outcome: status={status} exit_code={exit_code} events={len(events)} "
+            f"text={text[:2000]!r} stderr={stderr_text[:2000]!r}"
+        )
 
         return PiResult(status, output, text, events, stderr_text, exit_code, session_id=branch_session_id)
 
