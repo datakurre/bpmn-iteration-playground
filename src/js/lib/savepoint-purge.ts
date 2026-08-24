@@ -22,6 +22,29 @@ export function buildPurgeRequest(point: SavePointSummary): PurgeRequest {
   return { before_task_id: point.task_id };
 }
 
+export interface PurgeAllRequest {
+  before: string;
+}
+
+/**
+ * "Purge everything" has no element to anchor on -- the newest task's own savepoints are
+ * exactly what a `before_task_id` anchor always preserves (see `buildPurgeRequest`'s
+ * docstring), so there is no task id that expresses "delete this task's points too". A
+ * timestamp anchor doesn't have that exemption: `before` a moment after every recorded
+ * `created_at` purges the lot, `nowIso` overridable so this stays pure/testable.
+ */
+export function buildPurgeAllRequest(nowIso: () => string = () => new Date().toISOString()): PurgeAllRequest {
+  return { before: nowIso() };
+}
+
+export function describePurgeAll(points: SavePointSummary[]): string {
+  if (points.length === 0) {
+    return "There is nothing to purge: no savepoints exist.";
+  }
+  const plural = points.length === 1 ? "savepoint" : "savepoints";
+  return `This will permanently delete all ${points.length} ${plural} in this instance. This cannot be undone.`;
+}
+
 /**
  * Every savepoint strictly older than the anchor *task* -- never the anchor's own points.
  *

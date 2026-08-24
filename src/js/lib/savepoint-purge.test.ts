@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildPurgeRequest, describePurge, selectPurgedIds } from "./savepoint-purge";
+import { buildPurgeAllRequest, buildPurgeRequest, describePurge, describePurgeAll, selectPurgedIds } from "./savepoint-purge";
 import type { SavePointSummary } from "./savepoint-purge";
 
 const points: SavePointSummary[] = [
@@ -43,6 +43,32 @@ describe("describePurge", () => {
 
   it("reports when nothing would be removed", () => {
     expect(describePurge(points, oldestId)).toContain("nothing");
+  });
+});
+
+describe("buildPurgeAllRequest", () => {
+  it("anchors on a caller-supplied 'now' rather than an element", () => {
+    expect(buildPurgeAllRequest(() => "2026-08-21T00:05:00Z")).toEqual({ before: "2026-08-21T00:05:00Z" });
+  });
+
+  it("defaults to the real current time", () => {
+    const before = Date.now();
+    const request = buildPurgeAllRequest();
+    const after = Date.now();
+    const parsed = Date.parse(request.before);
+    expect(parsed).toBeGreaterThanOrEqual(before);
+    expect(parsed).toBeLessThanOrEqual(after);
+  });
+});
+
+describe("describePurgeAll", () => {
+  it("counts every savepoint, including the newest task's own", () => {
+    const msg = describePurgeAll(points);
+    expect(msg).toContain(String(points.length));
+  });
+
+  it("reports when there is nothing to purge", () => {
+    expect(describePurgeAll([])).toContain("nothing");
   });
 });
 

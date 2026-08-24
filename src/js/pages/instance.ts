@@ -4,13 +4,21 @@ import { initResizer } from "../lib/resizer";
 import { fitDiagram, wireZoomControls } from "../lib/bpmn-viewer-controls";
 import { withDocumentContentFallback } from "../lib/form-data-fallback";
 import { createBackoffScheduler } from "../lib/websocket";
-import { buildPurgeRequest, describePurge } from "../lib/savepoint-purge";
+import { buildPurgeAllRequest, buildPurgeRequest, describePurge, describePurgeAll } from "../lib/savepoint-purge";
 import type { BpmnDiagramInstance } from "../lib/bpmn-types";
 import type { FormInstance } from "../types/globals";
 
 
 interface JobStatus {
   status: string;
+  failure_reason?: string;
+  stderr?: string;
+  exit_code?: number;
+  prompt?: string;
+  text?: string;
+  output?: Record<string, unknown>;
+  network?: Record<string, unknown>;
+  policy_error?: string;
 }
 
 interface TaskSummary {
@@ -155,6 +163,44 @@ function setupVerticalResizers(): void {
 }
 setupVerticalResizers();
 
+/**
+ * Task-scope execution detail (prompt/payload, output, stdout/stderr) for one task's
+ * job entry -- collapsed by default so a successful task stays quiet, but available to
+ * expand for any task, success or failure. Deliberately reads only from `job`
+ * (record["jobs"][task_id]), never from workflow data: `job` is the scope this data is
+ * meant to live in, and is what stays clean of it -- see
+ * app/orchestration/jobs.py's complete_pi docstring-comment for why.
+ */
+function renderTaskDetails(job: JobStatus | undefined): string {
+  if (!job) return "";
+  const sections: string[] = [];
+  if (job.prompt) {
+    sections.push(`<div class="mt-1"><div class="text-muted text-[9.5px] uppercase tracking-wide">Prompt</div><pre class="mt-0.5 p-1.5 rounded bg-[var(--color-code-bg)] border border-line-subtle text-[10.5px] font-mono whitespace-pre-wrap break-words max-h-40 overflow-y-auto">${escapeHtml(job.prompt)}</pre></div>`);
+  }
+  const command = job.output && typeof job.output.command === "string" ? job.output.command : undefined;
+  if (command) {
+    sections.push(`<div class="mt-1"><div class="text-muted text-[9.5px] uppercase tracking-wide">Command</div><pre class="mt-0.5 p-1.5 rounded bg-[var(--color-code-bg)] border border-line-subtle text-[10.5px] font-mono whitespace-pre-wrap break-words">${escapeHtml(command)}</pre></div>`);
+  }
+  const stdout = job.output && typeof job.output.stdout === "string" ? job.output.stdout : undefined;
+  if (stdout) {
+    sections.push(`<div class="mt-1"><div class="text-muted text-[9.5px] uppercase tracking-wide">Stdout</div><pre class="mt-0.5 p-1.5 rounded bg-[var(--color-code-bg)] border border-line-subtle text-[10.5px] font-mono whitespace-pre-wrap break-words max-h-40 overflow-y-auto">${escapeHtml(stdout)}</pre></div>`);
+  } else if (job.text) {
+    sections.push(`<div class="mt-1"><div class="text-muted text-[9.5px] uppercase tracking-wide">Result text</div><pre class="mt-0.5 p-1.5 rounded bg-[var(--color-code-bg)] border border-line-subtle text-[10.5px] font-mono whitespace-pre-wrap break-words max-h-40 overflow-y-auto">${escapeHtml(job.text)}</pre></div>`);
+  }
+  if (job.stderr) {
+    sections.push(`<div class="mt-1"><div class="text-muted text-[9.5px] uppercase tracking-wide">Stderr</div><pre class="mt-0.5 p-1.5 rounded bg-[var(--color-code-bg)] border border-line-subtle text-[10.5px] font-mono whitespace-pre-wrap break-words max-h-40 overflow-y-auto">${escapeHtml(job.stderr)}</pre></div>`);
+  }
+  if (job.output) {
+    sections.push(`<div class="mt-1"><div class="text-muted text-[9.5px] uppercase tracking-wide">Output</div><pre class="mt-0.5 p-1.5 rounded bg-[var(--color-code-bg)] border border-line-subtle text-[10.5px] font-mono whitespace-pre-wrap break-words max-h-40 overflow-y-auto">${escapeHtml(JSON.stringify(job.output, null, 2))}</pre></div>`);
+  }
+  if (sections.length === 0) return "";
+  return `
+      <details class="mt-1.5 group">
+        <summary class="text-[10.5px] text-muted cursor-pointer select-none hover:text-ink">Details</summary>
+        ${sections.join("")}
+      </details>`;
+}
+
 function renderState(next: WorkflowState): void {
   state = next;
   const statusEl = $("status");
@@ -183,15 +229,26 @@ function renderState(next: WorkflowState): void {
     tasksEl.innerHTML = [...next.tasks]
       .reverse()
       .map((t) => {
-        const isFailed = next.jobs?.[t.id]?.status === "failed";
+        const job = next.jobs?.[t.id];
+        const isFailed = job?.status === "failed";
         const retry = isFailed ? `<button class="btn btn-danger px-2 py-0.5 text-[10px]" data-retry="${escapeHtml(t.id)}">Retry</button>` : "";
+        // The BPMN task itself stays STARTED (it's parked for a Retry, not
+        // transitioned) even though the job failed, so the state badge alone
+        // never shows red -- the failure reason has to be rendered explicitly
+        // or a failed sandboxed turn looks identical to one still running.
+        const reason = job?.failure_reason || job?.stderr;
+        const error = isFailed && reason
+          ? `<div class="mt-1.5 p-1.5 rounded bg-[var(--color-danger-dim)] border border-[var(--color-danger-border)] text-[var(--color-danger)] text-[10.5px] font-mono whitespace-pre-wrap break-words">${escapeHtml(reason)}</div>`
+          : "";
         return `
       <div class="p-2 rounded-md bg-card border border-line mb-1.5 text-xs hover:border-line-highlight hover:bg-card-hover transition-colors">
         <div class="flex justify-between items-center gap-2">
           <div class="font-semibold text-ink text-[12.5px]">${escapeHtml(t.name || t.bpmn_id)}</div>
-          <span class="badge ${escapeHtml(t.state.toLowerCase())}">${escapeHtml(t.state)}</span>
+          <span class="badge ${isFailed ? "failed" : escapeHtml(t.state.toLowerCase())}">${isFailed ? "FAILED" : escapeHtml(t.state)}</span>
         </div>
         <div class="text-muted text-[10.5px] font-mono mt-0.5">${escapeHtml(t.id)} · ${escapeHtml(t.type || "Task")}</div>
+        ${error}
+        ${renderTaskDetails(job)}
         ${retry ? `<div class="mt-1.5">${retry}</div>` : ""}
       </div>`;
       })
@@ -211,6 +268,8 @@ function renderState(next: WorkflowState): void {
   const spList = [...(next.save_points || [])].reverse();
   const savepointsBadge = $("savepoints-badge");
   if (savepointsBadge) savepointsBadge.textContent = String(spList.length);
+  const savepointsToolbar = $("savepoints-toolbar");
+  if (savepointsToolbar) savepointsToolbar.classList.toggle("hidden", spList.length === 0);
   const savepointsEl = $("savepoints");
   if (savepointsEl) {
     savepointsEl.innerHTML = spList.length
@@ -275,6 +334,33 @@ function renderState(next: WorkflowState): void {
       }
     };
   });
+
+  const purgeAllButton = $("purge-all-savepoints") as HTMLButtonElement | null;
+  if (purgeAllButton) {
+    purgeAllButton.onclick = async () => {
+      if (spList.length === 0) return;
+      if (!window.confirm(describePurgeAll(spList))) return;
+
+      purgeAllButton.disabled = true;
+      try {
+        const response = await fetch(`/instance/${id}/savepoints`, {
+          method: "DELETE",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(buildPurgeAllRequest()),
+        });
+        if (response.ok) {
+          await refresh();
+        } else {
+          const body = await response.json().catch(() => null);
+          alert(`Purge failed: ${body?.detail || response.statusText}`);
+          purgeAllButton.disabled = false;
+        }
+      } catch (e) {
+        alert(`Purge failed: ${e}`);
+        purgeAllButton.disabled = false;
+      }
+    };
+  }
 
   const dataEl = $("data");
   if (dataEl) dataEl.textContent = JSON.stringify(next.data, null, 2);
