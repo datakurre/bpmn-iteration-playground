@@ -7,6 +7,8 @@ import logging
 import os
 import re
 import signal
+import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -69,21 +71,24 @@ def _demo_fallback_allowed() -> bool:
     return os.getenv("PI_ALLOW_DEMO_FALLBACK", "").strip().lower() in ("1", "true", "yes", "on")
 
 
-async def _kill_process_group(process: asyncio.subprocess.Process) -> None:
+def _kill_process_group_popen(process: subprocess.Popen[bytes]) -> None:
     """Kill the whole session started for Pi, not just its direct child.
 
     Pi is spawned with start_new_session=True, so process.kill() would leave the node
     runtime and any tool subprocesses it started running after a timeout or cancellation.
+
+    killpg() is a plain syscall, not a blocking wait, so this is safe to call
+    directly from a coroutine -- no thread needed. Reaping happens naturally:
+    the reader thread's readline() unblocks once the killed process's stdout
+    pipe closes, and _execute()'s to_thread(process.wait) picks up returncode.
     """
-    if process.returncode is not None:
+    if process.poll() is not None:
         return
     try:
         os.killpg(os.getpgid(process.pid), signal.SIGKILL)
     except (ProcessLookupError, PermissionError, OSError):
         with contextlib.suppress(ProcessLookupError):
             process.kill()
-    with contextlib.suppress(ProcessLookupError):
-        await process.wait()
 
 
 def _set_resource_limits() -> None:
@@ -300,12 +305,26 @@ class PiClient:
                 preexec = _set_resource_limits
 
         logger.info(f"Spawning Pi process: {executable} in {cwd}")
-        process = await asyncio.create_subprocess_exec(
-            *command,
+
+        # Spawned via subprocess.Popen in a thread rather than
+        # asyncio.create_subprocess_exec(): the latter registers the child with
+        # asyncio's event-loop-bound child watcher, and this process runs inside
+        # short-lived per-request event loops (Starlette's TestClient opens one
+        # per call; each pytest-anyio test gets its own). Confirmed by
+        # reproduction: creating and destroying enough such loops that each
+        # spawn a subprocess this way corrupts the watcher's process-global
+        # state, hanging an unrelated *later* loop's shutdown forever trying to
+        # reap a task that has nothing to do with it. Popen's reaping happens
+        # synchronously via os.waitpid() in the worker thread instead, never
+        # touching that machinery. See app.workspace._run_tar for the same fix
+        # applied to workspace pack/unpack.
+        process = await asyncio.to_thread(
+            subprocess.Popen,
+            command,
             cwd=cwd,
             env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             start_new_session=True,
             preexec_fn=preexec,
         )
@@ -314,32 +333,47 @@ class PiClient:
         exit_code = None
         status = "failed"
 
+        loop = asyncio.get_running_loop()
+        line_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+
+        def _pump_stdout() -> None:
+            assert process.stdout is not None
+            try:
+                for line in iter(process.stdout.readline, b""):
+                    loop.call_soon_threadsafe(line_queue.put_nowait, line)
+            finally:
+                loop.call_soon_threadsafe(line_queue.put_nowait, None)
+
+        reader_thread = threading.Thread(target=_pump_stdout, daemon=True)
+        reader_thread.start()
+
         active_timeout = timeout_seconds or self.timeout_seconds
         try:
-            await asyncio.wait_for(self._read_output(process, events, on_event=on_event), active_timeout)
-            exit_code = process.returncode
+            await asyncio.wait_for(self._read_output(line_queue, events, on_event=on_event), active_timeout)
+            exit_code = await asyncio.to_thread(process.wait)
         except TimeoutError:
-            await _kill_process_group(process)
+            _kill_process_group_popen(process)
             status = "timeout"
             stderr_msg = "Pi timed out"
         except asyncio.CancelledError:
             # Never leave the agent running after the orchestrator gives up on it.
-            await _kill_process_group(process)
+            _kill_process_group_popen(process)
             raise
         except (BrokenPipeError, ConnectionError, PiError) as exc:
-            await _kill_process_group(process)
+            _kill_process_group_popen(process)
             status = "failed"
             stderr_msg = str(exc)
         finally:
             raw_stderr = b""
             if process.stderr:
                 with contextlib.suppress(Exception):
-                    raw_stderr = await process.stderr.read()
+                    raw_stderr = await asyncio.to_thread(process.stderr.read)
             decoded_stderr = raw_stderr.decode(errors="replace")
             if stderr_msg:
                 stderr_text = f"{stderr_msg}\n{decoded_stderr}".strip() if decoded_stderr else stderr_msg
             else:
                 stderr_text = decoded_stderr
+            reader_thread.join(timeout=5)
 
         branch_session_id = None
         for event in events:
@@ -357,14 +391,13 @@ class PiClient:
 
     async def _read_output(
         self,
-        process: asyncio.subprocess.Process,
+        line_queue: asyncio.Queue[bytes | None],
         events: list[dict[str, Any]],
         on_event: Any = None,
     ) -> None:
-        assert process.stdout is not None
         while True:
-            line = await process.stdout.readline()
-            if not line:
+            line = await line_queue.get()
+            if line is None:
                 break
             if len(events) >= self.max_events:
                 raise PiError("Pi emitted too many events")
@@ -380,7 +413,6 @@ class PiClient:
                         pass
             except json.JSONDecodeError:
                 pass
-        await process.wait()
 
 
 # Backward compatibility alias

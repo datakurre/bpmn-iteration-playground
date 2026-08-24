@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from app.api.ui import admin_page, editor_page, history_detail_page, history_page, instance_page, page
 from app.auth import Role, _is_require_auth, parse_auth_config, require_role
+from app.element_templates_registry import ElementTemplatesRegistry
 from app.logging_config import RequestLoggingMiddleware, configure_logging
 from app.models import (
     ClearInstancesResponse,
@@ -32,7 +33,6 @@ from app.models import (
     WorkflowState,
 )
 from app.persistence import WorkflowStore
-from app.element_templates_registry import ElementTemplatesRegistry
 from app.registry import WorkflowRegistry
 from app.workflow_service import WorkflowNotFoundError, WorkflowService
 from app.ws import manager as ws_manager
@@ -75,6 +75,8 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:  # noqa: C901
         try:
             yield
         finally:
+            with suppress(Exception):
+                await get_service().shutdown()
             with suppress(Exception):
                 await get_service().stop_timer_loop()
 
