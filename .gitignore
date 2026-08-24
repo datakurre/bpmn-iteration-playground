@@ -32,6 +32,8 @@ app/static/pages/
 app/static/tailwind.css
 app/static/diagram-js-minimap.css
 app/static/properties-panel.css
+app/static/bpmn-js-token-simulation.css
+app/static/bpmn-js-bpmnlint.css
 
 # Temporary & Verification Outputs
 *.log

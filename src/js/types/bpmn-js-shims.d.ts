@@ -35,3 +35,41 @@ declare module "camunda-bpmn-moddle/resources/camunda.json" {
 declare module "bpmn-auto-layout" {
   export function layoutProcess(xml: string): Promise<string>;
 }
+
+declare module "bpmn-js-create-append-anything" {
+  export const CreateAppendAnythingModule: unknown;
+  export const CreateAppendElementTemplatesModule: unknown;
+  export const RemoveTemplatesModule: unknown;
+}
+
+declare module "bpmn-js-token-simulation" {
+  const TokenSimulationModule: unknown;
+  export default TokenSimulationModule;
+}
+
+declare module "bpmn-js-bpmnlint" {
+  const BpmnlintModule: unknown;
+  export default BpmnlintModule;
+}
+
+// bpmnlint itself ships no type declarations. A rule module is a factory
+// that `bpmnlint`'s Linter calls with the rule's config value; we only need
+// it typed as `unknown` to pass through our own StaticResolver cache.
+type BpmnLintRuleFactory = unknown;
+
+declare module "bpmnlint/config/recommended" {
+  const recommendedConfig: { rules: Record<string, string> };
+  export default recommendedConfig;
+}
+
+declare module "bpmnlint/lib/resolver/static-resolver" {
+  class StaticResolver {
+    constructor(cache: Record<string, BpmnLintRuleFactory>);
+  }
+  export default StaticResolver;
+}
+
+declare module "bpmnlint/rules/*" {
+  const rule: BpmnLintRuleFactory;
+  export default rule;
+}

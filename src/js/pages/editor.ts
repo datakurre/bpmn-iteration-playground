@@ -64,16 +64,31 @@ async function init(): Promise<void> {
       propertiesPanel?: { parent: string };
       additionalModules?: unknown[];
       moddleExtensions?: Record<string, unknown>;
+      linting?: { bpmnlint: { config: { rules: Record<string, string> }; resolver: unknown }; active: boolean };
     }) => BpmnDiagramInstance
   )({
     container: "#modeler",
     propertiesPanel: {
       parent: "#properties-panel",
     },
-    additionalModules: [window.BpmnPropertiesPanelModule, window.BpmnPropertiesProviderModule, window.CamundaPlatformPropertiesProviderModule, window.minimapModule].filter(Boolean),
+    additionalModules: [
+      window.BpmnPropertiesPanelModule,
+      window.BpmnPropertiesProviderModule,
+      window.CamundaPlatformPropertiesProviderModule,
+      window.minimapModule,
+      window.CreateAppendAnythingModule,
+      window.TokenSimulationModule,
+      window.BpmnlintModule,
+    ].filter(Boolean),
     moddleExtensions: {
       camunda: window.camundaModdleDescriptor || {},
     },
+    linting: window.BpmnlintRecommendedConfig
+      ? {
+          bpmnlint: window.BpmnlintRecommendedConfig,
+          active: true,
+        }
+      : undefined,
   });
 
   await modeler.importXML(blankBPMN);

@@ -34,6 +34,10 @@ declare global {
     AutoLayout?: { layoutProcess(xml: string): Promise<string> };
     FormJS?: FormJSNamespace;
     FormViewer?: FormJSNamespace;
+    CreateAppendAnythingModule?: unknown;
+    TokenSimulationModule?: unknown;
+    BpmnlintModule?: unknown;
+    BpmnlintRecommendedConfig?: { config: { rules: Record<string, string> }; resolver: unknown };
   }
 }
 

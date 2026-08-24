@@ -38,3 +38,11 @@ copyFileSync(
   "node_modules/@bpmn-io/properties-panel/dist/assets/properties-panel.css",
   "app/static/properties-panel.css",
 );
+copyFileSync(
+  "node_modules/bpmn-js-token-simulation/assets/css/bpmn-js-token-simulation.css",
+  "app/static/bpmn-js-token-simulation.css",
+);
+copyFileSync(
+  "node_modules/bpmn-js-bpmnlint/dist/assets/css/bpmn-js-bpmnlint.css",
+  "app/static/bpmn-js-bpmnlint.css",
+);
