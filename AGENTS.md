@@ -114,6 +114,9 @@ scripts/
 flake.nix            – Nix flake: pi-* variant apps with role-specific prompts
 devenv.nix           – devenv: Python 3.14 + Node 22 + uvicorn process + scripts
 vendor/agent-sandbox – git submodule: Rust CLI + Podman sandbox, isolates Pi's fs/network/secrets
+vendor/operaton-element-templates{,-validator,-json-schema} – git submodules: Operaton/Camunda 7
+                       fork of bpmn-js-element-templates + its validator + JSON schema, sibling-linked
+                       via `file:` deps; not yet wired into the modeler bundle (see `make vendor-build`)
 ```
 
 **Data flow for a Pi service task:**

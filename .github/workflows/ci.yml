@@ -41,6 +41,21 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      # Only the element-templates submodules, not vendor/agent-sandbox (which uses an
+      # SSH remote and isn't needed for the frontend build).
+      - name: Checkout vendored element-templates submodules
+        run: |
+          git submodule update --init \
+            vendor/operaton-element-templates \
+            vendor/operaton-element-templates-validator \
+            vendor/operaton-element-templates-json-schema
+
+      - name: Build vendored element-templates submodules
+        run: |
+          cd vendor/operaton-element-templates-json-schema && npm install && npm run build && cd -
+          cd vendor/operaton-element-templates-validator && npm install && cd -
+          cd vendor/operaton-element-templates && npm install
+
       - name: Run Python tests
         run: pytest -v --cov=app --cov-report=term-missing --cov-report=xml
 

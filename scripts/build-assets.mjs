@@ -1,8 +1,19 @@
 import { build } from "esbuild";
 import { readdirSync, copyFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 const common = { bundle: true, minify: true, format: "iife" };
+
+// The modeler bundle doesn't import `bpmn-js-element-templates` yet, but when it
+// does, this resolves it (and its own `@bpmn-io/element-templates-validator`
+// dependency) to the vendored Operaton/Camunda 7 forks under vendor/ instead of
+// the upstream npm packages (which aren't even installed). Mirrors the Vite
+// `resolve.alias` used by vendor/operaton-element-templates's own reference
+// integration. Run `make vendor-build` first to produce these dist/ files.
+const elementTemplatesAlias = {
+  "bpmn-js-element-templates": resolve("vendor/operaton-element-templates/dist/index.esm.js"),
+  "@bpmn-io/element-templates-validator": resolve("vendor/operaton-element-templates-validator/dist/index.js"),
+};
 
 await build({
   ...common,
@@ -15,6 +26,7 @@ await build({
   entryPoints: ["src/js/modeler-bundle.ts"],
   outfile: "app/static/bpmn-modeler-bundle.js",
   loader: { ".json": "json" },
+  alias: elementTemplatesAlias,
 });
 
 const pagesDir = "src/js/pages";
