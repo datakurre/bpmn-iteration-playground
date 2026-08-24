@@ -7,6 +7,14 @@
     </bpmn:startEvent>
     <bpmn:sequenceFlow id="Flow_Delivery_To_Cycle" sourceRef="Start_Delivery" targetRef="CallActivity_Review" />
     <bpmn:callActivity id="CallActivity_Review" name="Agent Review Cycle" calledElement="agent_review_cycle">
+      <bpmn:extensionElements>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="subject">${subject}</camunda:inputParameter>
+          <camunda:outputParameter name="cycle_decision">${cycle_decision}</camunda:outputParameter>
+          <camunda:outputParameter name="cycle_summary">${cycle_summary}</camunda:outputParameter>
+          <camunda:outputParameter name="cycle_notes">${cycle_notes}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
       <bpmn:incoming>Flow_Delivery_To_Cycle</bpmn:incoming>
       <bpmn:outgoing>Flow_Cycle_To_GW_Decision</bpmn:outgoing>
     </bpmn:callActivity>

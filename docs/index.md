@@ -83,5 +83,6 @@ graph LR
 - [Web Interface & FormJS](features/web-ui.md)
 - [Process History & Analytics](features/history-analytics.md)
 - [Authoring Workflows: input/output mappings and spawning](authoring-workflows.md)
+- [Variable Scoping: A Design Plan](variable-scoping-plan.md)
 - [Developer & Getting Started Guide](development/getting-started.md)
 - [Testing & Screenshot Automation](development/testing-verification.md)
