@@ -1,8 +1,82 @@
 # Variable Scoping: A Design Plan
 
-> **Status: proposal.** This document plans a redesign; nothing here is implemented yet. It
-> exists to fix the scoping model before more workflows and history features are built on top
-> of today's implicit one.
+> **Status: Phases 1-2 implemented.** `ServiceTask` input mapping no longer falls back to the
+> whole of `workflow.data`; `CallActivity` and `UserTask` now enforce explicit input/output
+> mapping (see "What's implemented" below for the exact shape, and the deviations from the
+> original plan that surfaced once it met the real engine). Phases 3-5 (ScriptTask, boundary
+> events, event subprocesses, the history/inspector UI reading `Scope` objects, multi-instance)
+> remain proposals.
+
+## What's implemented
+
+- **`Scope` persistence** (`app/persistence.py`): a `Persistent` record per execution-tree node
+  (element id/type, resolved inputs, local data, resolved outputs, timestamps), stored in a
+  `scopes: OOBTree` on `WorkflowInstance`. `WorkflowService._record_scope` stages one onto the
+  in-memory `record` dict (`record["_pending_scopes"]`) at each `ServiceTask`/`UserTask` entry
+  and completion; `WorkflowStore.save()` applies every pending scope inside the *same*
+  transaction as the rest of that save, via `WorkflowStore._apply_scope`. This deviates from
+  the original sketch (a direct `store.record_scope()` write per transition): opening a second,
+  separate ZODB transaction concurrently with the `save()` already in flight for the same
+  instance reliably deadlocked or hung the commit path in practice, both as a synchronous
+  event-loop-thread call and as its own `asyncio.to_thread` call. Riding along in the existing
+  transaction sidesteps that entirely, and is arguably the more natively-ZODB shape anyway: one
+  transaction per state transition, not several.
+- **`ServiceTask` input scoping**: `WorkflowRunner.prompt()` and `WorkflowService._dispatch()`
+  both resolve `camunda:inputParameter`s via `resolve_scope_inputs()` (`app/engine.py`) with no
+  fallback to the whole of `workflow.data`; `_dispatch()` additionally *replaces* the task's
+  `task.data` with exactly that resolved scope before dispatching the harness, so
+  SpiffWorkflow's own gateway/script evaluation on that task never sees anything beyond it.
+- **`CallActivity` input/output scoping**: `CallActivity.copy_data`/`update_data` are patched at
+  import time (`_patch_call_activity_scoping()` in `app/engine.py`) to resolve
+  `camunda:inputParameter`/`outputParameter` instead of SpiffWorkflow's default full-data copy.
+  Output resolves against the called process's own `subworkflow.data` (its instance-wide scope),
+  not its terminal task's `task.data` chain -- see "Deviations" below for why.
+- **`UserTask` output scoping**: `submit_task()` filters a submission through explicit
+  `outputParameters` when declared, else through the task's own `camunda:formData` field ids --
+  see "Deviations" for why form fields double as the mapping here.
+- **A real, pre-existing gap this surfaced**: `_specs_defined_by()`/`_load_extensions()`
+  (`app/engine.py`) only ever matched `<bpmn:process>` elements, so a task nested inside an
+  embedded or event `<bpmn:subProcess>` never got its `camunda:properties`/`formData`/
+  `inputOutput` attached at all -- silently masked before this change because the old
+  "no inputParameters -> whole workflow.data" prompt fallback happened to make the data visible
+  anyway. Fixed by also matching `<bpmn:subProcess>`/`<bpmn:transaction>`/`<bpmn:adHocSubProcess>`
+  elements against `workflow.subprocess_specs`.
+- **A real, pre-existing gap in message delivery**: `send_message()` only ever wrote an inbound
+  message's payload onto the newly-spawned subprocess's `workflow.data` for the event-subprocess
+  case; a message resuming an *existing* waiting task left the payload on that task's `task.data`
+  chain only. That was invisible until a downstream task's `camunda:inputParameter` started
+  reading `workflow.data` exclusively (see `test_events_inbound.py`'s
+  `test_workflow_parks_on_message_and_resumes_on_delivery`, which asserted a value that had only
+  ever survived by riding the old implicit inheritance chain). `send_message()` now merges the
+  payload into the *catching task's own containing (sub)workflow's* `data` for that case too.
+
+### Deviations from the original plan, and why
+
+- **CallActivity output resolves against `subworkflow.data`, not `subworkflow.last_task.data`.**
+  The original sketch mirrored SpiffWorkflow's own default (read the terminal task's data
+  chain). But a `UserTask` inside the called process now narrows its own `task.data` to its
+  input/output mapping on submission (see below), which breaks that chain for anything an
+  *earlier* sibling task published and the `UserTask` didn't re-declare. `subworkflow.data` --
+  the called process's own instance-wide scope, which every task's declared output mapping
+  already publishes into -- is the correct source once every scoped element stops relying on
+  chain inheritance.
+- **`UserTask` output mapping defaults to declared form fields, not an empty scope.** The
+  original plan didn't settle this. Every bundled template's `UserTask`s route gateway
+  conditions on submitted form field values with no `camunda:outputParameter` declared anywhere
+  (`plan_approval`, `outline_decision`, `proceed_with_fix`, ...) -- requiring an explicit
+  `outputParameter` for every one would have meant rewriting every template's forms. Camunda's
+  own convention treats a form field as an implicit process-variable declaration; this
+  codebase now does too, with an explicit `outputParameter` (when present) taking precedence
+  over it. A `UserTask` with neither declared gets nothing published, consistent with every
+  other scoped element.
+- **The embedded/event `SubProcess` half of the plan is *not* implemented**, only
+  `CallActivity`. SpiffWorkflow 3.2.0 parses every `triggeredByEvent="true"` subprocess as the
+  plain `SubWorkflowTask` class, not `EventSubprocess` -- there is no class-level way to
+  distinguish "an embedded SubProcess" from "an event SubProcess" the way `CallActivity` can be
+  singled out from both (confirmed empirically, not assumed). Patching the shared base class
+  would have applied the same mapping-required rule to `workflows/project.bpmn`'s spawn
+  mechanism, whose payload-delivery shape (see above) isn't ready for that yet. Left for a
+  follow-up once that shape is settled, per the original plan's own Phase 3.
 
 ## Why this needs a plan before it needs code
 

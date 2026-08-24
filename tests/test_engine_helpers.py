@@ -42,14 +42,17 @@ def test_pi_config_stringifies_property_values() -> None:
     assert runner.pi_config(task) == {"agent_role": "reviewer", "count": "3"}
 
 
-def test_prompt_falls_back_to_full_workflow_data_without_input_parameters() -> None:
+def test_prompt_scope_is_empty_without_input_parameters() -> None:
+    """No declared inputParameters means an empty child scope, not the whole workflow.data --
+    see docs/variable-scoping-plan.md. This is a deliberate compatibility break from the old
+    fallback: an element only sees what its own input mapping names."""
     runner = WorkflowRunner()
     workflow = FakeWorkflow(data={"contract": "text", "extra": 1})
     task = FakeTask(FakeTaskSpec(extensions={}), workflow=workflow)
 
     prompt = runner.prompt("wf-1", task, workflow)
     context = json.loads(prompt.split("\n\n", 1)[1])
-    assert context["variables"] == {"contract": "text", "extra": 1}
+    assert context["variables"] == {}
 
 
 def test_prompt_resolves_input_parameter_variable_references() -> None:

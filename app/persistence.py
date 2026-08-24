@@ -122,6 +122,62 @@ class WorkflowMetadata(Persistent):  # type: ignore[misc]  # persistent ships no
         }
 
 
+class Scope(Persistent):  # type: ignore[misc]  # persistent ships no type stubs
+    """One execution-tree node's local variable scope, ZODB-native.
+
+    Written once a scoped BPMN element (currently ServiceTask and UserTask -- see
+    docs/variable-scoping-plan.md) enters and again when it completes; `inputs`/`outputs`
+    are the resolved camunda:inputParameter/outputParameter values, kept as an audit trail
+    independent of whatever the element did with them afterward. A completed Scope *is* the
+    history record for that element -- no deep-copied workflow graph needed to answer "what
+    did this step see, what did it publish".
+    """
+
+    def __init__(  # noqa: PLR0913 -- plain data holder, one field per constructor arg
+        self,
+        id: str,
+        workflow_id: str,
+        bpmn_id: str,
+        bpmn_name: str,
+        element_type: str,
+        parent_scope_id: str | None,
+        status: str,
+        entered_at: str,
+        inputs: dict[str, Any] | None = None,
+        data: dict[str, Any] | None = None,
+        outputs: dict[str, Any] | None = None,
+        completed_at: str | None = None,
+    ) -> None:
+        self.id = id
+        self.workflow_id = workflow_id
+        self.bpmn_id = bpmn_id
+        self.bpmn_name = bpmn_name
+        self.element_type = element_type
+        self.parent_scope_id = parent_scope_id
+        self.status = status
+        self.entered_at = entered_at
+        self.inputs = PersistentMapping(inputs or {})
+        self.data = PersistentMapping(data or {})
+        self.outputs = PersistentMapping(outputs or {})
+        self.completed_at = completed_at
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "workflow_id": self.workflow_id,
+            "bpmn_id": self.bpmn_id,
+            "bpmn_name": self.bpmn_name,
+            "element_type": self.element_type,
+            "parent_scope_id": self.parent_scope_id,
+            "status": self.status,
+            "entered_at": self.entered_at,
+            "inputs": dict(self.inputs),
+            "data": dict(self.data),
+            "outputs": dict(self.outputs),
+            "completed_at": self.completed_at,
+        }
+
+
 class SavePointSnapshot(Persistent):  # type: ignore[misc]  # persistent ships no type stubs
     """Independent persistent snapshot holding a deepcopied SpiffWorkflow object graph."""
 
@@ -215,6 +271,11 @@ class WorkflowInstance(Persistent):  # type: ignore[misc]  # persistent ships no
         self.jobs = PersistentMapping(jobs or {})
         self.tasks = PersistentList(tasks or [])
         self.save_points = PersistentList(save_points or [])
+        #: Scope objects for this instance's execution tree, keyed by their own id (see
+        #: `Scope`). Deliberately kept out of `to_dict()`/`save()`'s generic reconciliation --
+        #: `record_scope`/`list_scopes` mutate this tree directly, the same way
+        #: `save_save_point`/`load_save_point` manage save points independently of it.
+        self.scopes = OOBTree()
         self.events = PersistentList(events or [])
         self.failure_reason = failure_reason
         self.failure_history = PersistentList(failure_history or [])
@@ -319,6 +380,77 @@ class WorkflowStore:
             )
             root["save_points"][snapshot.id] = snapshot
         return snapshot
+
+    @staticmethod
+    def _apply_scope(instance: Any, workflow_id: str, scope_dict: dict[str, Any]) -> None:
+        """Upsert one execution-tree node's Scope onto an already-open `WorkflowInstance`.
+
+        No transaction of its own: called both by `record_scope` (its own transaction, for
+        standalone/test use) and by `save()` (riding along in its existing transaction --
+        see the comment on `save()`'s `_pending_scopes` handling for why that's the path
+        every real caller in `WorkflowService` actually uses).
+        """
+        if instance is None or not hasattr(instance, "scopes"):
+            return
+        scope_id = scope_dict["id"]
+        existing = instance.scopes.get(scope_id)
+        if existing is not None:
+            existing.status = scope_dict.get("status", existing.status)
+            if "inputs" in scope_dict:
+                existing.inputs.clear()
+                existing.inputs.update(scope_dict["inputs"])
+                existing.entered_at = scope_dict.get("entered_at", existing.entered_at)
+            if "data" in scope_dict:
+                existing.data.clear()
+                existing.data.update(scope_dict["data"])
+            if "outputs" in scope_dict:
+                existing.outputs.clear()
+                existing.outputs.update(scope_dict["outputs"])
+            if "completed_at" in scope_dict:
+                existing.completed_at = scope_dict["completed_at"]
+            existing._p_changed = True
+        else:
+            instance.scopes[scope_id] = Scope(
+                id=scope_id,
+                workflow_id=workflow_id,
+                bpmn_id=scope_dict.get("bpmn_id", ""),
+                bpmn_name=scope_dict.get("bpmn_name", ""),
+                element_type=scope_dict.get("element_type", ""),
+                parent_scope_id=scope_dict.get("parent_scope_id"),
+                status=scope_dict.get("status", "active"),
+                entered_at=scope_dict.get("entered_at", datetime.now(UTC).isoformat()),
+                inputs=scope_dict.get("inputs", {}),
+                data=scope_dict.get("data", {}),
+                outputs=scope_dict.get("outputs", {}),
+                completed_at=scope_dict.get("completed_at"),
+            )
+
+    @_retry_on_conflict()
+    def record_scope(self, workflow_id: str, scope_dict: dict[str, Any]) -> None:
+        """Upsert one execution-tree node's Scope, in its own transaction.
+
+        `workflow_id` here is always the scope's *own* instance record (a CallActivity's
+        called process gets its own Scope tree, matching how it already gets its own
+        WorkflowInstance record in `_sync_children`). A missing instance is a silent no-op:
+        scopes are an audit trail alongside the instance record, not a precondition for it.
+
+        `WorkflowService` never calls this directly -- it stages scope dicts on the record
+        it's already about to `save()`, so the upsert rides along in that single transaction
+        instead of opening a second one concurrently with it (opening one here, on top of a
+        `save()` already in flight via `to_thread`, deadlocked ZODB's commit lock against
+        itself in practice). This method stays for standalone/test use.
+        """
+        with self.db.transaction() as connection:
+            root = connection.root()
+            self._apply_scope(root["workflows"].get(workflow_id), workflow_id, scope_dict)
+
+    def list_scopes(self, workflow_id: str) -> list[dict[str, Any]]:
+        with self.db.transaction() as connection:
+            root = connection.root()
+            instance = root["workflows"].get(workflow_id)
+            if instance is None or not hasattr(instance, "scopes"):
+                return []
+            return [scope.to_dict() for scope in instance.scopes.values()]
 
     @_retry_on_conflict()
     def delete_save_point(self, save_point_id: str) -> bool:
@@ -534,6 +666,12 @@ class WorkflowStore:
                         **{k: v for k, v in raw_record.items() if k not in _INSTANCE_FIELDS},
                     )
                     workflows_root[workflow_id] = instance
+
+            # Scope upserts staged by WorkflowService (see `WorkflowService._record_scope`)
+            # ride along in this same transaction rather than opening a second one -- see
+            # `record_scope`'s docstring for why that matters.
+            for scope_dict in raw_record.pop("_pending_scopes", []) or []:
+                self._apply_scope(instance, workflow_id, scope_dict)
 
             ws_meta = raw_record.get("workspace_metadata") or (raw_record.get("data", {}).get("workspace_metadata") if isinstance(raw_record.get("data"), dict) else {})
             if not ws_meta and existing is not None:

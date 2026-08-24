@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from SpiffWorkflow.bpmn.parser.BpmnParser import BpmnParser
+from SpiffWorkflow.bpmn.specs.mixins.subworkflow_task import CallActivity
 from SpiffWorkflow.bpmn.workflow import BpmnWorkflow
 from SpiffWorkflow.task import TaskState
 
@@ -72,6 +73,88 @@ def resolve_input(expr: str, data: dict[str, Any]) -> Any:
     return _EXPR_RE.sub(_substitute, expr)
 
 
+def resolve_scope_inputs(input_params: dict[str, str], data: dict[str, Any]) -> dict[str, Any]:
+    """Resolve every declared camunda:inputParameter into a child execution scope.
+
+    Deliberately no fallback to the whole of `data`: an element with no declared
+    inputParameters gets an empty scope, not implicit access to everything its container
+    knows. This is the only way variables enter a child scope -- see
+    docs/variable-scoping-plan.md.
+    """
+    return {name: resolve_input(expr, data) for name, expr in input_params.items()}
+
+
+def resolve_output_mapping(output_params: dict[str, str], sources: dict[str, Any]) -> dict[str, Any]:
+    """Resolve every declared camunda:outputParameter against a completed scope's local data.
+
+    This is the only way a child scope's data reaches its parent. `source_expr` is usually
+    a bare key (`status`) but also accepts the `${status}` form some templates use.
+    """
+    published: dict[str, Any] = {}
+    for target_var, source_expr in output_params.items():
+        source_key = (
+            source_expr[2:-1]
+            if source_expr.startswith("${") and source_expr.endswith("}")
+            else source_expr
+        )
+        published[target_var] = sources.get(source_key)
+    return published
+
+
+def _scope_extensions(task_spec: Any) -> dict[str, Any]:
+    return getattr(task_spec, "extensions", {}) or {}
+
+
+def _scoped_copy_data(self: Any, my_task: Any, subworkflow: Any) -> None:
+    """Seed a called process's start task from the caller's own mapped inputs only.
+
+    Replaces `CallActivity.copy_data`, which (absent a BPMN `ioSpecification`, which this
+    app's templates don't use) copies the *entire* calling task's data into the called
+    process. Here the called process's scope contains exactly its `camunda:inputParameter`s,
+    resolved against the caller's own scope (`my_task.workflow.data` -- the enclosing
+    process/subprocess variables, the same source `resolve_scope_inputs` uses for a
+    ServiceTask).
+    """
+    input_params = _scope_extensions(self).get("inputParameters", {})
+    mapped = resolve_scope_inputs(input_params, my_task.workflow.data)
+    start = subworkflow.get_next_task(spec_name="Start")
+    start.set_data(**mapped)
+
+
+def _scoped_update_data(self: Any, my_task: Any, subworkflow: Any) -> None:
+    """Publish only a called process's mapped outputs back to the caller's scope.
+
+    Replaces `CallActivity.update_data`, which copies the called process's *entire*
+    terminal task data back onto the calling task. Resolves against `subworkflow.data` --
+    the called process's own instance-wide scope, which accumulates every completed task's
+    declared outputs -- rather than the terminal task's `task.data` chain, since a UserTask
+    inside the called process narrows its own local `task.data` to its inputs/outputs and is
+    not a reliable carrier for something an earlier sibling task published.
+    """
+    output_params = _scope_extensions(self).get("outputParameters", {})
+    my_task.data = resolve_output_mapping(output_params, subworkflow.data)
+
+
+def _patch_call_activity_scoping() -> None:
+    """Install explicit camunda:inputOutput scoping on CallActivity, in place of SpiffWorkflow's
+    default full-data copy in and out.
+
+    Applied once at import time, and deliberately narrow: only `CallActivity` is patched here,
+    not the shared `SubWorkflowTask` base it and embedded/transaction/event SubProcess all
+    inherit `copy_data`/`update_data` from. SpiffWorkflow 3.2.0 parses every
+    `triggeredByEvent="true"` subprocess as plain `SubWorkflowTask` (see `_sync_children`'s
+    isinstance note in workflow_service.py) -- there is no class-level way to single out "an
+    embedded SubProcess" from "an event SubProcess" the way `CallActivity` can be singled out
+    from both, so extending explicit mapping to those is deferred rather than guessed at; see
+    docs/variable-scoping-plan.md.
+    """
+    CallActivity.copy_data = _scoped_copy_data
+    CallActivity.update_data = _scoped_update_data
+
+
+_patch_call_activity_scoping()
+
+
 class WorkflowRunner:
     def load_workflow(self, bpmn_path: str, process_id: str | None = None) -> tuple[BpmnWorkflow, str]:
         if not process_id:
@@ -128,12 +211,20 @@ class WorkflowRunner:
 
         specs = []
         seen: set[int] = set()
-        for process in root.findall(".//bpmn:process", ns):
-            process_id = process.get("id")
-            spec = specs_by_name.get(process_id) if process_id else None
-            if spec is not None and id(spec) not in seen:
-                seen.add(id(spec))
-                specs.append(spec)
+        # Embedded/event/transaction/ad-hoc subprocesses get their own entry in
+        # workflow.subprocess_specs (keyed by the subprocess element's own id, e.g. "Spawn"
+        # for a triggeredByEvent="true" one) exactly like a CallActivity's called process --
+        # but they're declared with a *different* XML tag than a top-level process, so they
+        # need their own XPath here. Without this, extensions on any task nested inside an
+        # embedded/event subprocess (camunda:properties, formData, inputOutput) are silently
+        # never attached to that task's spec at all.
+        for tag in ("bpmn:process", "bpmn:subProcess", "bpmn:transaction", "bpmn:adHocSubProcess"):
+            for element in root.findall(f".//{tag}", ns):
+                element_id = element.get("id")
+                spec = specs_by_name.get(element_id) if element_id else None
+                if spec is not None and id(spec) not in seen:
+                    seen.add(id(spec))
+                    specs.append(spec)
         if not specs:
             logger.debug("No loaded spec defined by %s; skipping its extensions", bpmn_path)
         return specs
@@ -263,11 +354,10 @@ class WorkflowRunner:
         input_params = extensions.get("inputParameters", {})
 
         target_wf = getattr(task, "workflow", workflow)
-
-        if input_params:
-            variables: dict[str, Any] = {name: resolve_input(expr, target_wf.data) for name, expr in input_params.items()}
-        else:
-            variables = dict(target_wf.data)
+        # No fallback to the whole of target_wf.data: an undeclared input means an empty
+        # scope, not implicit access to everything the containing process knows -- see
+        # docs/variable-scoping-plan.md.
+        variables = resolve_scope_inputs(input_params, target_wf.data)
 
         context = {
             "workflow_id": workflow_id,

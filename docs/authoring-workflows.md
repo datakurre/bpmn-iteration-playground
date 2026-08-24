@@ -111,6 +111,32 @@ turns cannot overwrite one another:
 
 The gateway then routes on `draft_status == 'success'` rather than a shared `agent_status`.
 
+### CallActivity — scoping what a called process sees and publishes
+
+A `callActivity` gets the same explicit scoping as a service task: declare `camunda:inputOutput`
+directly on the `callActivity` element, not on the called process's start event.
+
+```xml
+<bpmn:callActivity id="CallActivity_Review" calledElement="agent_review_cycle">
+  <bpmn:extensionElements>
+    <camunda:inputOutput>
+      <camunda:inputParameter name="subject">${subject}</camunda:inputParameter>
+      <camunda:outputParameter name="cycle_decision">${cycle_decision}</camunda:outputParameter>
+      <camunda:outputParameter name="cycle_summary">${cycle_summary}</camunda:outputParameter>
+    </camunda:inputOutput>
+  </bpmn:extensionElements>
+</bpmn:callActivity>
+```
+
+Without it, the called process starts with an **empty** scope — there is no fallback to the
+caller's data, so a called process that expects `${subject}` and gets nothing is a missing
+`inputParameter` on the call activity, not a bug in the called process. Output works the same
+way in reverse: only the called process's own declared `outputParameter`s (from its own tasks)
+are visible to `outputParameter`s on the call activity, resolved against the called process's
+instance-wide data. `workflows/composed_delivery.bpmn` calling `workflows/agent_review_cycle.bpmn`
+is the worked example. See `docs/variable-scoping-plan.md` for the full model, including which
+element types this does *not* yet cover (embedded/event subprocesses).
+
 ### Spawning children from a long-running process
 
 A `subProcess` with `triggeredByEvent="true"` and a message start event spawns one child

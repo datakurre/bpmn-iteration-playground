@@ -23,7 +23,7 @@ from app.adapters.base import AgentResult, BaseAdapter
 from app.adapters.pi_adapter import PiAdapter
 from app.adapters.registry import AdapterRegistry
 from app.adapters.sandbox_adapter import SandboxPiAdapter
-from app.engine import WorkflowRunner
+from app.engine import WorkflowRunner, resolve_output_mapping, resolve_scope_inputs
 from app.events import EventBus
 from app.persistence import WorkflowStore, WorkspaceConflictError
 from app.pi_client import PiClient, PiResult
@@ -386,6 +386,65 @@ class WorkflowService:
         logger.info(
             "Pruned %d superseded savepoint(s) for task %s phase %s", len(superseded), task_id, phase
         )
+
+    @staticmethod
+    def _parent_scope_id(task: Any) -> str | None:
+        wf = getattr(task, "workflow", None)
+        top = getattr(wf, "top_workflow", None)
+        if wf is not None and top is not None and wf is not top:
+            parent_task_id = getattr(wf, "parent_task_id", None)
+            if parent_task_id is not None:
+                return str(parent_task_id)
+        return None
+
+    def _record_scope(
+        self,
+        record: dict[str, Any],
+        task: Any,
+        element_type: str,
+        *,
+        status: str,
+        inputs: dict[str, Any] | None = None,
+        data: dict[str, Any] | None = None,
+        outputs: dict[str, Any] | None = None,
+        completed: bool = False,
+    ) -> None:
+        """Stage one execution-tree node's Scope upsert onto `record` -- see
+        docs/variable-scoping-plan.md.
+
+        Always staged against the *root* instance's scope tree, even for a task inside a
+        called/nested process: `_parent_scope_id` expresses the tree shape without needing a
+        separate scopes collection per child WorkflowInstance record (which would need
+        reconstructing the same launching-task lookup `_sync_children` already does, for no
+        query benefit -- "every scope for this root instance" stays a single lookup).
+
+        Deliberately *not* a direct `self.store.record_scope()` call: every caller here is
+        about to `self.store.save(workflow_id, record)` anyway, and `save()` applies
+        `record["_pending_scopes"]` inside that same transaction. Writing the scope in a
+        second, separate transaction -- especially one opened synchronously on the event-loop
+        thread, or even via its own `to_thread` call -- raced against the `save()` transaction
+        already in flight for the same instance and reliably deadlocked or hung ZODB's commit
+        path in practice; riding along in the existing transaction sidesteps that entirely.
+        """
+        now = datetime.now(UTC).isoformat()
+        scope_dict: dict[str, Any] = {
+            "id": str(task.id),
+            "bpmn_id": getattr(task.task_spec, "bpmn_id", task.task_spec.name),
+            "bpmn_name": getattr(task.task_spec, "bpmn_name", task.task_spec.name),
+            "element_type": element_type,
+            "parent_scope_id": self._parent_scope_id(task),
+            "status": status,
+        }
+        if inputs is not None:
+            scope_dict["inputs"] = inputs
+            scope_dict["entered_at"] = now
+        if data is not None:
+            scope_dict["data"] = data
+        if outputs is not None:
+            scope_dict["outputs"] = outputs
+        if completed:
+            scope_dict["completed_at"] = now
+        record.setdefault("_pending_scopes", []).append(scope_dict)
 
     @staticmethod
     def _top_workflow(workflow: Any, task: Any) -> Any:
@@ -772,7 +831,21 @@ class WorkflowService:
             if not task.state & TaskState.READY:
                 raise ValueError("task is not ready for submission")
             task.data.update(variables)
-            task.workflow.data.update(variables)
+            extensions = getattr(task.task_spec, "extensions", {}) or {}
+            output_params = extensions.get("outputParameters", {})
+            if output_params:
+                published = resolve_output_mapping(output_params, dict(variables))
+            else:
+                # No explicit outputParameters: the declared form fields are this UserTask's
+                # own mapping -- only a submitted variable the task itself asked for crosses
+                # into the outer scope. See docs/variable-scoping-plan.md.
+                form_fields = extensions.get("form", {}).get("fields", []) if isinstance(extensions.get("form"), dict) else []
+                declared_names = {f.get("id") for f in form_fields if f.get("id")}
+                published = {k: v for k, v in variables.items() if k in declared_names}
+            task.workflow.data.update(published)
+            self._record_scope(
+                record, task, "UserTask", status="completed", data=dict(task.data), outputs=published, completed=True
+            )
             task.complete()
             workflow.do_engine_steps()
             self.events.emit(
@@ -897,16 +970,41 @@ class WorkflowService:
             if not definitions:
                 raise KeyError(f"no waiting event named {message_name!r}")
 
+            # The task actually catching this message, if it's an existing WAITING task
+            # rather than a fresh event-subprocess spawn -- captured before catch() runs so
+            # its containing (sub)workflow is known regardless of nesting.
+            catching_task = next(
+                (
+                    task
+                    for task in workflow.get_tasks(state=TaskState.WAITING)
+                    if isinstance(task.task_spec, CatchingEvent)
+                    and getattr(getattr(task.task_spec, "event_definition", None), "name", None) == message_name
+                ),
+                None,
+            )
+
             existing_subprocess_ids = set(workflow.subprocesses.keys())
             workflow.catch(BpmnEvent(definitions[0], payload=payload))
+            spawned_ids = set(workflow.subprocesses.keys()) - existing_subprocess_ids
             # A message matching an event-subprocess trigger spawns a brand new subprocess
             # whose own workflow.data starts empty: BpmnEvent.payload only lands on the
             # triggering task's *task* data, which runner.prompt() (and thus the child's own
             # agent turns) never reads -- only the subprocess's own workflow.data is. Without
             # this, the payload stays invisible to the child until it completes, at which
             # point SpiffWorkflow's terminal-task data merge finally surfaces it externally.
-            for spawned_id in set(workflow.subprocesses.keys()) - existing_subprocess_ids:
+            for spawned_id in spawned_ids:
                 workflow.subprocesses[spawned_id].data.update(payload)
+            if not spawned_ids and catching_task is not None:
+                # Resuming an existing waiting task, not spawning a child: merge the payload
+                # into that task's own containing process scope -- the same source
+                # camunda:inputParameter resolution reads from (task.workflow.data). Without
+                # this, a downstream task's declared ${payload_key} input mapping silently
+                # resolves to None even though the payload plainly named it: the value only
+                # ever survived by accident, riding SpiffWorkflow's default task.data
+                # inheritance chain, which explicit input-mapped scopes no longer forward
+                # unless the value is actually in workflow.data. See
+                # docs/variable-scoping-plan.md.
+                catching_task.workflow.data.update(payload)
             workflow.do_engine_steps()
             self.events.emit(
                 "message_received",
@@ -1068,6 +1166,14 @@ class WorkflowService:
                 attempts = int(existing_job.get("attempts", 0)) if existing_job else 0
                 attempts += 1
                 generation = int(existing_job.get("generation", 0)) if existing_job else 0
+
+                extensions = getattr(task.task_spec, "extensions", {}) or {}
+                scope_inputs = resolve_scope_inputs(extensions.get("inputParameters", {}), task.workflow.data)
+                task.data = scope_inputs
+                self._record_scope(
+                    record, task, "ServiceTask", status="active", inputs=scope_inputs, data=scope_inputs
+                )
+
                 record["status"] = "waiting_pi"
                 self._add_save_point(
                     workflow_id,
@@ -1123,6 +1229,10 @@ class WorkflowService:
                 record["status"] = self._status(workflow)
                 for task in workflow.get_tasks(state=TaskState.READY):
                     if task.task_spec.__class__.__name__ == "UserTask":
+                        extensions = getattr(task.task_spec, "extensions", {}) or {}
+                        input_params = extensions.get("inputParameters", {})
+                        scope_inputs = resolve_scope_inputs(input_params, task.workflow.data)
+                        self._record_scope(record, task, "UserTask", status="active", inputs=scope_inputs)
                         self._add_save_point(workflow_id, record, workflow, task, "human_wait", "submit_human")
                         self.events.emit(
                             "human_task_ready",
@@ -1387,6 +1497,11 @@ class WorkflowService:
                 "after_harness",
                 "complete_harness",
                 f":run_{generation}:attempt_{attempt}",
+            )
+
+            scope_status = "completed" if result.status == "success" else ("cancelled" if result.status == "cancelled" else "failed")
+            self._record_scope(
+                record, task, "ServiceTask", status=scope_status, data=dict(task.data), outputs=published, completed=True
             )
 
             if result.status == "success":

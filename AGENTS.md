@@ -201,8 +201,13 @@ vendor/operaton-element-templates{,-validator,-json-schema} – git submodules: 
   - A **mixed** string (`"Review ${contract} for ${reviewer}"`) interpolates every `${...}`
     occurrence, stringifying each resolved value; a miss becomes `""` rather than leaking a
     literal `${...}` into the prompt for the agent to puzzle over.
-  - A task with no `inputParameters` at all falls back to passing the whole of
-    `workflow.data` as `variables` — several bundled templates rely on this.
+  - A task with no `inputParameters` at all gets an **empty** scope, not the whole of
+    `workflow.data` — see `docs/variable-scoping-plan.md`. Explicit scoping now also covers
+    `CallActivity` (`camunda:inputOutput` on the call activity element itself, resolved via the
+    same `resolve_scope_inputs()`/`resolve_output_mapping()` helpers, patched onto
+    `CallActivity.copy_data`/`update_data` in `engine.py`) and `UserTask` submission (filtered
+    through declared `outputParameter`s, or the task's own `camunda:formData` field ids when
+    none are declared). `composed_delivery.bpmn`'s `CallActivity_Review` is the worked example.
 - **Session lineage**: agent sessions are tracked per execution path in
   `workflow.data["__sessions"]` (task instance id → session id). A turn inherits the
   session of the nearest ancestor on its own branch and forks it (`pi --fork`) when the
@@ -210,20 +215,22 @@ vendor/operaton-element-templates{,-validator,-json-schema} – git submodules: 
   the same session. Because the map lives in workflow data, a savepoint fork inherits the
   lineage with the state.
 - **Inbound events**: `POST /instance/{id}/message/{name}` delivers an external message to
-  a waiting message catch event (payload merges into task data);
-  `GET /instance/{id}/events/pending` lists what an instance is parked on. Timer events
-  only advance when `refresh_timers()` is called, which the background ticker does
-  every `TIMER_TICK_SECONDS` (default 10, `0` disables). Instances parked on an event
-  report status `waiting_event`. A message matching an event-subprocess trigger spawns a
-  new child instead of resuming a waiting task (see Event Subprocess Children below); for
-  that case only, `send_message` also copies the payload onto the new subprocess's own
-  `workflow.data`, not just the triggering task's task data — see the next bullet for why.
+  a waiting message catch event; `GET /instance/{id}/events/pending` lists what an instance is
+  parked on. Timer events only advance when `refresh_timers()` is called, which the background
+  ticker does every `TIMER_TICK_SECONDS` (default 10, `0` disables). Instances parked on an
+  event report status `waiting_event`. The payload merges into the catching task's *own
+  containing (sub)workflow's* `data` — not just its task data — so a downstream task's
+  `camunda:inputParameter` (which reads `workflow.data`, not the task.data inheritance chain)
+  actually sees it. A message matching an event-subprocess trigger spawns a new child instead
+  of resuming a waiting task (see Event Subprocess Children below); for that case, the payload
+  goes onto the new subprocess's own `workflow.data` the same way, since there's no existing
+  catching task to attribute it to.
 - **FormJS Schema Compatibility**: FormJS UMD bundle (`form-viewer.umd.js`) requires schemas formatted with `"type": "default"` and `"components": [...]` (mapping string fields to `"type": "textfield"`). Type mapping lives in `CAMUNDA_TO_FORMJS_TYPE` in `workflow_service.py`.
 - **Static Assets Routing**: Specific static mounts (`/static/form-js`) must be mounted in FastAPI before general prefix mounts (`/static`) to ensure correct resolution.
 - **Harness Type Dispatch**: Tasks declare their adapter via a `harness_type` Camunda property (default `pi_agent`). `AdapterRegistry` resolves the correct `BaseAdapter`.
 - **Savepoints**: Three phases per task — `before_harness`, `after_harness`, `human_wait`. Each deep-copies workflow state + workspace blob into ZODB.
 - **Forking**: `POST /instance/{id}/fork/{save_point_id}` duplicates the ZODB record and workspace blob, then resumes from the savepoint.
-- **BPMN Extensions**: `engine.py` reads `camunda:properties`, `camunda:formData`, and `camunda:inputOutput`. Input parameters support `${variable}` expression syntax. Every `*.bpmn` in the directory is parsed into one `BpmnParser` (that is how CallActivity targets resolve) and then walked for extensions, but `_specs_defined_by()` scopes each file's extensions to the processes that file itself declares — otherwise two templates sharing a task id would cross-apply properties, forms and inputOutput in filesystem glob order.
+- **BPMN Extensions**: `engine.py` reads `camunda:properties`, `camunda:formData`, and `camunda:inputOutput`. Input parameters support `${variable}` expression syntax. Every `*.bpmn` in the directory is parsed into one `BpmnParser` (that is how CallActivity targets resolve) and then walked for extensions, but `_specs_defined_by()` scopes each file's extensions to the processes that file itself declares — otherwise two templates sharing a task id would cross-apply properties, forms and inputOutput in filesystem glob order. `_specs_defined_by()` matches `<bpmn:process>`, `<bpmn:subProcess>`, `<bpmn:transaction>`, and `<bpmn:adHocSubProcess>` elements against `workflow.spec`/`workflow.subprocess_specs` — a task nested inside an embedded or event subprocess gets its own spec entry there (keyed by the subprocess element's own id, e.g. `"Spawn"`), separate from the top-level process spec, and previously got none of its extensions attached at all.
 - **CallActivity Children**: Child workflows tracked in `data["__children"]`, synced as separate ZODB records with `parent_workflow_id` back-references.
 - **Event Subprocess Children**: `_sync_children` also syncs children spawned by a native
   `triggeredByEvent="true"` event subprocess (`workflows/project.bpmn`), the same way as
