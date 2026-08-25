@@ -315,7 +315,7 @@ async def test_output_parameters_missing_fallback_none() -> None:
     from app.adapters.base import AgentResult
 
     store = WorkflowStore(":memory:")
-    service = WorkflowService(store)
+    service = WorkflowService(store, FakePi())
 
     wf_started = await service.start("workflows/contract_review.bpmn", None, {"contract": "Test"})
     wf_id = wf_started["workflow_id"]
