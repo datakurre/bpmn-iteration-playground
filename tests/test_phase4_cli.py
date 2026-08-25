@@ -1,6 +1,8 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from graph_agent.agents_root import Workspace
 from graph_agent.cli import _resolve_template_path, main
 from graph_agent.daemon import RuntimeInfo, write_runtime_file
@@ -37,7 +39,7 @@ def test_resolve_template_path(tmp_path: Path) -> None:
     assert resolved_custom == custom
 
 
-def test_cli_run_command(tmp_path: Path, capsys) -> None:
+def test_cli_run_command(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _fake_runtime(tmp_path)
 
     mock_resp = MagicMock()
@@ -64,7 +66,7 @@ def test_cli_run_command(tmp_path: Path, capsys) -> None:
         assert "http://127.0.0.1:8000/instance/test-run-123" in out
 
 
-def test_cli_ls_command(tmp_path: Path, capsys) -> None:
+def test_cli_ls_command(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _fake_runtime(tmp_path)
 
     mock_resp = MagicMock()
@@ -83,7 +85,7 @@ def test_cli_ls_command(tmp_path: Path, capsys) -> None:
         assert "running" in out
 
 
-def test_cli_show_command(tmp_path: Path, capsys) -> None:
+def test_cli_show_command(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _fake_runtime(tmp_path)
 
     mock_resp = MagicMock()
@@ -109,7 +111,7 @@ def test_cli_show_command(tmp_path: Path, capsys) -> None:
         assert "Merge:       merged" in out
 
 
-def test_cli_cancel_command(tmp_path: Path, capsys) -> None:
+def test_cli_cancel_command(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _fake_runtime(tmp_path)
 
     mock_resp = MagicMock()
@@ -124,7 +126,7 @@ def test_cli_cancel_command(tmp_path: Path, capsys) -> None:
         assert "Cancelled run run-abc (status: cancelled)" in out
 
 
-def test_cli_merge_command(tmp_path: Path, capsys) -> None:
+def test_cli_merge_command(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _fake_runtime(tmp_path)
 
     mock_resp = MagicMock()
@@ -139,7 +141,7 @@ def test_cli_merge_command(tmp_path: Path, capsys) -> None:
         assert "Merged run run-abc: Merged bpmn/run/run-abc into main" in out
 
 
-def test_cli_logs_command(tmp_path: Path, capsys) -> None:
+def test_cli_logs_command(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _fake_runtime(tmp_path)
 
     mock_resp = MagicMock()
@@ -165,3 +167,51 @@ def test_cli_logs_command(tmp_path: Path, capsys) -> None:
         assert "Task: Review Code" in out
         assert "prompt text" in out
         assert "output text" in out
+
+
+def test_cli_engine_flags_apply_to_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+    _fake_runtime(tmp_path)
+    orig_env = dict(os.environ)
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"workflow_id": "run-flags", "status": "running"}
+
+    try:
+        with patch("graph_agent.cli.is_daemon_alive", return_value=True), \
+             patch("httpx.post", return_value=mock_resp) as mock_post:
+            main([
+                "run",
+                "plan_and_execute",
+                "--model", "gpt-test-model",
+                "--provider", "test-provider",
+                "--timeout", "120",
+                "--offline",
+                "--no-sandbox",
+                "--max-parallel-turns", "8",
+                "--timer-interval", "5",
+                "--savepoint-retention", "3",
+                "--workspace-mode", "blob",
+                "--log-level", "debug",
+                "--workspace", str(tmp_path),
+            ])
+
+            assert os.environ.get("PI_MODEL") == "gpt-test-model"
+            assert os.environ.get("PI_PROVIDER") == "test-provider"
+            assert os.environ.get("PI_TIMEOUT_SECONDS") == "120"
+            assert os.environ.get("PI_OFFLINE") == "1"
+            assert os.environ.get("PI_SANDBOX_ENABLED") == "0"
+            assert os.environ.get("MAX_PARALLEL_TURNS") == "8"
+            assert os.environ.get("TIMER_TICK_SECONDS") == "5"
+            assert os.environ.get("SAVEPOINT_ATTEMPT_RETENTION") == "3"
+            assert os.environ.get("WORKSPACE_MODE") == "blob"
+            assert os.environ.get("LOG_LEVEL") == "DEBUG"
+
+            # Check variables passed in start request
+            call_args = mock_post.call_args
+            assert call_args[1]["json"]["variables"]["workspace_mode"] == "blob"
+            assert call_args[1]["json"]["variables"]["timeout"] == 120
+    finally:
+        os.environ.clear()
+        os.environ.update(orig_env)

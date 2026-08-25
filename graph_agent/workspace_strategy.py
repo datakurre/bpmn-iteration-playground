@@ -428,7 +428,7 @@ def select_strategy(
     change what a plain `WorkflowService(store)` does depending on where it happens to run
     from -- exactly the ambiguity a workspace has to be explicit to avoid.
     """
-    mode = config.get("workspace_mode") or workflow_data.get("workspace_mode")
+    mode = config.get("workspace_mode") or workflow_data.get("workspace_mode") or os.getenv("WORKSPACE_MODE")
     if mode is not None and mode not in _VALID_MODES:
         raise ValueError(f"unknown workspace_mode {mode!r} (expected one of {sorted(_VALID_MODES)})")
 

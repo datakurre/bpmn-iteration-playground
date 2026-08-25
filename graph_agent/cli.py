@@ -196,6 +196,8 @@ def _cmd_run(
     template: str,
     vars_list: list[str] | None,
     no_merge: bool,
+    workspace_mode: str | None = None,
+    timeout: int | None = None,
 ) -> None:
     workspace = Workspace.discover(workspace_root)
     info = read_runtime_file(workspace)
@@ -221,6 +223,10 @@ def _cmd_run(
 
     if no_merge:
         variables["merge_on_complete"] = False
+    if workspace_mode:
+        variables["workspace_mode"] = workspace_mode
+    if timeout is not None:
+        variables["timeout"] = timeout
 
     import httpx
     try:
@@ -432,8 +438,56 @@ def _cmd_logs(workspace_root: Path | None, run_id: str, follow: bool) -> None:
         print(f"Error: {exc}")
 
 
+def _apply_env_options(args: argparse.Namespace) -> None:
+    if getattr(args, "model", None):
+        os.environ["PI_MODEL"] = args.model
+    if getattr(args, "provider", None):
+        os.environ["PI_PROVIDER"] = args.provider
+    if getattr(args, "executable", None):
+        os.environ["PI_EXECUTABLE"] = args.executable
+    if getattr(args, "timeout", None) is not None:
+        os.environ["PI_TIMEOUT_SECONDS"] = str(args.timeout)
+    if getattr(args, "offline", False):
+        os.environ["PI_OFFLINE"] = "1"
+    if getattr(args, "sandbox", None) is not None:
+        os.environ["PI_SANDBOX_ENABLED"] = "1" if args.sandbox else "0"
+    if getattr(args, "max_parallel_turns", None) is not None:
+        os.environ["MAX_PARALLEL_TURNS"] = str(args.max_parallel_turns)
+    if getattr(args, "timer_interval", None) is not None:
+        os.environ["TIMER_TICK_SECONDS"] = str(args.timer_interval)
+    if getattr(args, "savepoint_retention", None) is not None:
+        os.environ["SAVEPOINT_ATTEMPT_RETENTION"] = str(args.savepoint_retention)
+    if getattr(args, "workspace_mode", None):
+        os.environ["WORKSPACE_MODE"] = args.workspace_mode
+    if getattr(args, "log_level", None):
+        os.environ["LOG_LEVEL"] = args.log_level.upper()
+    if getattr(args, "merge_on_complete", None) is not None:
+        os.environ["MERGE_ON_COMPLETE"] = "1" if args.merge_on_complete else "0"
+    if getattr(args, "no_merge", False):
+        os.environ["MERGE_ON_COMPLETE"] = "0"
+
+
+def add_engine_flags(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--model", type=str, default=None, help="AI agent model (e.g. gpt-5.6-luna, gpt-4o)")
+    p.add_argument("--provider", type=str, default=None, help="AI agent provider (e.g. opencode-go, openai)")
+    p.add_argument("--executable", type=str, default=None, help="Path to Pi executable binary")
+    p.add_argument("--timeout", type=int, default=None, help="Turn execution timeout in seconds")
+    p.add_argument("--offline", action="store_true", default=False, help="Force offline mode using deterministic demo mock")
+    p.add_argument("--sandbox", action=argparse.BooleanOptionalAction, default=None, help="Enable/disable agent-sandbox Podman isolation")
+    p.add_argument("--max-parallel-turns", type=int, default=None, help="Max concurrent active agent turns")
+    p.add_argument("--timer-interval", type=int, default=None, help="Background timer tick interval in seconds (0 disables)")
+    p.add_argument("--savepoint-retention", type=int, default=None, help="Number of turn attempts retained in savepoints")
+    p.add_argument("--workspace-mode", choices=["worktree", "in_place", "blob"], default=None, help="Workspace execution strategy")
+    p.add_argument("--log-level", choices=["debug", "info", "warning", "error"], default=None, help="Logging level")
+
+
 def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
     parser = argparse.ArgumentParser(prog="graph-agent", description="Run and manage the Graph agent.")
+    add_engine_flags(parser)
+    parser.add_argument("--workspace", type=Path, default=None, help="Workspace root (default: discovered)")
+    parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=0, help="Bind port (default: 0, a free port)")
+    parser.add_argument("--no-tui", action="store_true", help="Run daemon headlessly without TUI")
     sub = parser.add_subparsers(dest="command")
 
     def add_workspace_flag(p: argparse.ArgumentParser) -> None:
@@ -447,6 +501,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
 
     p_serve = sub.add_parser("serve", help="Run the web server (default when no command is given)")
     add_workspace_flag(p_serve)
+    add_engine_flags(p_serve)
     p_serve.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     p_serve.add_argument("--port", type=int, default=0, help="Bind port (default: 0, a free port)")
     p_serve.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
@@ -463,6 +518,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
 
     p_run = sub.add_parser("run", help="Start a new workflow run")
     add_workspace_flag(p_run)
+    add_engine_flags(p_run)
     p_run.add_argument("template", help="BPMN template name or path")
     p_run.add_argument("--var", "-v", action="append", dest="vars", help="Workflow variable key=value (can be used multiple times)")
     p_run.add_argument("--no-merge", action="store_true", help="Disable auto-merge on completion")
@@ -489,6 +545,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
     p_logs.add_argument("-f", "--follow", action="store_true", help="Follow live event stream")
 
     args = parser.parse_args(argv)
+    _apply_env_options(args)
 
     if args.command == "init":
         _cmd_init(args.workspace)
@@ -501,7 +558,14 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
     elif args.command == "stop":
         _cmd_stop(args.workspace)
     elif args.command == "run":
-        _cmd_run(args.workspace, args.template, args.vars, args.no_merge)
+        _cmd_run(
+            args.workspace,
+            args.template,
+            args.vars,
+            args.no_merge,
+            getattr(args, "workspace_mode", None),
+            getattr(args, "timeout", None),
+        )
     elif args.command == "ls":
         _cmd_ls(args.workspace, getattr(args, "all", False))
     elif args.command == "show":
@@ -517,7 +581,11 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
         host = getattr(args, "host", "127.0.0.1")
         port = getattr(args, "port", 0)
         reload = getattr(args, "reload", False)
-        _cmd_serve(workspace_root, host, port, reload)
+        no_tui = getattr(args, "no_tui", False)
+        if no_tui:
+            _cmd_serve(workspace_root, host, port, reload)
+        else:
+            _cmd_serve(workspace_root, host, port, reload)
     elif args.command is None:
         workspace_root = getattr(args, "workspace", None)
         ws = Workspace.discover(workspace_root)
@@ -525,7 +593,9 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
         if info is not None and is_daemon_alive(info):
             _cmd_attach(workspace_root)
         else:
-            _cmd_serve(workspace_root, "127.0.0.1", 0, False)
+            host = getattr(args, "host", "127.0.0.1")
+            port = getattr(args, "port", 0)
+            _cmd_serve(workspace_root, host, port, False)
 
 
 if __name__ == "__main__":
