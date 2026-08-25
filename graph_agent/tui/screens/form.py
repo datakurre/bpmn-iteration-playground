@@ -19,11 +19,15 @@ else:
         class Screen:  # type: ignore[no-redef]
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
+
+            def __class_getitem__(cls, item: Any) -> type:
+                return cls
+
         class ComposeResult:  # type: ignore[no-redef]
             pass
 
 
-class FormScreen(Screen[None]):
+class FormScreen(Screen):  # type: ignore[misc]
     """Renders FormJS form components natively, or falls back to browser deep link for complex forms."""
 
     BINDINGS: ClassVar[list[BindingType]] = [

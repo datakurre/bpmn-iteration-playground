@@ -16,11 +16,15 @@ else:
         class Screen:  # type: ignore[no-redef]
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
+
+            def __class_getitem__(cls, item: Any) -> type:
+                return cls
+
         class ComposeResult:  # type: ignore[no-redef]
             pass
 
 
-class InboxScreen(Screen[None]):
+class InboxScreen(Screen):  # type: ignore[misc]
     """Aggregates actionable items across all graphs: human tasks and deferred merges."""
 
     BINDINGS: ClassVar[list[BindingType]] = [

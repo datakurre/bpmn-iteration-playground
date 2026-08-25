@@ -16,7 +16,11 @@ else:
         from textual.app import App
     except ImportError:
         class App:  # type: ignore[no-redef]
-            pass
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                pass
+
+            def __class_getitem__(cls, item: Any) -> type:
+                return cls
 
 
 TUI_CSS = """
@@ -70,7 +74,7 @@ Screen {
 """
 
 
-class GraphAgentApp(App[None]):
+class GraphAgentApp(App):  # type: ignore[misc]
     """Textual TUI for graph-agent orchestration platform."""
 
     CSS = TUI_CSS

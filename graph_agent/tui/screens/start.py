@@ -16,11 +16,15 @@ else:
         class Screen:  # type: ignore[no-redef]
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
+
+            def __class_getitem__(cls, item: Any) -> type:
+                return cls
+
         class ComposeResult:  # type: ignore[no-redef]
             pass
 
 
-class StartScreen(Screen[None]):
+class StartScreen(Screen):  # type: ignore[misc]
     """Screen for launching a new workflow run from a template."""
 
     BINDINGS: ClassVar[list[BindingType]] = [

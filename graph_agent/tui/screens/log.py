@@ -16,11 +16,15 @@ else:
         class Screen:  # type: ignore[no-redef]
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
+
+            def __class_getitem__(cls, item: Any) -> type:
+                return cls
+
         class ComposeResult:  # type: ignore[no-redef]
             pass
 
 
-class LogScreen(Screen[None]):
+class LogScreen(Screen):  # type: ignore[misc]
     """Tails daemon and execution logs from the workspace."""
 
     BINDINGS: ClassVar[list[BindingType]] = [

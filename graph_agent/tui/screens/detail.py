@@ -17,11 +17,15 @@ else:
         class Screen:  # type: ignore[no-redef]
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
+
+            def __class_getitem__(cls, item: Any) -> type:
+                return cls
+
         class ComposeResult:  # type: ignore[no-redef]
             pass
 
 
-class RunDetailScreen(Screen[None]):
+class RunDetailScreen(Screen):  # type: ignore[misc]
     """Detailed view of a single workflow run: timeline, live logs, variables, and savepoints."""
 
     BINDINGS: ClassVar[list[BindingType]] = [

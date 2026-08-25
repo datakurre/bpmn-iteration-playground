@@ -18,11 +18,15 @@ else:
         class Screen:  # type: ignore[no-redef]
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
+
+            def __class_getitem__(cls, item: Any) -> type:
+                return cls
+
         class ComposeResult:  # type: ignore[no-redef]
             pass
 
 
-class RunsScreen(Screen[None]):
+class RunsScreen(Screen):  # type: ignore[misc]
     """Screen listing all active and past workflow runs."""
 
     BINDINGS: ClassVar[list[BindingType]] = [
