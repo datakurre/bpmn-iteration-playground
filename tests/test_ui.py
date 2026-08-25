@@ -1,4 +1,4 @@
-from app.api.ui import admin_page, editor_page, history_detail_page, history_page, instance_page, page
+from bpmn_agent.api.ui import admin_page, editor_page, history_detail_page, history_page, instance_page, page
 
 
 def test_page_builds_its_own_request_when_none_given() -> None:

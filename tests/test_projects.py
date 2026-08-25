@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from app.persistence import WorkflowStore
-from app.pi_client import PiResult
-from app.projects import DuplicateProjectError, ProjectNotFoundError, ProjectService, slugify
-from app.workflow_service import WorkflowService
+from bpmn_agent.persistence import WorkflowStore
+from bpmn_agent.pi_client import PiResult
+from bpmn_agent.projects import DuplicateProjectError, ProjectNotFoundError, ProjectService, slugify
+from bpmn_agent.workflow_service import WorkflowService
 
 BPMN_PATH = "workflows/project.bpmn"
 

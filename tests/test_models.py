@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.models import ForkRequest, StartWorkflowRequest, SubmitTaskRequest
+from bpmn_agent.models import ForkRequest, StartWorkflowRequest, SubmitTaskRequest
 
 
 def test_valid_variables() -> None:

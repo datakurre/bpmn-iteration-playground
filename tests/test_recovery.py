@@ -1,8 +1,8 @@
 import asyncio
 
-from app.engine import WorkflowRunner
-from app.persistence import WorkflowStore
-from app.workflow_service import WorkflowService
+from bpmn_agent.engine import WorkflowRunner
+from bpmn_agent.persistence import WorkflowStore
+from bpmn_agent.workflow_service import WorkflowService
 
 
 def test_orphan_recovery_on_startup() -> None:

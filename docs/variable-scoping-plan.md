@@ -9,7 +9,7 @@
 
 ## What's implemented
 
-- **`Scope` persistence** (`app/persistence.py`): a `Persistent` record per execution-tree node
+- **`Scope` persistence** (`bpmn_agent/persistence.py`): a `Persistent` record per execution-tree node
   (element id/type, resolved inputs, local data, resolved outputs, timestamps), stored in a
   `scopes: OOBTree` on `WorkflowInstance`. `WorkflowService._record_scope` stages one onto the
   in-memory `record` dict (`record["_pending_scopes"]`) at each `ServiceTask`/`UserTask` entry
@@ -22,12 +22,12 @@
   transaction sidesteps that entirely, and is arguably the more natively-ZODB shape anyway: one
   transaction per state transition, not several.
 - **`ServiceTask` input scoping**: `WorkflowRunner.prompt()` and `WorkflowService._dispatch()`
-  both resolve `camunda:inputParameter`s via `resolve_scope_inputs()` (`app/engine.py`) with no
+  both resolve `camunda:inputParameter`s via `resolve_scope_inputs()` (`bpmn_agent/engine.py`) with no
   fallback to the whole of `workflow.data`; `_dispatch()` additionally *replaces* the task's
   `task.data` with exactly that resolved scope before dispatching the harness, so
   SpiffWorkflow's own gateway/script evaluation on that task never sees anything beyond it.
 - **`CallActivity` input/output scoping**: `CallActivity.copy_data`/`update_data` are patched at
-  import time (`_patch_call_activity_scoping()` in `app/engine.py`) to resolve
+  import time (`_patch_call_activity_scoping()` in `bpmn_agent/engine.py`) to resolve
   `camunda:inputParameter`/`outputParameter` instead of SpiffWorkflow's default full-data copy.
   Output resolves against the called process's own `subworkflow.data` (its instance-wide scope),
   not its terminal task's `task.data` chain -- see "Deviations" below for why.
@@ -35,7 +35,7 @@
   `outputParameters` when declared, else through the task's own `camunda:formData` field ids --
   see "Deviations" for why form fields double as the mapping here.
 - **A real, pre-existing gap this surfaced**: `_specs_defined_by()`/`_load_extensions()`
-  (`app/engine.py`) only ever matched `<bpmn:process>` elements, so a task nested inside an
+  (`bpmn_agent/engine.py`) only ever matched `<bpmn:process>` elements, so a task nested inside an
   embedded or event `<bpmn:subProcess>` never got its `camunda:properties`/`formData`/
   `inputOutput` attached at all -- silently masked before this change because the old
   "no inputParameters -> whole workflow.data" prompt fallback happened to make the data visible
@@ -92,13 +92,13 @@ declared scoping, and only on the way *out*. That is enough to work for the temp
 - A `UserTask` submission (`WorkflowService.submit_task`) writes form output straight into
   `task.data` / `task.workflow.data` with no output-mapping step at all.
 - `WorkflowRunner.prompt()` falls back to handing an agent the *entire* `workflow.data` dict
-  whenever a `ServiceTask` declares no `inputParameters` (`app/engine.py`) — several bundled
+  whenever a `ServiceTask` declares no `inputParameters` (`bpmn_agent/engine.py`) — several bundled
   templates rely on this fallback today, which is exactly the implicit leakage this plan removes.
 - History and forking are the same mechanism: a save point is `copy.deepcopy(workflow)`, the
   *entire* live SpiffWorkflow object graph, taken at every phase boundary
   (`WorkflowService._add_save_point`). Inspecting "what did this task see" means deep-copying and
   keeping around far more state than that task's own scope, and it couples history's shape to
-  SpiffWorkflow's internal object model (see `app/migrations.py`, which exists purely to patch
+  SpiffWorkflow's internal object model (see `bpmn_agent/migrations.py`, which exists purely to patch
   persisted SpiffWorkflow internals across version upgrades).
 - Nothing states which scope a gateway condition or script expression actually evaluates
   against when a task's own data and its ancestors' data disagree on a key. It works by accident
@@ -163,7 +163,7 @@ class Scope(Persistent):
 here", independent of whatever the element did with those values afterward (an agent turn may
 mutate `data` extensively; `inputs`/`outputs` never change after being set).
 
-A `WorkflowInstance` (already the ZODB root for one instance in `app/persistence.py`) gains a
+A `WorkflowInstance` (already the ZODB root for one instance in `bpmn_agent/persistence.py`) gains a
 `scopes: OOBTree[str, Scope]` alongside its existing `tasks`/`save_points`/`jobs`. Writes to a
 single scope are in-place `Persistent` mutations, exactly like every other field on
 `WorkflowInstance` today — no new conflict-retry story needed beyond what
@@ -217,7 +217,7 @@ draw a box around other tasks.
   activity's *parent* scope (the same scope the activity itself was mapped in from).
 - **Event subprocesses**: today `send_message()` special-cases this by copying the message
   payload directly onto the spawned subprocess's `workflow.data`, bypassing mapping entirely
-  (`app/workflow_service.py`, documented in `AGENTS.md` §4). Under this model the payload becomes
+  (`bpmn_agent/workflow_service.py`, documented in `AGENTS.md` §4). Under this model the payload becomes
   a named input available to the event subprocess's `camunda:inputParameter`s (e.g.
   `${__trigger_payload.task_brief}`), resolved the same way any other subprocess input is —
   removing the special case rather than keeping it as a second code path.
@@ -254,7 +254,7 @@ view that this project resets at every scope boundary:
   fresh root `Scope` for the called process rather than a task-level `Scope`.
 
 Concretely this is a small number of interception points, all already present as seams in
-`app/workflow_service.py` and `app/engine.py`:
+`bpmn_agent/workflow_service.py` and `bpmn_agent/engine.py`:
 
 - `WorkflowRunner.prompt()` already resolves `inputParameters` for the prompt string; it needs to
   also become the place that *seeds* the task's `Scope` and writes the mapped values into
@@ -324,7 +324,7 @@ land in independently mergeable, independently testable phases rather than one s
    notes "several bundled templates rely on this", so expect to update them alongside this phase.
 2. **UserTask and CallActivity/SubProcess — the actually-unimplemented cases.** These are zero
    percent scoped today (`submit_task` bypasses mapping; CallActivity has no mapping code at all,
-   confirmed by grepping `app/` for `inputParameters`/`outputParameters` handling — none exists
+   confirmed by grepping `bpmn_agent/` for `inputParameters`/`outputParameters` handling — none exists
    outside `ServiceTask`'s `_complete_pi` path). This is the highest-risk, highest-value phase:
    it requires the new subprocess-launch interception hook described above, and it changes
    `composed_delivery.bpmn`'s behavior (its `CallActivity_Review` element currently has no
@@ -357,7 +357,7 @@ already covers `resolve_input()` directly.
   possible, not at implementing a slimmer snapshot.
 - **Not** committing to a final multi-instance design yet — flagged above as open.
 - **Not** a compatibility promise for existing instances persisted before this lands. Given
-  `app/migrations.py`'s existing precedent for evolving persisted SpiffWorkflow shapes across
+  `bpmn_agent/migrations.py`'s existing precedent for evolving persisted SpiffWorkflow shapes across
   versions, an equivalent one-time migration (or accepting that pre-existing instances simply
   have an empty `scopes` tree and fall back to today's read paths) is a decision for
   implementation time, not this plan.

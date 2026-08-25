@@ -4,10 +4,10 @@ import pytest
 from SpiffWorkflow.bpmn.specs.event_definitions.message import MessageEventDefinition
 from SpiffWorkflow.bpmn.util import BpmnEvent
 
-from app.engine import WorkflowRunner
-from app.persistence import WorkflowStore
-from app.pi_client import PiResult
-from app.workflow_service import WorkflowService
+from bpmn_agent.engine import WorkflowRunner
+from bpmn_agent.persistence import WorkflowStore
+from bpmn_agent.pi_client import PiResult
+from bpmn_agent.workflow_service import WorkflowService
 
 FIXTURE = "tests/fixtures/event_subprocess_spawn.bpmn"
 

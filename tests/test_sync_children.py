@@ -1,9 +1,9 @@
 import asyncio
 
-from app.persistence import WorkflowStore
-from app.pi_client import PiResult
-from app.sync_children import sync_children
-from app.workflow_service import WorkflowService
+from bpmn_agent.persistence import WorkflowStore
+from bpmn_agent.pi_client import PiResult
+from bpmn_agent.sync_children import sync_children
+from bpmn_agent.workflow_service import WorkflowService
 
 
 class FakePi:

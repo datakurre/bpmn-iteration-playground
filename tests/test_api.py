@@ -136,7 +136,7 @@ def test_download_workspace_endpoint(client: TestClient) -> None:
 def test_request_logging_middleware_handles_errors() -> None:
     from fastapi import FastAPI
 
-    from app.logging_config import RequestLoggingMiddleware
+    from bpmn_agent.logging_config import RequestLoggingMiddleware
 
     test_app = FastAPI()
     test_app.add_middleware(RequestLoggingMiddleware)
@@ -153,7 +153,7 @@ def test_request_logging_middleware_handles_errors() -> None:
 def test_configure_logging_preserves_external_handlers() -> None:
     import logging
 
-    from app.logging_config import configure_logging
+    from bpmn_agent.logging_config import configure_logging
 
     root = logging.getLogger()
     custom_handler = logging.NullHandler()

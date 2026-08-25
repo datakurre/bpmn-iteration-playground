@@ -68,7 +68,7 @@ a gateway can *route* on the failure. That turns a compiler into a participant i
 
 `workflows/beamer_slides.bpmn` is the worked example: an agent plans a deck outline, a human
 settles the outline, `template="beamer"` scaffolds a pinned TeX Live toolchain
-(`workspace_templates/beamer/` — `texliveBasic.withPackages` + a `Makefile`), an agent writes
+(`bpmn_agent/data/workspace_templates/beamer/` — `texliveBasic.withPackages` + a `Makefile`), an agent writes
 `slides.tex`, and `make pdf` compiles it. If LaTeX rejects the deck the instance parks on a
 diagnosis gate with the log, where you either hand it back to the slide agent for another
 attempt or abandon the deck — a build the agent cannot fix costs one turn, not an unbounded
@@ -82,7 +82,7 @@ devenv processes down
 devenv shell -- demo
 ```
 
-The demo command uses `scripts/pi-demo` as a deterministic CLI mock. The
+The demo command uses `bpmn_agent/data/pi-demo` as a deterministic CLI mock. The
 normal devenv installs the pinned Pi CLI at `node_modules/.bin/pi` and points
 `PI_EXECUTABLE` there automatically.
 

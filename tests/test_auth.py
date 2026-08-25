@@ -103,7 +103,7 @@ def test_ui_page_routes_require_auth(client: TestClient, monkeypatch) -> None:
     assert client.get("/admin", headers=viewer_headers).status_code == 403
 
 def test_auth_config_cached_and_invalidates_on_env_change(monkeypatch) -> None:
-    from app.auth import Role, parse_auth_config
+    from bpmn_agent.auth import Role, parse_auth_config
 
     monkeypatch.setenv("API_KEYS", "cached-key:operator")
     monkeypatch.delenv("ADMIN_TOKEN", raising=False)
@@ -121,7 +121,7 @@ def test_auth_config_cached_and_invalidates_on_env_change(monkeypatch) -> None:
 
 
 def test_malformed_api_keys_handling(monkeypatch) -> None:
-    from app.auth import Role, parse_auth_config
+    from bpmn_agent.auth import Role, parse_auth_config
 
     monkeypatch.delenv("ADMIN_TOKEN", raising=False)
     # Test whitespace, empty items, unknown roles, keys without roles
