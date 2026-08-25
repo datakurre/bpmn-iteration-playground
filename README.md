@@ -55,8 +55,8 @@ graph-agent serve --no-tui
 `graph-agent` (or `bpmn`) provides a complete set of commands:
 
 ```bash
-# Start a new workflow run
-graph-agent run plan_and_execute.bpmn --var goal="Implement user authentication"
+# Start a new workflow run with flags
+graph-agent run plan_and_execute.bpmn --var goal="Implement user authentication" --model gpt-5.6-luna --workspace-mode worktree
 
 # List all active and historical runs
 graph-agent ls
@@ -79,6 +79,24 @@ graph-agent status
 graph-agent open
 graph-agent stop
 ```
+
+### CLI Engine & Model Flags
+
+The following flags can be passed to `graph-agent`, `graph-agent serve`, and `graph-agent run`:
+
+| Flag | Equivalent Env Var | Default | Description |
+|---|---|---|---|
+| `--model <name>` | `PI_MODEL` | `gpt-5.6-luna` | Target model for AI agent turns |
+| `--provider <name>` | `PI_PROVIDER` | `opencode-go` | Provider endpoint (e.g. `opencode-go`, `openai`) |
+| `--executable <path>`| `PI_EXECUTABLE` | `node_modules/.bin/pi` | Path to Pi CLI executable |
+| `--timeout <sec>` | `PI_TIMEOUT_SECONDS` | `1800` | Turn execution timeout in seconds |
+| `--offline` | `PI_OFFLINE` | `false` | Force deterministic demo mock runner without LLM credentials |
+| `--sandbox / --no-sandbox` | `PI_SANDBOX_ENABLED` | `true` | Toggle Podman container sandbox isolation |
+| `--max-parallel-turns <n>` | `MAX_PARALLEL_TURNS` | `4` | Maximum concurrent active agent turns |
+| `--workspace-mode <mode>` | `WORKSPACE_MODE` | `worktree` / `in_place` | Workspace strategy (`worktree`, `in_place`, `blob`) |
+| `--no-merge` | `MERGE_ON_COMPLETE` | `false` | Disable auto-merge on clean completion |
+| `--timer-interval <sec>`| `TIMER_TICK_SECONDS` | `10` | BPMN timer tick interval (`0` disables) |
+| `--log-level <level>` | `LOG_LEVEL` | `info` | Logging verbosity (`debug`, `info`, `warning`, `error`) |
 
 ---
 
