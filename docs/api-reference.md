@@ -1,30 +1,31 @@
 # REST & WebSocket API Reference
 
-The BPMN Pi Workflow server exposes full REST and WebSocket endpoints for orchestrating processes, monitoring state, submitting forms, and managing persistence.
+The **graph-agent** daemon exposes REST and WebSocket endpoints on a dynamically allocated loopback port, authenticated via the local bearer token stored in `.agents/runtime.json`.
+
+---
 
 ## Authentication & Headers
 
 | Header | Description | Default Role |
 | :--- | :--- | :--- |
-| `X-Admin-Token` | Admin secret token configured via `ADMIN_TOKEN` | `ADMIN` |
+| `X-Admin-Token` | Loopback bearer token from `.agents/runtime.json` or configured `ADMIN_TOKEN` | `ADMIN` |
 | `X-Api-Key` | API key configured via `API_KEYS=key:role` | Role mapped from key |
-
-When no auth environment variables are set, the system runs in open development mode granting full `ADMIN` access.
 
 ---
 
 ## Workflow Endpoints
 
-### Start Workflow Instance
+### Start Workflow Run
 `POST /workflow/start`
 
 **Request Body:**
 ```json
 {
-  "bpmn_path": "graph_agent/data/workflows/contract_review.bpmn",
+  "bpmn_path": "plan_and_execute.bpmn",
   "process_id": null,
   "variables": {
-    "contract": "Non-Disclosure Agreement terms..."
+    "goal": "Refactor data access layer",
+    "merge_on_complete": true
   }
 }
 ```
@@ -33,10 +34,11 @@ When no auth environment variables are set, the system runs in open development 
 ```json
 {
   "workflow_id": "a1b2c3d4e5f6",
-  "status": "waiting_human",
-  "process_id": "contract_review",
+  "status": "running",
+  "process_id": "plan_and_execute",
   "data": { ... },
   "tasks": [ ... ],
+  "jobs": { ... },
   "save_points": [ ... ]
 }
 ```
@@ -44,9 +46,9 @@ When no auth environment variables are set, the system runs in open development 
 ---
 
 ### Get Instance State
-`GET /workflow/{workflow_id}/state` or `GET /instance/{workflow_id}/state`
+`GET /instance/{workflow_id}/state` or `GET /workflow/{workflow_id}/state`
 
-Returns the current execution state, active tasks, variable payload, and savepoints.
+Returns full execution state, tasks, job telemetry, variables, merge status, and savepoints.
 
 ---
 
@@ -58,10 +60,17 @@ Returns the current execution state, active tasks, variable payload, and savepoi
 {
   "variables": {
     "decision": "approved",
-    "notes": "Reviewed and verified."
+    "notes": "Reviewed plan and approved execution."
   }
 }
 ```
+
+---
+
+### Manual Merge Run
+`POST /instance/{workflow_id}/merge`
+
+Manually attempts an auto-merge of `bpmn/run/<workflow_id>` into the base branch for runs in `merge_deferred` or `completed` state.
 
 ---
 
@@ -75,7 +84,7 @@ Cancels all pending background jobs and transitions the workflow status to `canc
 ### Retry Failed Task
 `POST /instance/{workflow_id}/retry/{task_id}`
 
-Re-triggers the execution harness for a failed agent task using the prior checkpoint.
+Re-invokes the execution harness for a failed agent or shell task from its prior checkpoint.
 
 ---
 
@@ -86,117 +95,83 @@ Re-triggers the execution harness for a failed agent task using the prior checkp
 ```json
 {
   "variables": {
-    "override_key": "new_value"
+    "goal": "Alternative design variant"
   }
 }
 ```
 
-Creates a new branched instance rooted at the specified savepoint, with an independent
-duplicate of that savepoint's workspace blob.
+Creates a new branched instance rooted at the savepoint. In `worktree` mode, branches the Git history at the recorded commit SHA; in `blob` mode, duplicates the workspace blob. Returns `409 Conflict` under `in_place` mode where snapshots are unsupported.
 
 ---
 
 ### Purge Save Points
 `DELETE /instance/{workflow_id}/savepoints`
 
-Deletes every savepoint older than an anchor, releasing its workspace blob. Requires
-`OPERATOR` or higher, like the other destructive routes.
-
-**Request Body** — exactly one anchor:
+**Request Body** (exactly one anchor):
 ```json
-{ "before_task_id": "7fae39ca-8cb1-4b73-8ffa-9c17aea56859" }
+{ "before_task_id": "task_id_here" }
 ```
+or
 ```json
-{ "before": "2026-08-21T18:43:32+00:00" }
+{ "before": "2026-08-25T18:00:00+00:00" }
 ```
-
-**Response:**
-```json
-{ "purged": 2, "remaining": 3 }
-```
-
-Both anchors satisfy one invariant: **a task's savepoints are never split.** An agent task
-records both a `before_harness` and an `after_harness` savepoint, so a cut-off landing between
-them resolves back to that task's oldest savepoint and the task survives whole; a task
-entirely older than the cut-off is still removed whole.
-
-Supplying neither anchor or both returns `400` — a malformed request is never read as
-"purge all". Retention is deliberately manual; there is no scheduled or automatic expiry.
 
 ---
 
-### Workspace Access
-- `GET /instance/{workflow_id}/workspace` — Download the whole workspace as a `tar.zst` archive.
-- `GET /instance/{workflow_id}/workspace/files` — File manifest (`file_count`, `total_size`, `files[]`, `artifacts[]`).
-- `GET /instance/{workflow_id}/workspace/file?path=document.md` — Stream a single file out of the archive without unpacking it.
-
-The manifest is also included on the instance state as `workspace_metadata`, which is what the
-instance view's **Workspace Files** panel renders.
+### Workspace Files Access
+- `GET /instance/{workflow_id}/workspace` — Download workspace archive (`tar.zst`).
+- `GET /instance/{workflow_id}/workspace/files` — List files in the workspace manifest.
+- `GET /instance/{workflow_id}/workspace/file?path=relative/file.txt` — Stream individual file.
 
 ---
 
-## Events, Messages & Timers
+## Projects & Supervisor Endpoints
 
-### Deliver an External Message
-`POST /instance/{workflow_id}/message/{message_name}`
+### Get Current Project
+`GET /project/current`
 
-Delivers a payload to a waiting message catch event, or spawns a child from an event
-subprocess whose message start event matches.
+Returns the active workspace supervisor Project detail.
+
+### Spawn Task into Current Project
+`POST /project/spawn`
 
 **Request Body:**
 ```json
-{ "payload": { "task_brief": "Audit the docs tree against shipped features" } }
+{
+  "task_brief": "Review changes in pr-42",
+  "payload": { "branch": "feature/auth" }
+}
 ```
 
-The payload lands on the receiving scope's data, including a subprocess created by this very
-message — so a freshly spawned child can read what it was spawned to do.
-
-### Inspect What an Instance Is Waiting On
-`GET /instance/{workflow_id}/events/pending`
-
-Lists the message and timer events the instance is currently parked on.
-
-### Audit Log & Streams
-- `GET /instance/{workflow_id}/events` — Full audit event log for the instance.
-- `GET /instance/{workflow_id}/events/stream` — Server-sent events stream of state transitions.
+### List Projects / Detail by Slug
+- `GET /project` — List all Projects.
+- `GET /project/{slug}` — Get Project details by slug.
+- `POST /project/{slug}/spawn` — Spawn child task into specific Project.
 
 ---
 
-## Templates & Editor Endpoints
+## Events & Streaming
 
-- `GET /api/templates` — List auto-discovered BPMN templates with documentation metadata.
-- `GET /api/templates/{id}` — Get detailed template schema and input variables.
-- `GET /api/templates/{id}/xml` — Download raw BPMN 2.0 XML string.
-- `POST /api/workflows/save` — Save or create BPMN 2.0 diagram to `graph_agent/data/workflows/`.
-
----
-
-## History & Storage Endpoints
-
-- `GET /api/history/instances` — Query instances with `status`, `limit`, `offset`, `since`, `until`.
-- `GET /api/history/storage` — Retrieve database size and instance counts.
-- `POST /api/history/pack` — Run ZODB FileStorage compaction to reclaim space.
-- `DELETE /api/history/instances/{workflow_id}` — Delete a specific instance.
-- `DELETE /api/history/instances?confirm=DELETE_ALL` — Clear all history instances.
+- `POST /instance/{workflow_id}/message/{message_name}` — Deliver external message payload to waiting catch event.
+- `GET /instance/{workflow_id}/events/pending` — List message and timer events the run is parked on.
+- `GET /instance/{workflow_id}/events` — Audit event log.
+- `GET /instance/{workflow_id}/events/stream` — SSE stream of state transitions and logs.
+- `WS /ws/instance/{workflow_id}` — WebSocket stream for live UI push.
 
 ---
 
-## Webhook Subscription Endpoints
+## Templates & History
 
-- `GET /api/webhooks` — List active webhook subscriptions.
-- `POST /api/webhooks` — Register a webhook URL for lifecycle events (`workflow_started`, `pi_completed`, etc.).
-- `DELETE /api/webhooks/{id}` — Delete a webhook registration.
-
----
-
-## Observability
-
-- `GET /health` — Public, unauthenticated liveness check.
-- `GET /metrics` — Prometheus exposition: instance counts by status, ZODB size, active jobs.
+- `GET /api/templates` — List available BPMN workflow templates.
+- `GET /api/templates/{id}` — Get template details and variables schema.
+- `GET /api/templates/{id}/xml` — Download raw BPMN 2.0 XML.
+- `GET /api/history/instances` — List history records with pagination (`limit`, `offset`, `status`).
+- `POST /api/history/pack` — Compact ZODB FileStorage.
+- `DELETE /api/history/instances/{workflow_id}` — Delete instance history record.
 
 ---
 
-## WebSocket Real-Time Push
-`ws://localhost:8000/ws/instance/{workflow_id}`
+## Observability & Health
 
-Streams live state transitions and log events directly to browser clients.
+- `GET /health` — Health check endpoint.
+- `GET /metrics` — Prometheus metrics exposition.
