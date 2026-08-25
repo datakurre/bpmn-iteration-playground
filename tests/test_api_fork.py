@@ -6,7 +6,7 @@ from bpmn_agent.workflow_service import WorkflowService
 def test_savepoint_detail_and_fork_endpoints(client: TestClient) -> None:
     start_resp = client.post(
         "/workflow/start",
-        json={"bpmn_path": "workflows/contract_review.bpmn", "variables": {"contract": "Fork Test"}},
+        json={"bpmn_path": "bpmn_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "Fork Test"}},
     )
     wf_id = start_resp.json()["workflow_id"]
     state_data = start_resp.json()
@@ -53,7 +53,7 @@ def test_fork_from_completed_workflow_state(service: WorkflowService) -> None:
     import asyncio
 
     async def scenario() -> None:
-        started = await service.start("workflows/contract_review.bpmn", None, {"contract": "Completed Fork Test"})
+        started = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {"contract": "Completed Fork Test"})
         wf_id = started["workflow_id"]
         sp_id = started["save_points"][0]["id"]
 

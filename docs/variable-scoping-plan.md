@@ -74,7 +74,7 @@
   plain `SubWorkflowTask` class, not `EventSubprocess` -- there is no class-level way to
   distinguish "an embedded SubProcess" from "an event SubProcess" the way `CallActivity` can be
   singled out from both (confirmed empirically, not assumed). Patching the shared base class
-  would have applied the same mapping-required rule to `workflows/project.bpmn`'s spawn
+  would have applied the same mapping-required rule to `bpmn_agent/data/workflows/project.bpmn`'s spawn
   mechanism, whose payload-delivery shape (see above) isn't ready for that yet. Left for a
   follow-up once that shape is settled, per the original plan's own Phase 3.
 
@@ -83,7 +83,7 @@
 Today, "workflow data" is one shared dict per SpiffWorkflow (sub)process, and almost every BPMN
 element either reads all of it or writes into it directly. Only `ServiceTask` output has any
 declared scoping, and only on the way *out*. That is enough to work for the templates in
-`workflows/`, but it means:
+`bpmn_agent/data/workflows/`, but it means:
 
 - A CallActivity subprocess sees its entire caller's data on entry and dumps its entire final
   task's data back on return — `camunda:inputOutput` on a `<bpmn:callActivity>` is not read
@@ -223,7 +223,7 @@ draw a box around other tasks.
   removing the special case rather than keeping it as a second code path.
 - **Multi-instance** is flagged here as the least-settled piece of this plan. Per-instance scopes
   and output collection are sketched above, but multi-instance is not used anywhere in
-  `workflows/*.bpmn` today, so there is no concrete case to validate the design against yet.
+  `bpmn_agent/data/workflows/*.bpmn` today, so there is no concrete case to validate the design against yet.
   Recommend deferring multi-instance scoping to its own follow-up once a real template needs it,
   rather than guessing the shape now.
 
@@ -320,7 +320,7 @@ land in independently mergeable, independently testable phases rather than one s
    (`resolve_input()`'s whole-`workflow.data` fallback in `WorkflowRunner.prompt()`). Introduce
    `Scope` objects for `ServiceTask` only, require `inputParameters` to be declared (or make the
    fallback an explicit, documented opt-in rather than a silent default), and audit
-   `workflows/*.bpmn` for templates currently relying on the fallback — `AGENTS.md` §4 already
+   `bpmn_agent/data/workflows/*.bpmn` for templates currently relying on the fallback — `AGENTS.md` §4 already
    notes "several bundled templates rely on this", so expect to update them alongside this phase.
 2. **UserTask and CallActivity/SubProcess — the actually-unimplemented cases.** These are zero
    percent scoped today (`submit_task` bypasses mapping; CallActivity has no mapping code at all,

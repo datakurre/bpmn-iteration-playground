@@ -16,6 +16,9 @@ devenv.local.yaml
 /data/
 *.db
 *.zodb
+# This repo's own checkout is also a valid `bpmn` workspace (running `bpmn serve` or the
+# tests from here creates .agents/ at the repo root the same way it would in any project).
+/.agents/
 
 # Python
 __pycache__/

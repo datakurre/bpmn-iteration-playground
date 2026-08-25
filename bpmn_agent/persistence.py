@@ -52,22 +52,16 @@ def _retry_on_conflict(max_retries: int = 5) -> Callable[[F], F]:
 
 
 def _create_storage(path: str) -> tuple[Any, str | None]:
-    """Create ZODB storage, supporting in-memory, FileStorage, or remote ZEO."""
+    """Create ZODB storage, supporting in-memory or local FileStorage.
+
+    No remote ZEO option: state is local to the workspace (`.agents/state/`) now, not a
+    service several processes share, so there is nothing left for a remote store to share
+    it with. (Removed in the meta-agent refactor's phase 1 -- see
+    docs/meta-agent-refactor-plan.md.)
+    """
     if path == ":memory:":
         blob_dir = tempfile.mkdtemp(prefix="bpmn-blobs-")
         return BlobStorage(blob_dir, MappingStorage()), blob_dir
-    zeo_address = os.getenv("ZEO_ADDRESS")
-    if zeo_address:
-        from ZEO import ClientStorage
-
-        host, port = zeo_address.rsplit(":", 1)
-        for attempt in range(5):
-            try:
-                return ClientStorage.ClientStorage((host, int(port)), blob_dir="data/blobs"), None
-            except Exception:
-                if attempt == 4:
-                    raise
-                time.sleep(0.5)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     blob_dir = str(Path(path).parent / "blobs")
     Path(blob_dir).mkdir(parents=True, exist_ok=True)

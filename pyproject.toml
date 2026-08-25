@@ -16,7 +16,6 @@ dependencies = [
     "pydantic",
     "jinja2",
     "httpx",
-    "ZEO",
     "defusedxml>=0.7.1",
 ]
 

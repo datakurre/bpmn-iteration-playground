@@ -63,7 +63,7 @@ def test_interactive_plan_and_execute_workflow() -> None:
 
         # 1. Start the workflow -> executes Planning turn (non-interactive)
         started = await service.start(
-            "workflows/plan_and_execute.bpmn",
+            "bpmn_agent/data/workflows/plan_and_execute.bpmn",
             None,
             {"feature_request": "Build rate limiter"},
         )

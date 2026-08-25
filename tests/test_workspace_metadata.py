@@ -54,7 +54,7 @@ async def test_workspace_metadata_and_single_file_extraction() -> None:
 def test_workspace_api_endpoints(client: TestClient) -> None:
     # Start a workflow
     start_resp = client.post("/workflow/start", json={
-        "bpmn_path": "workflows/contract_review.bpmn",
+        "bpmn_path": "bpmn_agent/data/workflows/contract_review.bpmn",
         "variables": {"contract": "Test contract agreement."}
     })
     assert start_resp.status_code == 200
@@ -259,7 +259,7 @@ async def test_state_exposes_workspace_metadata(service: WorkflowService) -> Non
     """
     import asyncio
 
-    started = await service.start("workflows/contract_review.bpmn", None, {"contract": "text"})
+    started = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
     await asyncio.gather(*list(service.jobs.values()))
     wf_id = started["workflow_id"]
 

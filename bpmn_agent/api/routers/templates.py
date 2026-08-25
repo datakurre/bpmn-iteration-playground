@@ -104,7 +104,12 @@ def build_router(
         safe_name = "".join(c for c in body.name if c.isalnum() or c in "_-")
         if not safe_name:
             safe_name = "workflow"
-        target_dir = Path("workflows")
+        # The registry's own directory, not a hard-coded "workflows" -- once a `.agents/`
+        # workspace exists that is `.agents/workflows/`, the editable copy `bpmn init`
+        # materialised, not the bundled package data `WorkflowRegistry()` falls back to
+        # without one. Writing into package data would often be read-only, and in a
+        # source checkout would litter tracked package files with editor output.
+        target_dir = template_registry.dir
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = target_dir / f"{safe_name}.bpmn"
         await asyncio.to_thread(target_path.write_text, body.xml, encoding="utf-8")

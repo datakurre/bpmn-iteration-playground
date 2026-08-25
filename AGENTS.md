@@ -20,14 +20,14 @@ current status per track.
 It:
 
 - Parses and executes **BPMN 2.0 diagrams** using [SpiffWorkflow](https://spiffworkflow.org/).
-- Persists every workflow instance and savepoint in **ZODB** (optionally distributed via ZEO).
+- Persists every workflow instance and savepoint in **ZODB**, local to the workspace (`.agents/state/`).
 - Delegates `pi_agent` service tasks to a local **Pi CLI** subprocess using non-interactive JSON print mode (`--mode json -p <prompt>`).
 - Exposes a **FastAPI** REST + WebSocket API and a browser-based **Workflow Studio** UI (dashboard, instance viewer, history, BPMN editor).
 - Supports **FormJS** for human task forms (Camunda extension elements → FormJS JSON schema).
 - Implements fork/resume **savepoints** at every durable boundary (`before_harness`, `after_harness`, `human_wait`), preserving `session_id` to continue context trees. Superseded attempts of the same turn are pruned (`SAVEPOINT_ATTEMPT_RETENTION`, default 1).
 - Parks the graph on **message and timer catch events**, so external systems and deadlines are nodes in the diagram rather than out-of-band polling.
 - Ships focused **Nix flake apps** (`pi-bpmn-json-form-builder`, `pi-text-analysis`, `pi-contract-review`, `pi-beamer-author`) wrapping Pi with task-specific prompts.
-- Runs deterministic, non-LLM build steps as first-class BPMN nodes through **`ShellAdapter`** (`harness_type: shell`) — a declared command executed in the instance workspace, whose exit code the graph can branch on (`workflows/beamer_slides.bpmn` compiles LaTeX this way).
+- Runs deterministic, non-LLM build steps as first-class BPMN nodes through **`ShellAdapter`** (`harness_type: shell`) — a declared command executed in the instance workspace, whose exit code the graph can branch on (`bpmn_agent/data/workflows/beamer_slides.bpmn` compiles LaTeX this way).
 - Runs Pi inside **[agent-sandbox](https://github.com/datakurre/agent-sandbox)** (vendored as a git submodule, `vendor/agent-sandbox`) — a Podman-based sandbox that enforces per-task network/secret policy — via `SandboxPiAdapter`, as an alternative to the bare-subprocess `PiAdapter`.
 
 **Key capabilities:**
@@ -38,7 +38,7 @@ It:
 - Role-based auth (`ADMIN` / `OPERATOR` / `VIEWER`) via `X-Admin-Token` / `X-Api-Key` headers.
 - Webhook event delivery with retry for `workflow_completed`, `pi_failed`, etc.
 - Workspace packaging: agent working directories are archived as `tar.zst` blobs in ZODB.
-- BPMN template registry auto-discovering `workflows/*.bpmn` with metadata from Camunda `<documentation>`.
+- BPMN template registry auto-discovering `bpmn_agent/data/workflows/*.bpmn` with metadata from Camunda `<documentation>`.
 
 ---
 
@@ -84,13 +84,13 @@ app/
     children.py       – mirrors CallActivity / event-subprocess children into the store
   paths.py           – shared workspace-containment check (`contained_path`), used by both
                        the orchestrator and ShellAdapter
-  persistence.py     – WorkflowStore + WorkflowMetadata backed by ZODB / BlobStorage / ZEO
+  persistence.py     – WorkflowStore + WorkflowMetadata backed by ZODB / BlobStorage
   pi_client.py       – PiClient: non-interactive CLI runner, extracts sessionId & JSON contract;
                        also the shared home for `_final_text`/`_parse_json`/`_kill_process_group`
                        and the other event-parsing helpers PiAdapter and SandboxPiAdapter both use
   events.py          – EventBus: persists audit events + async webhook delivery (httpx, 3 retries)
   auth.py            – Role enum + require_role() FastAPI dependency
-  registry.py        – WorkflowRegistry: discovers workflows/*.bpmn templates, flags Project ones
+  registry.py        – WorkflowRegistry: discovers bpmn_agent/data/workflows/*.bpmn templates, flags Project ones
   projects.py        – ProjectService: read/write surface for Projects, a projection over
                        instances + metadata (see plans/concepts.md); no state of its own
   workspace.py       – tar.zst pack/unpack helpers for ZODB Blob workspace storage
@@ -98,13 +98,15 @@ app/
   models.py          – Pydantic models for all API request/response bodies
   logging_config.py  – Structured logging + RequestLoggingMiddleware
   ws.py              – WebSocket connection manager for /ws/instance/{id} push
-workflows/           – Executable BPMN 2.0 templates (plan_and_execute, document_generation,
-                       bug_triage, contract_review, pr_review, external_gate,
-                       composed_delivery + its callable child agent_review_cycle, project)
+  data/workflows/    – Bundled executable BPMN 2.0 templates, shipped as package data
+                       (plan_and_execute, document_generation, bug_triage, contract_review,
+                       pr_review, external_gate, composed_delivery + its callable child
+                       agent_review_cycle, project)
+  data/pi-demo       – Deterministic Pi CLI-compatible mock, also shipped as package data
+                       (no credentials needed)
 element_templates/   – bpmn-js element templates (JSON) for the editor's template chooser,
                        served by ElementTemplatesRegistry via GET /api/element-templates
 scripts/
-  pi-demo            – Deterministic Pi CLI-compatible mock (no credentials needed)
   verify_*.py        – Playwright-based smoke tests for UI pages
 flake.nix            – Nix flake: pi-* variant apps with role-specific prompts
 devenv.nix           – devenv: Python 3.14 + Node 22 + uvicorn process + scripts
@@ -281,7 +283,7 @@ process on `localhost:8000` and for `agent-sandbox`/container markers rather tha
 - **BPMN Extensions**: `engine.py` reads `camunda:properties`, `camunda:formData`, and `camunda:inputOutput`. Input parameters support `${variable}` expression syntax. Every `*.bpmn` in the directory is parsed into one `BpmnParser` (that is how CallActivity targets resolve) and then walked for extensions, but `_specs_defined_by()` scopes each file's extensions to the processes that file itself declares — otherwise two templates sharing a task id would cross-apply properties, forms and inputOutput in filesystem glob order. `_specs_defined_by()` matches `<bpmn:process>`, `<bpmn:subProcess>`, `<bpmn:transaction>`, and `<bpmn:adHocSubProcess>` elements against `workflow.spec`/`workflow.subprocess_specs` — a task nested inside an embedded or event subprocess gets its own spec entry there (keyed by the subprocess element's own id, e.g. `"Spawn"`), separate from the top-level process spec, and previously got none of its extensions attached at all.
 - **CallActivity Children**: Child workflows tracked in `data["__children"]`, synced as separate ZODB records with `parent_workflow_id` back-references.
 - **Event Subprocess Children**: `_sync_children` also syncs children spawned by a native
-  `triggeredByEvent="true"` event subprocess (`workflows/project.bpmn`), the same way as
+  `triggeredByEvent="true"` event subprocess (`bpmn_agent/data/workflows/project.bpmn`), the same way as
   CallActivity children, keyed the same way in `data["__children"]`. Two SpiffWorkflow 3.2.0
   quirks this depends on, both verified by running the mechanism rather than assumed:
   - A `triggeredByEvent` subprocess never actually gets classed as `EventSubprocess` at
@@ -298,7 +300,7 @@ process on `localhost:8000` and for `agent-sandbox`/container markers rather tha
     subprocess directly, a spawned child's own agent turn cannot see what it was spawned to
     do; the payload only surfaces in the child's record after it completes (SpiffWorkflow's
     terminal-task data merge).
-- **Project template** (`workflows/project.bpmn`): a long-running Project that never
+- **Project template** (`bpmn_agent/data/workflows/project.bpmn`): a long-running Project that never
   completes on its own — main flow parks on a `Project Open` user task (submit it to close
   the Project) while an event subprocess spawns a new child for every
   `POST /instance/{id}/message/spawn_requested` with a `{"task_brief": "..."}` payload. Each
@@ -346,14 +348,14 @@ process on `localhost:8000` and for `agent-sandbox`/container markers rather tha
 
 ## 6. Persistence (ZODB)
 
-- **Storage modes**: In-memory (`:memory:`), file (`data/Data.fs` + `data/blobs/`), or ZEO remote (`ZEO_ADDRESS=host:port`).
+- **Storage modes**: In-memory (`:memory:`) or file, local to the workspace (`.agents/state/Data.fs` + `.agents/state/blobs/`). No remote/shared mode -- state is local to the workspace it runs against, not a service other processes share.
 - **BlobStorage**: Workspace archives stored as ZODB `Blob` objects. `duplicate_blob` copies committed blobs for fork operations.
 - **Packing**: `POST /admin/pack` or `/api/history/pack` compacts freed ZODB space. Check stats at `GET /api/history/storage`.
 - **Thread safety & Concurrency**: `WorkflowStore` relies on ZODB native multi-version concurrency control (MVCC) and transactions with automatic retry on `ConflictError`. In-place persistent object mutations prevent database bloat.
 
 ## 7. Adding New Workflow Templates
 
-1. Create `workflows/<name>.bpmn` with `isExecutable="true"` on the process element.
+1. Create `bpmn_agent/data/workflows/<name>.bpmn` with `isExecutable="true"` on the process element.
 2. Add `<bpmn:documentation>` inside the process for the registry description.
 3. For Pi tasks: add `camunda:properties` with at least `agent_role` and optionally `harness_type` (defaults to `pi_agent`). A task whose `harness_type` has no registered adapter now fails loudly rather than stalling.
 4. Declare `camunda:inputOutput` — inputs scope what the agent sees, outputs are the only way results reach the workflow. Gateways downstream must route on those output names.

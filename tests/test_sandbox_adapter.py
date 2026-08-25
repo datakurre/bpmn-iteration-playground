@@ -222,7 +222,7 @@ print(json.dumps({{
     adapter = SandboxPiAdapter(executable=str(mock_sandbox))
     service = WorkflowService(store, pi_client=adapter)
 
-    state = await service.start("workflows/plan_and_execute.bpmn")
+    state = await service.start("bpmn_agent/data/workflows/plan_and_execute.bpmn")
     workflow_id = state["workflow_id"]
 
     async def _wait_jobs() -> None:

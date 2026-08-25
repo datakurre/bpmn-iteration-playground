@@ -33,9 +33,9 @@ def _validate_variables(v: dict[str, Any]) -> dict[str, Any]:
 
 class StartWorkflowRequest(BaseModel):
     bpmn_path: str = Field(
-        default="workflows/contract_review.bpmn",
+        default="bpmn_agent/data/workflows/contract_review.bpmn",
         description="Path to the BPMN file to execute",
-        json_schema_extra={"example": "workflows/contract_review.bpmn"},
+        json_schema_extra={"example": "bpmn_agent/data/workflows/contract_review.bpmn"},
     )
     process_id: str | None = Field(
         default=None,
@@ -222,7 +222,7 @@ class CreateProjectRequest(BaseModel):
         json_schema_extra={"example": "Firmware Rewrite"},
     )
     bpmn_path: str = Field(
-        default="workflows/project.bpmn",
+        default="bpmn_agent/data/workflows/project.bpmn",
         description="Path to a BPMN template that declares itself a Project",
     )
     variables: dict[str, Any] = Field(

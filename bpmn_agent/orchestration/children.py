@@ -63,7 +63,7 @@ def sync_children(service: WorkflowService, root_workflow_id: str, record: dict[
 
             called = getattr(task.task_spec, "spec", "") or getattr(task.task_spec, "calledElement", "")
             if isinstance(task.task_spec, CallActivityMixin):
-                bpmn_path = f"workflows/{called}.bpmn" if called else "unknown"
+                bpmn_path = f"bpmn_agent/data/workflows/{called}.bpmn" if called else "unknown"
             else:
                 # Inline subprocess (event subprocess, ad-hoc, transaction): there is no
                 # separate called file -- the child's diagram genuinely is the file that

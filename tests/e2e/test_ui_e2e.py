@@ -50,7 +50,7 @@ def test_e2e_full_workflow_lifecycle(e2e_client: TestClient) -> None:
     # 5. Start a workflow
     start_resp = e2e_client.post(
         "/workflow/start",
-        json={"bpmn_path": "workflows/contract_review.bpmn", "variables": {"contract": "E2E Agreement"}},
+        json={"bpmn_path": "bpmn_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "E2E Agreement"}},
     )
     assert start_resp.status_code == 200
     wf_id = start_resp.json()["workflow_id"]

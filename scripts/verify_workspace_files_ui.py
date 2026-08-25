@@ -15,7 +15,7 @@ with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
     page = browser.new_page(viewport={"width": 1440, "height": 1000})
     page.goto("http://127.0.0.1:8000/", wait_until="domcontentloaded")
-    page.select_option("#template-select", "workflows/contract_review.bpmn")
+    page.select_option("#template-select", "bpmn_agent/data/workflows/contract_review.bpmn")
     page.fill("#contract", "Review this agreement for compliance.")
     page.click("#start")
     page.wait_for_url("**/instance/*")

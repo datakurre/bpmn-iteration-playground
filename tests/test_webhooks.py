@@ -46,7 +46,7 @@ def test_webhook_crud_api(client: TestClient) -> None:
 def test_workflow_lifecycle_event_logging(service: WorkflowService) -> None:
     async def scenario() -> None:
         started = await service.start(
-            "workflows/contract_review.bpmn", None, {"contract": "Event Test"}
+            "bpmn_agent/data/workflows/contract_review.bpmn", None, {"contract": "Event Test"}
         )
         wf_id = started["workflow_id"]
         async def _wait():

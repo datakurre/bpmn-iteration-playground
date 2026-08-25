@@ -10,7 +10,7 @@ from bpmn_agent.workflow_service import WorkflowService
 
 
 async def _start_and_wait(service: WorkflowService) -> dict[str, Any]:
-    started = await service.start("workflows/contract_review.bpmn", None, {"contract": "text"})
+    started = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
     await asyncio.gather(*list(service.jobs.values()))
     return started
 

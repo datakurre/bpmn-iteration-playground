@@ -31,7 +31,7 @@ Pi Workflow Studio combines the formal execution semantics of **BPMN 2.0** with 
 
 ## 1. BPMN Process Definition
 
-The contract review workflow is modeled in standard BPMN 2.0 XML located at `workflows/contract_review.bpmn`:
+The contract review workflow is modeled in standard BPMN 2.0 XML located at `bpmn_agent/data/workflows/contract_review.bpmn`:
 
 1. **Start Event (`StartEvent_1`)**: Accepts the initial process payload (e.g. `contract` text).
 2. **Service Task (`ServiceTask_Extract`)**: Delegates contract clause extraction and risk analysis to the local Pi agent.

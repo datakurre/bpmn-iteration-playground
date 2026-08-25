@@ -46,7 +46,7 @@ def test_adapter_registry_and_custom_adapter_execution() -> None:
         store = WorkflowStore(":memory:")
         service = WorkflowService(store, adapter_registry=registry)
 
-        started = await service.start("workflows/contract_review.bpmn", None, {"contract": "Test"})
+        started = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {"contract": "Test"})
         wf_id = started["workflow_id"]
 
         async def _wait():

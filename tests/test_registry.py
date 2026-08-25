@@ -119,7 +119,7 @@ def test_shipped_workflows_do_not_share_element_ids() -> None:
     ns = "{http://www.omg.org/spec/BPMN/20100524/MODEL}"
 
     owners: dict[str, set[str]] = collections.defaultdict(set)
-    for path in sorted(Path("workflows").glob("*.bpmn")):
+    for path in sorted(Path("bpmn_agent/data/workflows").glob("*.bpmn")):
         root = safe_parse_xml(str(path)).getroot()
         for element in root.iter():
             # BPMN model elements only; DI shapes and camunda form fields carry their own
