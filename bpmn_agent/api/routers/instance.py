@@ -26,7 +26,7 @@ from bpmn_agent.models import (
     SubmitTaskRequest,
     WorkflowState,
 )
-from bpmn_agent.workflow_service import WorkflowNotFoundError, WorkflowService
+from bpmn_agent.workflow_service import MergeUnsupportedError, WorkflowNotFoundError, WorkflowService
 from bpmn_agent.workspace import cleanup_workspace, extract_workspace_file, pack_workspace_to_bytes
 from bpmn_agent.workspace_strategy import WorkspaceSnapshotUnsupportedError
 
@@ -276,6 +276,20 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
             raise HTTPException(404, "workflow not found") from exc
         except KeyError as exc:
             raise HTTPException(404, "workflow not found") from exc
+
+    @router.post("/instance/{workflow_id}/merge", response_model=WorkflowState, tags=["Instance"], summary="Merge a completed worktree run's branch")
+    async def merge_instance(
+        workflow_id: str,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR),
+    ) -> dict[str, Any]:
+        try:
+            return await get_service().merge(workflow_id)
+        except WorkflowNotFoundError as exc:
+            raise HTTPException(404, "workflow not found") from exc
+        except MergeUnsupportedError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     @router.get("/instance/{workflow_id}/events/stream", tags=["Instance"], summary="Stream instance events via SSE")
     async def sse_events_stream(

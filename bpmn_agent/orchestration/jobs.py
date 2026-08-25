@@ -362,7 +362,12 @@ async def run_pi(service: WorkflowService, workflow_id: str, task_id: str) -> No
                     "event": ev,
                 })
 
-        result = await adapter.run(prompt, config, cwd, on_event=_on_event)
+        # Only the actual harness invocation is rate-limited -- acquiring a worktree or
+        # scratch dir above is cheap and local, so graphs may sit "in progress" (waiting_pi,
+        # a job entry recorded) far past this bound; only this many turns ever have a live
+        # subprocess running at once.
+        async with service._harness_semaphore:
+            result = await adapter.run(prompt, config, cwd, on_event=_on_event)
 
         # Capture generated artifacts and documents into the isolated instance workspace
         wf_data = record["workflow"].data

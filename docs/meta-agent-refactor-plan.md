@@ -273,20 +273,33 @@ Consequences to handle in this phase:
 
 ### Phase 4 — Parallel long-running runs
 
-1. Bound the fan-out: an `asyncio.Semaphore(settings.max_parallel_turns)` around harness
-   execution in `jobs.dispatch`, so ten graphs don't launch ten Pi subprocesses at once.
-   Long-running graphs *waiting* are unbounded; only concurrent *turns* are capped. Under
-   in-place the workspace mutex further narrows this to one — the semaphore and the mutex
-   are separate limits and both apply.
-2. Restart durability: on daemon start, `recover_orphaned_workflows()` already exists —
-   extend it to reclaim or prune worktrees for runs that no longer exist, and to re-park
-   instances whose in-flight turn died with the previous process.
-3. CLI verbs over the daemon API: `bpmn run <template> --var k=v`, `bpmn ls`,
-   `bpmn show <run>`, `bpmn cancel <run>`, `bpmn logs <run> -f`, `bpmn merge <run>`.
-4. Fold in the known background-job/TestClient hang documented in `pyproject.toml`'s
-   `timeout` comment. The daemon needs a clean Ctrl-C anyway, and the fix is the same:
-   a job registry whose entries are always awaited on shutdown, with the `to_thread`
-   workers made cancellable rather than abandoned.
+**Status: done (items 1–3; item 4 deferred).** See AGENTS.md §4e for the as-built
+reference.
+
+1. ~~Bound the fan-out~~ — done: `WorkflowService._harness_semaphore`
+   (`asyncio.Semaphore(MAX_PARALLEL_TURNS)`, default 4) around `adapter.run()` in
+   `orchestration/jobs.py`, exactly as scoped. Long-running graphs *waiting* stay
+   unbounded; only concurrent *turns* are capped. Under in-place the workspace mutex
+   further narrows this to one, independently of the semaphore.
+2. ~~Restart durability~~ — done: `recover_orphaned_workflows()` now also calls
+   `_reclaim_orphaned_worktrees()`, removing any `.agents/worktrees/<id>` with no
+   matching instance record at all. A worktree whose instance record still exists,
+   however stale, is left to the existing retry path, not this cleanup pass.
+3. ~~CLI verbs over the daemon API~~ — done: `bpmn run/ls/show/cancel/logs/merge`, all a
+   second `bpmn` invocation speaking HTTP to the daemon via the new `bpmn_agent/client.py`
+   (`DaemonClient`), never touching the store or workspace directly. `bpmn merge` is
+   manual-trigger only — see §6's "what shipped" note below.
+4. The background-job/TestClient hang fold-in is **deferred**, not done in this pass: it's
+   an orthogonal shutdown-cleanliness fix (a job registry awaited on Ctrl-C) rather than
+   something the parallelism/CLI/merge work above depends on or blocks.
+
+**A gap this phase's own smoke test surfaced, fixed in passing:** `bpmn_agent/api/server.py`
+calls `configure_logging()` at import time, which without an explicit `LOG_FILE` writes to
+a CWD-relative `bpmn_agent.log`. A genuine `bpmn serve` runs with CWD = `workspace.root`,
+so that log file landed directly in the git-tracked tree — permanently dirty, permanently
+failing `bpmn merge`'s clean-working-tree precondition on every real invocation. `_cmd_serve`
+now sets `LOG_FILE` (via `setdefault`, so an operator's own value still wins) to
+`.agents/logs/bpmn-agent.log` before importing `api.server`.
 
 ### Phase 5 — The TUI
 
@@ -320,6 +333,18 @@ already-running daemon. `bpmn serve --no-tui` = headless.
 ---
 
 ## 6. Auto-merge on clean completion
+
+**What actually shipped in phase 4: `bpmn merge <run>` (manual trigger) only.** The
+mechanics below — preconditions, `--no-ff`, deferred-not-forced failure, `merge_deferred`
+state, the `run_merged`/`run_merge_deferred` events — are implemented as described, in
+`WorktreeStrategy.merge` and `WorkflowService.merge`. The `merge_on_complete` auto-trigger,
+its `config.toml` reader, the per-template `camunda:property` override, and `bpmn run
+--no-merge` are **not built** — they need a `config.toml` reader this codebase doesn't have
+yet, and are left for a later pass. Precondition 3 is also simplified from the general form
+below: this codebase has one workspace root and therefore one checkout to merge into, so
+"clean, or not the currently checked-out branch" collapses to "HEAD's working tree is
+clean" (excluding `.agents/` itself via a git pathspec, since `ensure()` puts it directly
+in `workspace.root` where it always shows up as untracked).
 
 The decision is that a successful run lands on the base branch without being asked. That is
 straightforward to build and genuinely reduces friction on long unattended pipelines. It

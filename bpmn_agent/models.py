@@ -159,6 +159,9 @@ class WorkflowState(BaseModel):
     parent_workflow_id: str | None = None
     forked_from: str | None = None
     forked_from_save_point: str | None = None
+    merge_state: str | None = None
+    merge_commit: str | None = None
+    merge_deferred_reason: str | None = None
     workspace_metadata: dict[str, Any] | None = None
 
 
