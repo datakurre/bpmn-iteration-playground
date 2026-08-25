@@ -27,6 +27,7 @@ from bpmn_agent.orchestration.jobs import (
 )
 from bpmn_agent.persistence import WorkflowStore
 from bpmn_agent.pi_client import PiClient, PiResult
+from bpmn_agent.workspace_strategy import MergeDeferredError, WorktreeStrategy
 from bpmn_agent.ws import manager as ws_manager
 
 logger = logging.getLogger("bpmn.workflow")
@@ -46,6 +47,17 @@ CAMUNDA_TO_FORMJS_TYPE: dict[str, str] = {
 
 class WorkflowNotFoundError(KeyError):
     pass
+
+
+class MergeUnsupportedError(RuntimeError):
+    """Merge was requested for a workflow whose workspace strategy has no branch to merge
+    at all -- blob and in-place runs, not a `merge_deferred` precondition failure on an
+    otherwise-mergeable worktree run. See docs/meta-agent-refactor-plan.md §6.
+    """
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
 
 
 class WorkflowService:
@@ -139,6 +151,15 @@ class WorkflowService:
         self.jobs: dict[str, asyncio.Task[None]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._timer_task: asyncio.Task[None] | None = None
+        # Bounds concurrent *harness execution* only (jobs.run_pi's adapter.run() call),
+        # not how many graphs may be dispatched/waiting at once -- ten instances can all
+        # sit in waiting_pi with a job entry, but only this many actually have a live Pi
+        # subprocess running at a time. See docs/meta-agent-refactor-plan.md phase 4.
+        try:
+            max_parallel_turns = max(1, int(os.getenv("MAX_PARALLEL_TURNS", "4")))
+        except (TypeError, ValueError):
+            max_parallel_turns = 4
+        self._harness_semaphore = asyncio.Semaphore(max_parallel_turns)
 
     def _lock(self, workflow_id: str) -> asyncio.Lock:
         return self._locks.setdefault(workflow_id, asyncio.Lock())
@@ -179,6 +200,9 @@ class WorkflowService:
             "parent_workflow_id": record.get("parent_workflow_id"),
             "forked_from": record.get("forked_from"),
             "forked_from_save_point": record.get("forked_from_save_point"),
+            "merge_state": record.get("merge_state"),
+            "merge_commit": record.get("merge_commit"),
+            "merge_deferred_reason": record.get("merge_deferred_reason"),
         }
 
     @staticmethod
@@ -425,6 +449,35 @@ class WorkflowService:
             self.store.update(workflow_id, status="cancelled")
             self.events.emit("workflow_cancelled", workflow_id)
             return self.state(workflow_id)
+
+    async def merge(self, workflow_id: str) -> dict[str, Any]:
+        """`bpmn merge <run>`: merge a completed worktree run's branch into the workspace's
+        checked-out branch as one `--no-ff` commit (docs/meta-agent-refactor-plan.md §6).
+        Manual only -- there is no `merge_on_complete` auto-trigger yet.
+        """
+        record = self._record(workflow_id)
+        if record["status"] != "completed":
+            raise ValueError(f"workflow is {record['status']!r}, not completed -- nothing to merge")
+        if self.workspace is None or not self.workspace.is_git:
+            raise MergeUnsupportedError("merge requires a git workspace")
+
+        strategy = WorktreeStrategy(self.workspace)
+        message = f"Merge bpmn run {workflow_id} ({record.get('process_id', '')})"
+        try:
+            commit = await strategy.merge(workflow_id, message)
+        except MergeDeferredError as exc:
+            record["merge_state"] = "merge_deferred"
+            record["merge_deferred_reason"] = exc.reason
+            await asyncio.to_thread(self.store.save, workflow_id, record)
+            self.events.emit("run_merge_deferred", workflow_id, data={"reason": exc.reason})
+            return self.state(workflow_id)
+
+        record["merge_state"] = "merged"
+        record["merge_commit"] = commit
+        record.pop("merge_deferred_reason", None)
+        await asyncio.to_thread(self.store.save, workflow_id, record)
+        self.events.emit("run_merged", workflow_id, data={"commit": commit})
+        return self.state(workflow_id)
 
     async def diagram(self, workflow_id: str) -> str:
         record = self._record(workflow_id)
@@ -818,7 +871,10 @@ class WorkflowService:
         }
 
     async def recover_orphaned_workflows(self) -> int:
-        """Scan for orphaned workflows in 'waiting_pi' with no active jobs and mark them failed."""
+        """Scan for orphaned workflows in 'waiting_pi' with no active jobs and mark them
+        failed (retryable via the usual POST /instance/{id}/retry/{task_id}), then reclaim
+        any worktree directory left behind by a run that no longer has a record at all.
+        """
         recovered = 0
         for item in self.instances():
             if item["status"] == "waiting_pi":
@@ -837,4 +893,27 @@ class WorkflowService:
                             j["failure_reason"] = "Process terminated unexpectedly"
                     await asyncio.to_thread(self.store.save, item["workflow_id"], record)
                     recovered += 1
+        await self._reclaim_orphaned_worktrees()
         return recovered
+
+    async def _reclaim_orphaned_worktrees(self) -> None:
+        """Remove `.agents/worktrees/<id>` directories whose workflow has no record at all
+        -- left behind by a crash between a run's own `discard()` and the `git worktree
+        remove` it never got to run, or by an instance deleted after its worktree was
+        created (delete_instance/clear_instances don't discard worktrees themselves, so
+        this startup pass is where that catches up). A worktree whose instance still
+        exists is never touched here, however stale its status -- that's the retry path
+        above, not this one; deleting a live run's files on a mere status guess would be
+        exactly the kind of silent data loss this whole strategy exists to avoid.
+        """
+        if self.workspace is None:
+            return
+        worktrees_dir = self.workspace.worktrees_dir
+        if not worktrees_dir.is_dir():
+            return
+        known_ids = {item["workflow_id"] for item in self.instances()}
+        strategy = WorktreeStrategy(self.workspace)
+        for entry in worktrees_dir.iterdir():
+            if entry.is_dir() and entry.name not in known_ids:
+                logger.warning(f"Reclaiming orphaned worktree: {entry.name}")
+                await strategy.discard(entry.name)

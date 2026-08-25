@@ -46,11 +46,18 @@ It:
 
 ```
 bpmn_agent/
-  cli.py             – `bpmn` console-script entry point: init/serve/status/open/stop
+  cli.py             – `bpmn` console-script entry point: init/serve/status/open/stop, and
+                        run/ls/show/cancel/logs/merge -- the latter six are a second `bpmn`
+                        invocation talking HTTP to the daemon via client.py, never touching
+                        the store or workspace directly
+  client.py          – DaemonClient: thin httpx wrapper the run/ls/show/cancel/logs/merge
+                        CLI verbs use to talk to a running daemon (reads the bearer token
+                        from .agents/runtime.json via require_running_daemon)
   agents_root.py     – Workspace: `.agents/` root discovery and directory layout
   daemon.py          – `bpmn serve`'s free-port bind, runtime.json handshake, is_daemon_alive
-  workspace_strategy.py – WorkspaceStrategy: BlobStrategy / WorktreeStrategy / InPlaceStrategy
-                        and select_strategy() -- see AGENTS.md §4d
+  workspace_strategy.py – WorkspaceStrategy: BlobStrategy / WorktreeStrategy / InPlaceStrategy,
+                        select_strategy(), and WorktreeStrategy.merge() (`bpmn merge`) --
+                        see AGENTS.md §4d
   api/
     server.py        – FastAPI app factory: lifespan, static mounts, includes routers/ below
     security.py      – OriginHostGuardMiddleware: blocks a page on another origin from
@@ -391,6 +398,39 @@ worktree's checkout structurally never contains `.agents/` at all, sandboxed or 
 why `bpmn init` prints an explicit warning (see `bpmn_agent/cli.py`'s `_cmd_init`) the
 moment it detects a non-git workspace, rather than letting a user discover this by
 reading code.
+
+## 4e. Parallel Long-Running Runs & Merge
+
+Phase 4 of the meta-agent refactor — several BPMN graphs run at once against the same
+workspace, one daemon per workspace:
+
+- **Bounded harness concurrency**: `WorkflowService._harness_semaphore`
+  (`asyncio.Semaphore(MAX_PARALLEL_TURNS)`, default 4) wraps only the `adapter.run()` call
+  in `orchestration/jobs.py` — it bounds concurrent Pi/shell *subprocess execution*, not
+  how many instances may be dispatched or sit `waiting_pi` at once. Under `InPlaceStrategy`
+  its own workspace-root mutex narrows this further to 1; the two limits are independent
+  and both apply.
+- **Restart durability**: `WorkflowService.recover_orphaned_workflows()` (called on daemon
+  startup) does two things now — its original job of re-parking `waiting_pi` instances
+  whose harness died with the previous process, and (`_reclaim_orphaned_worktrees`)
+  removing any `.agents/worktrees/<id>` directory whose `id` has no instance record at
+  all. A worktree whose instance still exists, however stale its status, is never touched
+  by this pass — that's the retry path, not a cleanup one.
+- **`bpmn merge <run>`** (`WorkflowService.merge`, `WorktreeStrategy.merge`) — manual only;
+  there is no `merge_on_complete` auto-trigger yet (docs/meta-agent-refactor-plan.md §6
+  describes that as a later phase, needing a `config.toml` reader that doesn't exist).
+  Only a completed `WorktreeStrategy` run can be merged — blob and in-place runs raise
+  `MergeUnsupportedError` (409). Mechanics: `git merge --no-ff bpmn/run/<id>` into whatever
+  is currently checked out in `workspace.root` (not the run's own worktree), naming the run
+  in the merge commit message. A dirty checkout or a real conflict aborts the merge
+  (`git merge --abort`) and records `merge_state="merge_deferred"` with a reason, never
+  forcing or auto-resolving; `bpmn merge` retries it. The dirty-tree check excludes
+  `.agents/` itself via a git pathspec (`-- . ':!.agents'`) — `ensure()` creates `.agents/`
+  directly inside `workspace.root`, so it always shows up as untracked cruft unrelated to
+  the user's own uncommitted work this check exists to protect. This implementation also
+  simplifies the plan doc's "clean, or not the currently-checked-out branch" precondition
+  to just "clean": a single-workspace daemon has exactly one checkout to merge into, so
+  there is no distinct "base branch" to be not-checked-out.
 
 ## 5. Auth & Security
 

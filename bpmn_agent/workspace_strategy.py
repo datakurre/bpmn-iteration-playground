@@ -213,6 +213,18 @@ class GitOperationError(RuntimeError):
     """A `git` subprocess this strategy ran exited non-zero."""
 
 
+class MergeDeferredError(RuntimeError):
+    """A merge precondition failed, or `git merge` itself conflicted. Never forced and
+    never auto-resolved (docs/meta-agent-refactor-plan.md §6): the run's branch and
+    worktree are left exactly as they were, and the caller (WorkflowService.merge)
+    records this as a `merge_deferred` state rather than treating it as a bug.
+    """
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+
 async def _git(*args: str, cwd: Path) -> str:
     proc = await _run_git(*args, cwd=cwd)
     if proc.returncode != 0:
@@ -291,6 +303,42 @@ class WorktreeStrategy:
             return
         with contextlib.suppress(GitOperationError):
             await _git("worktree", "remove", "--force", str(path), cwd=self.workspace.root)
+
+    async def merge(self, run_id: str, message: str) -> str:
+        """Merge the run's branch into whatever is currently checked out in the *main*
+        checkout (`self.workspace.root`, not the run's own worktree) as a single `--no-ff`
+        commit, and return that merge commit's sha.
+
+        This is `bpmn merge <run>` only -- manual, one run at a time (see
+        docs/meta-agent-refactor-plan.md phase 4, which scopes out the `merge_on_complete`
+        auto-trigger and its `config.toml` reader for a later phase). The doc's own
+        precondition 3 ("clean, or not the currently checked-out branch") assumes a
+        target branch distinct from HEAD; a single-checkout workspace has no such branch
+        to target, so this only ever merges into HEAD and simplifies that precondition to
+        "HEAD's working tree is clean".
+        """
+        branch = self._branch_name(run_id)
+        root = self.workspace.root
+        branch_exists = (
+            await _run_git("rev-parse", "--verify", "--quiet", branch, cwd=root)
+        ).returncode == 0
+        if not branch_exists:
+            raise MergeDeferredError(f"no branch {branch!r} to merge -- was this run's worktree ever created?")
+
+        # `.agents/` itself is excluded: `ensure()` creates it directly inside `root` (not
+        # a worktree, which never contains it at all -- see the module docstring), and
+        # nothing here writes a root-level .gitignore entry for it, so it always shows up
+        # as untracked cruft that has nothing to do with the user's own uncommitted work
+        # this precondition exists to protect.
+        status = await _git("status", "--porcelain", "--", ".", ":!.agents", cwd=root)
+        if status.strip():
+            raise MergeDeferredError("the workspace's checked-out branch has uncommitted changes")
+
+        proc = await _run_git("merge", "--no-ff", branch, "-m", message, cwd=root)
+        if proc.returncode != 0:
+            await _run_git("merge", "--abort", cwd=root)
+            raise MergeDeferredError(proc.stderr.decode(errors="replace").strip() or "git merge failed")
+        return await _git("rev-parse", "HEAD", cwd=root)
 
 
 # One lock per workspace root, not one per strategy instance -- a strategy may be
