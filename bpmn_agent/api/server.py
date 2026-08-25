@@ -20,6 +20,7 @@ from bpmn_agent.api.routers import (
     websocket,
     workflow,
 )
+from bpmn_agent.api.security import OriginHostGuardMiddleware
 from bpmn_agent.element_templates_registry import ElementTemplatesRegistry
 from bpmn_agent.logging_config import RequestLoggingMiddleware, configure_logging
 from bpmn_agent.persistence import WorkflowStore
@@ -108,6 +109,7 @@ def create_app(service: WorkflowService | None = None, workspace: Workspace | No
     )
 
     app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(OriginHostGuardMiddleware)
 
     bpmn_assets = Path(__file__).resolve().parents[2] / "node_modules" / "bpmn-js" / "dist"
     form_assets = Path(__file__).resolve().parents[2] / "node_modules" / "@bpmn-io" / "form-js" / "dist"
