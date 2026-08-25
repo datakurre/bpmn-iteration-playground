@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from bpmn_agent.agents_root import Workspace
 from bpmn_agent.api.routers import (
     admin,
     history,
@@ -30,8 +31,24 @@ logger = logging.getLogger("bpmn.api")
 configure_logging()
 
 
-def create_app(service: WorkflowService | None = None) -> FastAPI:
+def create_app(service: WorkflowService | None = None, workspace: Workspace | None = None) -> FastAPI:
+    """Build the FastAPI app.
+
+    `workspace` only matters when `service` is omitted -- it decides where a *default*
+    WorkflowService's ZODB store lives: `<workspace>/.agents/state/Data.fs` rather than
+    the bare `data/workflows.fs` this used to hard-code. It defaults to `Workspace.discover()`
+    (CWD, walking up for an existing `.agents/` or `.git/`) so `create_app()` still works
+    with zero setup, the same as before. Passing an explicit `service` (as every test does)
+    bypasses this entirely -- state was still injected outside this function.
+
+    The template registry stays on `WorkflowRegistry()`'s own default (this package's
+    bundled templates, see registry.py) rather than `workspace.workflows_dir` -- wiring the
+    live registry to the workspace's *editable* copy `bpmn init` materialises is deliberately
+    not done yet, so that a plain `bpmn serve` with no `bpmn init` step still has templates
+    to list.
+    """
     _service = service
+    _workspace = workspace or Workspace.discover()
     template_registry = WorkflowRegistry()
     element_templates_registry = ElementTemplatesRegistry()
     _project_service: ProjectService | None = None
@@ -39,7 +56,8 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
     def get_service() -> WorkflowService:
         nonlocal _service
         if _service is None:
-            _service = WorkflowService(WorkflowStore())
+            _workspace.ensure()
+            _service = WorkflowService(WorkflowStore(str(_workspace.state_dir / "Data.fs")))
         return _service
 
     def get_project_service() -> ProjectService:

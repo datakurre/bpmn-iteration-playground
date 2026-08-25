@@ -30,7 +30,7 @@ def main():  # noqa: PLR0915 -- linear step-by-step manual walkthrough script; s
 
         # Select Contract Review template
         print("   Selecting 'Contract Review' workflow template...")
-        page.locator("#template-select").select_option("workflows/contract_review.bpmn")
+        page.locator("#template-select").select_option("bpmn_agent/data/workflows/contract_review.bpmn")
 
         contract_text = (
             "Enterprise Master Services Agreement (MSA) between Acme Cloud Corp and Beta Tech Inc.\n"

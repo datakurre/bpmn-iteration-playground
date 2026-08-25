@@ -11,7 +11,7 @@ from bpmn_agent.pi_client import PiResult
 from bpmn_agent.registry import WorkflowRegistry
 from bpmn_agent.workflow_service import WorkflowService
 
-BPMN_PATH = "workflows/project.bpmn"
+BPMN_PATH = "bpmn_agent/data/workflows/project.bpmn"
 
 
 class FakePi:

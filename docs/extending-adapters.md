@@ -141,7 +141,7 @@ exclusive gateway can branch on it:
 </bpmn:sequenceFlow>
 ```
 
-That flow is what puts a compiler inside the agent loop. In `workflows/beamer_slides.bpmn`
+That flow is what puts a compiler inside the agent loop. In `bpmn_agent/data/workflows/beamer_slides.bpmn`
 it leads to a human diagnosis gate carrying `${build_log}`, from which you either hand the
 log back to the slide-writing agent or abandon the deck. Routing through a person rather
 than straight back to the agent is deliberate: the expression language is not a scripting

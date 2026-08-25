@@ -14,7 +14,7 @@ from bpmn_agent.persistence import WorkflowStore
 from bpmn_agent.pi_client import PiResult
 from bpmn_agent.workflow_service import WorkflowService
 
-BEAMER = "workflows/beamer_slides.bpmn"
+BEAMER = "bpmn_agent/data/workflows/beamer_slides.bpmn"
 BRIEF = {"topic": "adapters", "audience": "engineers", "duration_minutes": 10}
 
 

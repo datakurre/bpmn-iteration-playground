@@ -15,7 +15,7 @@ with sync_playwright() as playwright:
     page.goto("http://127.0.0.1:8000/", wait_until="domcontentloaded")
     # /api/templates repopulates #template-select asynchronously and can reorder it, so pin
     # the workflow explicitly instead of relying on the option order at click time.
-    page.select_option("#template-select", "workflows/contract_review.bpmn")
+    page.select_option("#template-select", "bpmn_agent/data/workflows/contract_review.bpmn")
     page.fill("#contract", "Review this agreement for compliance.")
     page.click("#start")
     page.wait_for_url("**/instance/*")

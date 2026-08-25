@@ -54,7 +54,7 @@ def _save_point_before_first_harness(record: dict[str, Any]) -> dict[str, Any]:
 @pytest.mark.anyio
 async def test_fork_preserves_agent_files(service: WorkflowService) -> None:
     service.registry.register(FileWritingAdapter())
-    started = await service.start("workflows/contract_review.bpmn", None, {"contract": "x"})
+    started = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {"contract": "x"})
     wf_id = started["workflow_id"]
     await _wait_for_agent_turn(service)
 
@@ -74,7 +74,7 @@ async def test_fork_preserves_agent_files(service: WorkflowService) -> None:
 @pytest.mark.anyio
 async def test_fork_workspace_is_independent_of_parent(service: WorkflowService) -> None:
     service.registry.register(FileWritingAdapter())
-    started = await service.start("workflows/contract_review.bpmn", None, {"contract": "x"})
+    started = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {"contract": "x"})
     wf_id = started["workflow_id"]
     await _wait_for_agent_turn(service)
 
@@ -101,7 +101,7 @@ async def test_fork_workspace_is_independent_of_parent(service: WorkflowService)
 @pytest.mark.anyio
 async def test_fork_from_first_savepoint_starts_clean(service: WorkflowService) -> None:
     service.registry.register(FileWritingAdapter())
-    started = await service.start("workflows/contract_review.bpmn", None, {"contract": "x"})
+    started = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {"contract": "x"})
     wf_id = started["workflow_id"]
 
     record = service.store.load(wf_id)

@@ -9,12 +9,12 @@ from bpmn_agent.engine import WorkflowRunner
 
 
 def _load_any_workflow() -> BpmnWorkflow:
-    wf, _ = WorkflowRunner().load_workflow("workflows/contract_review.bpmn")
+    wf, _ = WorkflowRunner().load_workflow("bpmn_agent/data/workflows/contract_review.bpmn")
     return wf
 
 
 def _workflow_parked_on_message_catch() -> BpmnWorkflow:
-    wf, _ = WorkflowRunner().load_workflow("workflows/external_gate.bpmn")
+    wf, _ = WorkflowRunner().load_workflow("bpmn_agent/data/workflows/external_gate.bpmn")
     wf.do_engine_steps()
     for _ in range(20):
         if wf.waiting_events():
@@ -74,7 +74,7 @@ def test_store_load_migrates_legacy_workflow(store: Any) -> None:
     store.save("wf1", {
         "workflow_id": "wf1",
         "process_id": "external_gate",
-        "bpmn_path": "workflows/external_gate.bpmn",
+        "bpmn_path": "bpmn_agent/data/workflows/external_gate.bpmn",
         "status": "running",
         "workflow": wf,
         "data": {},

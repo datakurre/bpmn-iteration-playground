@@ -24,7 +24,7 @@ flowchart TD
 ## Core Subsystems
 
 ### 1. BPMN Engine & Execution Scope
-- Powered by **SpiffWorkflow 3.2.0**, diagrams parsed from `workflows/*.bpmn`.
+- Powered by **SpiffWorkflow 3.2.0**, diagrams parsed from `bpmn_agent/data/workflows/*.bpmn`.
 - Instances persisted by earlier versions are upgraded on read by `bpmn_agent/migrations.py`
   (`migrate_workflow_object`), which is idempotent and runs on both `load()` and
   `load_save_point()`, so a stored workflow never has to be migrated by hand.
@@ -36,7 +36,7 @@ flowchart TD
   open. See [Project processes and spawned children](#6-project-processes-and-spawned-children).
 
 ### 2. Persistence Layer (ZODB + Blobs)
-- **WorkflowStore** manages ACID persistence backed by ZODB (in-memory, file storage `Data.fs`, or remote ZEO).
+- **WorkflowStore** manages ACID persistence backed by ZODB (in-memory or file storage `Data.fs`), local to the workspace's `.agents/state/`.
 - Workspace files are packaged as compressed `tar.zst` archives and stored in a
   `ZODB.blob.Blob` (`workspace_blob`), which keeps the bytes out of the main `Data.fs`
   transaction log. Instances written before this change kept the archive inline as
@@ -86,7 +86,7 @@ flowchart TD
 ### 6. Project processes and spawned children
 
 A **Project** is not a separate database entity — it is an ordinary long-running BPMN process
-(`workflows/project.bpmn`) that stays parked on a human task and spawns a child for each
+(`bpmn_agent/data/workflows/project.bpmn`) that stays parked on a human task and spawns a child for each
 `spawn_requested` message it receives:
 
 ```http

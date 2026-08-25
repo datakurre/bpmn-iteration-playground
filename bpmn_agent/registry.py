@@ -30,11 +30,19 @@ class WorkflowTemplate:
         }
 
 
-class WorkflowRegistry:
-    """Registry discovering and inspecting executable BPMN workflow templates in the repository."""
+# The bundled templates ship as package data (bpmn_agent/data/workflows/) so a
+# `WorkflowRegistry()` default still finds real templates when this package is installed,
+# with no source checkout in sight. Once a `.agents/` workspace exists, callers pass its
+# own workflows_dir explicitly (see bpmn_agent/api/server.py) -- this default only serves
+# bare construction, e.g. tests exercising "the real bundled templates".
+BUNDLED_WORKFLOWS_DIR = Path(__file__).resolve().parent / "data" / "workflows"
 
-    def __init__(self, workflows_dir: str = "workflows") -> None:
-        self.dir = Path(workflows_dir)
+
+class WorkflowRegistry:
+    """Registry discovering and inspecting executable BPMN workflow templates."""
+
+    def __init__(self, workflows_dir: str | None = None) -> None:
+        self.dir = Path(workflows_dir) if workflows_dir is not None else BUNDLED_WORKFLOWS_DIR
         self._cache: dict[str, tuple[float, WorkflowTemplate | None]] = {}
 
     def list_templates(self) -> list[WorkflowTemplate]:
