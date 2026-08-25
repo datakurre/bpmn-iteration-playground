@@ -2,9 +2,9 @@
 
 import asyncio
 
-from app.adapters.base import AgentResult, BaseAdapter
-from app.persistence import WorkflowStore
-from app.workflow_service import WorkflowService
+from graph_agent.adapters.base import AgentResult, BaseAdapter
+from graph_agent.persistence import WorkflowStore
+from graph_agent.workflow_service import WorkflowService
 
 
 class StubAgent(BaseAdapter):
@@ -39,7 +39,7 @@ def test_workflow_parks_on_message_and_resumes_on_delivery() -> None:
     async def scenario() -> None:
         service = WorkflowService(WorkflowStore(":memory:"), StubAgent())
         started = await service.start(
-            "workflows/external_gate.bpmn", None, {"change_request": "bump the timeout"}
+            "graph_agent/data/workflows/external_gate.bpmn", None, {"change_request": "bump the timeout"}
         )
         workflow_id = started["workflow_id"]
         await asyncio.wait_for(_drain(service), timeout=5.0)
@@ -68,7 +68,7 @@ def test_workflow_parks_on_message_and_resumes_on_delivery() -> None:
 def test_declined_message_skips_the_apply_turn() -> None:
     async def scenario() -> None:
         service = WorkflowService(WorkflowStore(":memory:"), StubAgent())
-        started = await service.start("workflows/external_gate.bpmn", None, {"change_request": "x"})
+        started = await service.start("graph_agent/data/workflows/external_gate.bpmn", None, {"change_request": "x"})
         workflow_id = started["workflow_id"]
         await asyncio.wait_for(_drain(service), timeout=5.0)
 
@@ -87,7 +87,7 @@ def test_unknown_message_name_is_rejected() -> None:
         import pytest
 
         service = WorkflowService(WorkflowStore(":memory:"), StubAgent())
-        started = await service.start("workflows/external_gate.bpmn", None, {"change_request": "x"})
+        started = await service.start("graph_agent/data/workflows/external_gate.bpmn", None, {"change_request": "x"})
         await asyncio.wait_for(_drain(service), timeout=5.0)
 
         with pytest.raises(KeyError):

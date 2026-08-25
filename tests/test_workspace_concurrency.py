@@ -6,10 +6,10 @@ from typing import Any
 
 import pytest
 
-from app.adapters.base import AgentResult
-from app.adapters.mock_adapter import MockAdapter
-from app.workflow_service import WORKSPACE_CONFLICT_MESSAGE, WorkflowService
-from app.workspace import cleanup_workspace, unpack_workspace
+from graph_agent.adapters.base import AgentResult
+from graph_agent.adapters.mock_adapter import MockAdapter
+from graph_agent.workflow_service import WORKSPACE_CONFLICT_MESSAGE, WorkflowService
+from graph_agent.workspace import cleanup_workspace, unpack_workspace
 
 
 class ConfiguredFileWritingAdapter(MockAdapter):

@@ -155,7 +155,7 @@ if (startBtn) {
     const messageEl = $("message");
     if (messageEl) messageEl.textContent = "Persisting workflow and launching process...";
     const templateSelect = $("template-select") as HTMLSelectElement | null;
-    const bpmnPath = templateSelect?.value || "workflows/contract_review.bpmn";
+    const bpmnPath = templateSelect?.value || "graph_agent/data/workflows/contract_review.bpmn";
     const inputVal = ($("contract") as HTMLTextAreaElement | null)?.value ?? "";
     let variables: unknown = { contract: inputVal };
     try {

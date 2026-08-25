@@ -1,6 +1,6 @@
 import pytest
 
-from app.adapters.mock_adapter import MockAdapter
+from graph_agent.adapters.mock_adapter import MockAdapter
 
 
 @pytest.mark.anyio
@@ -18,11 +18,11 @@ async def test_mock_adapter_empty_dict_output() -> None:
 
 
 def test_adapter_plugin_discovery_from_dir(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.adapters.registry import AdapterRegistry
+    from graph_agent.adapters.registry import AdapterRegistry
     plugin_dir = str(tmp_path)
     plugin_file = tmp_path / "custom_adapter.py"
     plugin_file.write_text(
-        """from app.adapters.base import BaseAdapter, AgentResult
+        """from graph_agent.adapters.base import BaseAdapter, AgentResult
 
 class MyCustomPluginAdapter(BaseAdapter):
     @property

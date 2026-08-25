@@ -11,7 +11,7 @@ def test_auth_disabled_by_default(client: TestClient, monkeypatch) -> None:
     # Start workflow allowed
     resp = client.post(
         "/workflow/start",
-        json={"bpmn_path": "workflows/contract_review.bpmn", "variables": {}},
+        json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {}},
     )
     assert resp.status_code == 200
 
@@ -24,7 +24,7 @@ def test_rbac_with_api_keys(client: TestClient, monkeypatch) -> None:
     assert client.get("/health").status_code == 200
 
     # 2. Unauthenticated request to protected endpoint returns 401
-    assert client.post("/workflow/start", json={"bpmn_path": "workflows/contract_review.bpmn"}).status_code == 401
+    assert client.post("/workflow/start", json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn"}).status_code == 401
     assert client.get("/api/history/instances").status_code == 401
     assert client.get("/api/templates").status_code == 401
 
@@ -32,11 +32,11 @@ def test_rbac_with_api_keys(client: TestClient, monkeypatch) -> None:
     viewer_headers = {"X-Api-Key": "view-key"}
     assert client.get("/api/history/instances", headers=viewer_headers).status_code == 200
     assert client.get("/api/templates", headers=viewer_headers).status_code == 200
-    assert client.post("/workflow/start", json={"bpmn_path": "workflows/contract_review.bpmn"}, headers=viewer_headers).status_code == 403
+    assert client.post("/workflow/start", json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn"}, headers=viewer_headers).status_code == 403
 
     # 4. Operator key can start workflows and submit tasks
     op_headers = {"X-Api-Key": "op-key"}
-    start_resp = client.post("/workflow/start", json={"bpmn_path": "workflows/contract_review.bpmn"}, headers=op_headers)
+    start_resp = client.post("/workflow/start", json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn"}, headers=op_headers)
     assert start_resp.status_code == 200
     wf_id = start_resp.json()["workflow_id"]
 
@@ -50,7 +50,7 @@ def test_rbac_with_api_keys(client: TestClient, monkeypatch) -> None:
 
     # 6. Admin token via X-Admin-Token header
     token_headers = {"X-Admin-Token": "secret-admin-token"}
-    admin_list = client.get("/admin/instances", headers=token_headers)
+    admin_list = client.get("/api/history/instances", headers=token_headers)
     assert admin_list.status_code == 200
 
 
@@ -60,7 +60,7 @@ def test_require_auth_fails_when_unconfigured(client: TestClient, monkeypatch) -
     monkeypatch.delenv("API_KEYS", raising=False)
 
     # When REQUIRE_AUTH is true and no tokens configured, protected endpoints must reject with 401/500/error instead of fail-open
-    resp = client.post("/workflow/start", json={"bpmn_path": "workflows/contract_review.bpmn"})
+    resp = client.post("/workflow/start", json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn"})
     assert resp.status_code in (401, 500)
 
 
@@ -103,7 +103,7 @@ def test_ui_page_routes_require_auth(client: TestClient, monkeypatch) -> None:
     assert client.get("/admin", headers=viewer_headers).status_code == 403
 
 def test_auth_config_cached_and_invalidates_on_env_change(monkeypatch) -> None:
-    from app.auth import Role, parse_auth_config
+    from graph_agent.auth import Role, parse_auth_config
 
     monkeypatch.setenv("API_KEYS", "cached-key:operator")
     monkeypatch.delenv("ADMIN_TOKEN", raising=False)
@@ -121,7 +121,7 @@ def test_auth_config_cached_and_invalidates_on_env_change(monkeypatch) -> None:
 
 
 def test_malformed_api_keys_handling(monkeypatch) -> None:
-    from app.auth import Role, parse_auth_config
+    from graph_agent.auth import Role, parse_auth_config
 
     monkeypatch.delenv("ADMIN_TOKEN", raising=False)
     # Test whitespace, empty items, unknown roles, keys without roles

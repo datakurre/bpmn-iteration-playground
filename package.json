@@ -1,9 +1,9 @@
 {
   "scripts": {
-    "build:css": "tailwindcss -i ./src/css/styles.css -o ./app/static/tailwind.css --minify",
+    "build:css": "tailwindcss -i ./src/css/styles.css -o ./graph_agent/static/tailwind.css --minify",
     "build:assets": "node scripts/build-assets.mjs",
     "build": "npm run build:assets && npm run build:css",
-    "lint:templates": "node scripts/lint_templates.js && htmlhint app/templates/*.html",
+    "lint:templates": "node scripts/lint_templates.js && htmlhint graph_agent/templates/*.html",
     "lint": "npm run lint:templates",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

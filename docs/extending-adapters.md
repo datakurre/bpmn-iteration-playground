@@ -8,14 +8,14 @@ The engine dispatches AI and tool tasks through pluggable adapters registered in
 
 ## Implementing `BaseAdapter`
 
-Create a subclass of `BaseAdapter` in `app/adapters/`. `run()`'s signature must include
+Create a subclass of `BaseAdapter` in `graph_agent/adapters/`. `run()`'s signature must include
 `on_event` — the orchestrator always calls it as a keyword argument
 (`adapter.run(prompt, config, cwd, on_event=...)`) so it can stream live turn events to the
 UI, and a `run()` that omits the parameter raises `TypeError` on the very first real turn:
 
 ```python
 from typing import Any
-from app.adapters.base import AdapterCapabilities, BaseAdapter, AgentResult
+from graph_agent.adapters.base import AdapterCapabilities, BaseAdapter, AgentResult
 
 
 class ClaudeCodeAdapter(BaseAdapter):
@@ -59,7 +59,7 @@ class ClaudeCodeAdapter(BaseAdapter):
 
 ## Declaring capabilities
 
-`AdapterCapabilities` (`app/adapters/base.py`) is how a harness tells the orchestrator what
+`AdapterCapabilities` (`graph_agent/adapters/base.py`) is how a harness tells the orchestrator what
 it is, instead of the orchestrator special-casing `harness_type` strings. The field worth
 understanding before you skip it: `supports_sessions` — true for harnesses that carry
 conversational state across turns (LLM agents), false for anything deterministic. A harness
@@ -72,7 +72,7 @@ running the same session. `GET /api/harnesses` shows what every registered adapt
 Register your adapter in `AdapterRegistry`:
 
 ```python
-from app.adapters.registry import AdapterRegistry
+from graph_agent.adapters.registry import AdapterRegistry
 
 registry = AdapterRegistry()
 registry.register(ClaudeCodeAdapter())
@@ -87,7 +87,7 @@ In your BPMN diagram, set the task property:
 
 ## Worked example: the shell harness
 
-`ShellAdapter` (`app/adapters/shell_adapter.py`, `harness_type: shell`) is the built-in
+`ShellAdapter` (`graph_agent/adapters/shell_adapter.py`, `harness_type: shell`) is the built-in
 example of an adapter that is not an agent at all. It ignores `prompt` entirely — the task
 is defined by its BPMN properties — which is what makes a compiler, slicer, or CAM step a
 BPMN node like any other.
@@ -117,7 +117,7 @@ BPMN node like any other.
 | `command` | The command line. Required unless `template` is set. Split with `shlex`; no shell is involved. |
 | `shell` | `true` to run `command` through `/bin/sh -c` (pipes, redirection). |
 | `workdir` | Subdirectory of the workspace to run in. Must stay inside it. |
-| `template` | Directory under `workspace_templates/` copied in before the run, existing files untouched. |
+| `template` | Directory under `graph_agent/data/workspace_templates/` copied in before the run, existing files untouched. |
 | `timeout` | Seconds before the command is killed (default 900). |
 | `artifacts` | Globs (JSON array or comma-separated) collected afterwards and published as `${artifacts}`. |
 | `fail_on_error` | `true` (default) fails the turn on non-zero exit; `false` routes it as data instead. |
@@ -141,7 +141,7 @@ exclusive gateway can branch on it:
 </bpmn:sequenceFlow>
 ```
 
-That flow is what puts a compiler inside the agent loop. In `workflows/beamer_slides.bpmn`
+That flow is what puts a compiler inside the agent loop. In `graph_agent/data/workflows/beamer_slides.bpmn`
 it leads to a human diagnosis gate carrying `${build_log}`, from which you either hand the
 log back to the slide-writing agent or abandon the deck. Routing through a person rather
 than straight back to the agent is deliberate: the expression language is not a scripting
@@ -150,7 +150,7 @@ compiler the agent cannot satisfy would never terminate.
 
 ### Workspace templates
 
-`template="beamer"` copies `workspace_templates/beamer/` into the instance workspace through
+`template="beamer"` copies `graph_agent/data/workspace_templates/beamer/` into the instance workspace through
 the `prepare_workspace` hook. Files already present are never overwritten, so the scaffold
 can re-run on later turns without discarding the agent's edits. A task that declares only
 `template` and no `command` is a pure scaffold step.

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.ws import ConnectionManager
+from graph_agent.ws import ConnectionManager
 
 
 @pytest.mark.anyio

@@ -1,59 +1,57 @@
 # Architecture Overview
 
-> AGENTS.md's "Architecture & Module Map" is the file-by-file reference and changes first;
-> this doc goes deeper on the subsystems below (savepoints, concurrency, Project children) as
-> prose. If the two disagree, AGENTS.md is the one to trust.
+> AGENTS.md's "Architecture & Module Map" is the file-by-file reference; this document details the core subsystems (workspace strategies, savepoints, concurrency, TUI/CLI, and Project supervisors).
 
-**BPMN Pi Workflow** is a durable BPMN 2.0 orchestration engine combining local AI execution with transactional persistence and human-in-the-loop task forms.
+**graph-agent** is a durable BPMN 2.0 orchestration engine combining local AI execution with transactional persistence, isolated workspace strategies, and human-in-the-loop task forms.
 
 ```mermaid
 flowchart TD
-    Client[Web UI / REST API] --> Server[FastAPI Server]
-    Server --> Service[WorkflowService]
+    Client[TUI / CLI / Web UI] --> Daemon[FastAPI Local Daemon]
+    Daemon --> Service[WorkflowService]
     Service --> Runner[WorkflowRunner / SpiffWorkflow]
+    Service --> Strategy[WorkspaceStrategy: Worktree | InPlace | Blob]
     Service --> Registry[AdapterRegistry]
     Registry --> PiAdapter[PiAdapter / PiClient]
     Registry --> SandboxAdapter[SandboxPiAdapter]
-    Registry --> MockAdapter[MockAdapter / CustomAdapters]
+    Registry --> ShellAdapter[ShellAdapter]
+    Registry --> MockAdapter[MockAdapter]
     PiAdapter --> Subprocess[Pi CLI Subprocess]
     Service --> Store[WorkflowStore / ZODB]
-    Store --> Blobs[ZODB BlobStorage]
+    Store --> StateDir[.agents/state/Data.fs]
     Service --> EventBus[EventBus & Webhooks]
 ```
+
+---
 
 ## Core Subsystems
 
 ### 1. BPMN Engine & Execution Scope
-- Powered by **SpiffWorkflow 3.2.0**, diagrams parsed from `workflows/*.bpmn`.
-- Instances persisted by earlier versions are upgraded on read by `app/migrations.py`
-  (`migrate_workflow_object`), which is idempotent and runs on both `load()` and
-  `load_save_point()`, so a stored workflow never has to be migrated by hand.
-- Tasks execute in topological order; script tasks and service tasks update the workflow environment.
+- Powered by **SpiffWorkflow 3.2.0**, diagrams loaded from `.agents/workflows/*.bpmn` (or bundled templates).
+- Instances persisted across versions are upgraded on read by `graph_agent/migrations.py` (`migrate_workflow_object`), which is idempotent and runs on both `load()` and `load_save_point()`.
 - Service tasks declare their AI harness via `camunda:properties` (`harness_type="pi_agent"` and `agent_role="code_reviewer"`).
 - Exclusive gateways evaluate Python expressions against merged `task.data` and `workflow.data` (e.g. `agent_status == 'success'`).
-- A `subProcess triggeredByEvent="true"` with a message start event spawns one **child
-  instance per caught message**, letting a long-running parent fan out work while staying
-  open. See [Project processes and spawned children](#6-project-processes-and-spawned-children).
+- A `subProcess triggeredByEvent="true"` with a message start event spawns one **child instance per caught message**, letting a long-running supervisor process fan out work while staying open.
 
-### 2. Persistence Layer (ZODB + Blobs)
-- **WorkflowStore** manages ACID persistence backed by ZODB (in-memory, file storage `Data.fs`, or remote ZEO).
-- Workspace files are packaged as compressed `tar.zst` archives and stored in a
-  `ZODB.blob.Blob` (`workspace_blob`), which keeps the bytes out of the main `Data.fs`
-  transaction log. Instances written before this change kept the archive inline as
-  `workspace_archive`; that read path is still honoured, so old instances load unchanged.
-- `GET /instance/{id}/workspace/files` serves a manifest of the archive, and
-  `GET /instance/{id}/workspace/file?path=…` streams a single file out of it without
-  unpacking the whole workspace. The manifest is also surfaced on the instance state as
-  `workspace_metadata`, which is what the instance view's **Workspace Files** panel renders.
-- In-place mutation with conflict retry decorators ensures zero lost updates and thread safety under concurrent load.
-- Metastore tree keeps lightweight summaries (`WorkflowMetadata`) for fast indexing and pagination without scanning large instance graphs.
+### 2. Workspace Strategies
+Each workflow instance executes turns under a selected `WorkspaceStrategy` (`graph_agent/workspace_strategy.py`):
 
-### 3. Pi AI Agent Integration
-- **PiClient** invokes the Pi agent as an isolated subprocess in non-interactive JSON print
-  mode: `pi --mode json -p <prompt> --no-approve`.
-- Turns are **stateless and step-by-step**. Context carries across turns by propagating
-  `session_id` (`--session`, or `--fork` when a savepoint fork should branch the session
-  rather than continue it); the mapping lives in `workflow.data["__sessions"]`.
+1. **`WorktreeStrategy` (Default in Git repositories)**:
+   - Creates a dedicated Git worktree branch (`bpmn/run/<id>`) rooted at `.agents/worktrees/<id>`.
+   - Allows fully concurrent, isolated graph runs without filesystem collisions.
+   - **Auto-Merge on Clean Completion**: Automatically executes `git merge --no-ff bpmn/run/<id>` into the base branch upon successful completion if the working tree is clean. If dirty or in conflict, status becomes `merge_deferred` and surfaces in the TUI Inbox / web UI for manual resolution.
+2. **`InPlaceStrategy` (Default in non-Git directories)**:
+   - Executes turns directly in the workspace root directory.
+   - Enforces a per-workspace `asyncio.Lock` mutex to serialize executions and prevent conflicting edits.
+3. **`BlobStrategy` (Scratch / Template runs)**:
+   - Creates an ephemeral scratch directory and snapshots state as compressed `tar.zst` blobs in ZODB.
+
+### 3. Persistence Layer (ZODB Local to Workspace)
+- **WorkflowStore** manages ACID persistence backed by ZODB (`Data.fs`), local to `.agents/state/`.
+- Metastore tree maintains lightweight summaries (`WorkflowMetadata`) with indexing and pagination for fast querying without loading complete execution graphs.
+
+### 4. Pi AI Agent & Shell Harnesses
+- **PiClient**: Invokes the Pi agent as a non-interactive CLI subprocess (`pi --mode json -p <prompt>`).
+- Turns are **step-by-step**. Context propagates across turns via `session_id` (`--session`, or `--fork` when a savepoint fork branches the session), tracked in `workflow.data["__sessions"]`.
 - Standard 5-key JSON output contract:
   ```json
   {
@@ -64,58 +62,25 @@ flowchart TD
     "next_action": "continue"
   }
   ```
+- **ShellAdapter**: Executes declared shell commands inside the workspace as deterministic steps (e.g., compiling LaTeX or running build tools).
 
-### 4. Savepoints & Timeline Forking
+### 5. Savepoints & Timeline Forking
 - Automated savepoints captured at durable boundaries:
   - `before_harness`: Prior to launching an agent subprocess.
   - `after_harness`: Immediately upon successful completion of an agent step.
   - `human_wait`: When execution enters a `UserTask`.
-- Each savepoint carries an **independent copy of the workspace** as its own Blob, so a fork
-  resumes with exactly the files the agent had written by that point. Two forks from one
-  savepoint get independent workspaces and cannot disturb each other.
-- Any savepoint can be branched via `POST /instance/{id}/fork/{savepoint_id}`, duplicating the
-  workflow state and workspace blob into a new execution branch.
-- Because savepoints carry workspaces, a long-running instance grows. Retention is a
-  **deliberate manual purge** (`DELETE /instance/{id}/savepoints`), not an age or count policy:
-  only a person can judge which past states are still worth forking from.
+- Any savepoint can be branched via `POST /instance/{id}/fork/{savepoint_id}`, creating a new execution branch inheriting history.
 
-### 5. Human Tasks & FormJS
-- `UserTask` elements declare fields using `camunda:formData`.
-- Auto-mapped to FormJS JSON schema (`CAMUNDA_TO_FORMJS_TYPE`) and rendered via `@bpmn-io/form-js`.
+### 6. Terminal User Interface (TUI) & Daemon Client
+- **`DaemonClient`** (`graph_agent/tui/client.py`): Talks over HTTP REST and WebSocket to the local daemon, authenticated via the workspace loopback token in `.agents/runtime.json`.
+- **Textual Screens**:
+  - `Runs`: Live overview table of all runs.
+  - `RunDetail`: Timeline, execution logs, workflow variables, and savepoints.
+  - `Inbox`: Aggregates pending human tasks and deferred merges across all runs.
+  - `Form`: Native FormJS schema renderer.
+  - `Start`: Template picker and variable launcher.
+  - `Log`: Live streaming tail of workspace activity logs.
 
-### 6. Project processes and spawned children
-
-A **Project** is not a separate database entity — it is an ordinary long-running BPMN process
-(`workflows/project.bpmn`) that stays parked on a human task and spawns a child for each
-`spawn_requested` message it receives:
-
-```http
-POST /instance/{project_id}/message/spawn_requested
-Content-Type: application/json
-
-{ "payload": { "task_brief": "Audit the docs tree against shipped features" } }
-```
-
-Children come in two kinds, and the distinction is deliberate:
-
-| | CallActivity child | Event-subprocess child |
-| :--- | :--- | :--- |
-| Modelled as | `bpmn:callActivity` | `bpmn:subProcess triggeredByEvent="true"` |
-| Lifetime | bounded; the parent joins back on its result | unbounded; parent only needs it to have happened |
-| Parent while it runs | blocked at the call | stays open, keeps accepting more spawns |
-| Use when | the parent needs the result | the parent needs the work done, not the answer |
-
-Event-subprocess children are **nested inside the parent's workflow object**, so they share the
-root instance's workspace and appear inside the parent's savepoints. They are synchronised as
-child records (`parent_workflow_id`, and the parent's `__children` map) exactly like
-CallActivity children, so every per-instance route works on them.
-
-### 7. Concurrency and the shared workspace
-
-Parallel branches of one instance share a single workspace directory. A turn that repacks a
-workspace older than the one already stored is **refused** rather than silently overwriting a
-sibling's files: the task fails with a readable `failure_reason` and can be retried explicitly
-through `POST /instance/{id}/retry/{task_id}`. Nothing retries it automatically — an automatic
-retry would re-run against a workspace the turn never agreed on.
-
-This is an interim guard, not the end state; a per-branch worktree model is the intended fix.
+### 7. Bounded Turn Concurrency & Restart Durability
+- Concurrency bounded via `asyncio.Semaphore(max_parallel_turns)` in `jobs.dispatch`.
+- `recover_orphaned_workflows()` runs on daemon start to reclaim orphaned worktrees and mark abandoned in-flight tasks cleanly.

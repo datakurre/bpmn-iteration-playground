@@ -2,7 +2,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from app.registry import WorkflowRegistry
+from graph_agent.registry import WorkflowRegistry
 
 
 def test_registry_caching_and_invalidation() -> None:
@@ -114,12 +114,12 @@ def test_shipped_workflows_do_not_share_element_ids() -> None:
     """
     import collections
 
-    from app.xml_utils import safe_parse_xml
+    from graph_agent.xml_utils import safe_parse_xml
 
     ns = "{http://www.omg.org/spec/BPMN/20100524/MODEL}"
 
     owners: dict[str, set[str]] = collections.defaultdict(set)
-    for path in sorted(Path("workflows").glob("*.bpmn")):
+    for path in sorted(Path("graph_agent/data/workflows").glob("*.bpmn")):
         root = safe_parse_xml(str(path)).getroot()
         for element in root.iter():
             # BPMN model elements only; DI shapes and camunda form fields carry their own

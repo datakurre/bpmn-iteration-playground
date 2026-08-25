@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from app.adapters.sandbox_adapter import _SANDBOX_API_KEY_PLACEHOLDER, SandboxPiAdapter
-from app.adapters.sandbox_policy import build_agents_md
-from app.persistence import WorkflowStore
-from app.workflow_service import WorkflowService
+from graph_agent.adapters.sandbox_adapter import _SANDBOX_API_KEY_PLACEHOLDER, SandboxPiAdapter
+from graph_agent.adapters.sandbox_policy import build_agents_md
+from graph_agent.persistence import WorkflowStore
+from graph_agent.workflow_service import WorkflowService
 
 
 def test_build_agents_md_defaults() -> None:
@@ -222,7 +222,7 @@ print(json.dumps({{
     adapter = SandboxPiAdapter(executable=str(mock_sandbox))
     service = WorkflowService(store, pi_client=adapter)
 
-    state = await service.start("workflows/plan_and_execute.bpmn")
+    state = await service.start("graph_agent/data/workflows/plan_and_execute.bpmn")
     workflow_id = state["workflow_id"]
 
     async def _wait_jobs() -> None:

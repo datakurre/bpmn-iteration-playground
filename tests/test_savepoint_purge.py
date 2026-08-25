@@ -6,11 +6,11 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.workflow_service import WorkflowService
+from graph_agent.workflow_service import WorkflowService
 
 
 async def _start_and_wait(service: WorkflowService) -> dict[str, Any]:
-    started = await service.start("workflows/contract_review.bpmn", None, {"contract": "text"})
+    started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
     await asyncio.gather(*list(service.jobs.values()))
     return started
 

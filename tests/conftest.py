@@ -1,10 +1,10 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.server import create_app
-from app.persistence import WorkflowStore
-from app.pi_client import PiResult
-from app.workflow_service import WorkflowService
+from graph_agent.api.server import create_app
+from graph_agent.persistence import WorkflowStore
+from graph_agent.pi_client import PiResult
+from graph_agent.workflow_service import WorkflowService
 
 
 class FakePi:

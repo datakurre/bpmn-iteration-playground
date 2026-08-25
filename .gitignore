@@ -11,9 +11,14 @@ devenv.local.yaml
 # Environment & Data
 .env
 .env.local
-data/
+# Root-anchored: graph_agent/data/ is tracked package data (pi-demo, workspace_templates),
+# not the ZODB storage directory this is meant to ignore.
+/data/
 *.db
 *.zodb
+# This repo's own checkout is also a valid `graph-agent` workspace (running `graph-agent serve` or the
+# tests from here creates .agents/ at the repo root the same way it would in any project).
+/.agents/
 
 # Python
 __pycache__/
@@ -26,15 +31,15 @@ coverage/
 
 # Node
 node_modules/
-app/static/bpmn-modeler-bundle.js
-app/static/bpmn-viewer-bundle.js
-app/static/pages/
-app/static/tailwind.css
-app/static/diagram-js-minimap.css
-app/static/properties-panel.css
-app/static/bpmn-js-token-simulation.css
-app/static/bpmn-js-bpmnlint.css
-app/static/element-template-chooser.css
+graph_agent/static/bpmn-modeler-bundle.js
+graph_agent/static/bpmn-viewer-bundle.js
+graph_agent/static/pages/
+graph_agent/static/tailwind.css
+graph_agent/static/diagram-js-minimap.css
+graph_agent/static/properties-panel.css
+graph_agent/static/bpmn-js-token-simulation.css
+graph_agent/static/bpmn-js-bpmnlint.css
+graph_agent/static/element-template-chooser.css
 
 # Temporary & Verification Outputs
 *.log

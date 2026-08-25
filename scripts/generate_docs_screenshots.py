@@ -131,7 +131,7 @@ def build_scenario() -> dict[str, str]:
         "POST",
         "/workflow/start",
         {
-            "bpmn_path": "workflows/document_generation.bpmn",
+            "bpmn_path": "graph_agent/data/workflows/document_generation.bpmn",
             "process_id": "document_generation",
             "variables": {"topic": "ZODB savepoints and workspace blobs in Pi Workflow Studio"},
         },
@@ -157,7 +157,7 @@ def build_scenario() -> dict[str, str]:
         "POST",
         "/workflow/start",
         {
-            "bpmn_path": "workflows/document_generation.bpmn",
+            "bpmn_path": "graph_agent/data/workflows/document_generation.bpmn",
             "process_id": "document_generation",
             "variables": {"topic": "Savepoint retention and manual purge"},
         },
@@ -190,7 +190,7 @@ def build_scenario() -> dict[str, str]:
         "POST",
         "/workflow/start",
         {
-            "bpmn_path": "workflows/project.bpmn",
+            "bpmn_path": "graph_agent/data/workflows/project.bpmn",
             "process_id": "project",
             "variables": {"project_name": "Docs refresh"},
         },

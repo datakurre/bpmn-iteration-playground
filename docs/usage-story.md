@@ -54,7 +54,7 @@ The **Studio Dashboard** serves as the operational hub where team members initia
 
 ![Studio Dashboard](images/studio-dashboard.png)
 
-- **Template Selection**: Choose `workflows/document_generation.bpmn`.
+- **Template Selection**: Choose `graph_agent/data/workflows/document_generation.bpmn`.
 - **Process Parameters**:
   ```json
   {

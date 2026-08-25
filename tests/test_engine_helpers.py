@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-from app.engine import WorkflowRunner, resolve_input
+from graph_agent.engine import WorkflowRunner, resolve_input
 
 
 class FakeTaskSpec:

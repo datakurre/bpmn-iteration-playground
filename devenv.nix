@@ -50,7 +50,7 @@
   };
 
   processes.api = {
-    exec = "PI_EXECUTABLE=${config.devenv.root}/node_modules/.bin/pi PI_OFFLINE=0 uvicorn app.api.server:app --host 0.0.0.0 --port 8000";
+    exec = "PI_EXECUTABLE=${config.devenv.root}/node_modules/.bin/pi PI_OFFLINE=0 uvicorn graph_agent.api.server:app --host 0.0.0.0 --port 8000";
     process-compose.readiness_probe = {
       http_get = {
         host = "127.0.0.1";
@@ -60,12 +60,12 @@
     };
   };
 
-  scripts.test.exec = "uv run ruff check . && uv run pytest -q --cov=app --cov-report=term-missing --cov-report=html && uv run mypy app/ && npm run typecheck && npm test";
-  scripts.lint.exec = "uv run ruff check . && uv run mypy app/ && npm run typecheck";
+  scripts.test.exec = "uv run ruff check . && uv run pytest -q --cov=graph_agent --cov-report=term-missing --cov-report=html && uv run mypy graph_agent/ && npm run typecheck && npm test";
+  scripts.lint.exec = "uv run ruff check . && uv run mypy graph_agent/ && npm run typecheck";
   scripts.lint-fix.exec = "uv run ruff check --fix .";
   scripts.demo.exec = ''
-    PI_EXECUTABLE="${config.devenv.root}/scripts/pi-demo" \
-      uvicorn app.api.server:app --host 0.0.0.0 --port 8000
+    PI_EXECUTABLE="${config.devenv.root}/graph_agent/data/pi-demo" \
+      uvicorn graph_agent.api.server:app --host 0.0.0.0 --port 8000
   '';
 
   enterTest = ''

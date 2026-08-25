@@ -1,6 +1,6 @@
 # Authoring BPMN Workflows
 
-All executable workflows are standard BPMN 2.0 XML files placed in `workflows/`.
+All executable workflows are standard BPMN 2.0 XML files placed in `graph_agent/data/workflows/`.
 
 ## Workflow Anatomy
 
@@ -67,7 +67,7 @@ All executable workflows are standard BPMN 2.0 XML files placed in `workflows/`.
 ### Input Parameters — feeding data into a prompt
 
 `camunda:inputParameter` builds the values an agent turn sees. Values are resolved by
-`resolve_input()` (`app/engine.py`), a plain dict/list lookup with string interpolation —
+`resolve_input()` (`graph_agent/engine.py`), a plain dict/list lookup with string interpolation —
 **no `eval`, no script engine**, so nothing in workflow data can execute.
 
 ```xml
@@ -133,7 +133,7 @@ caller's data, so a called process that expects `${subject}` and gets nothing is
 `inputParameter` on the call activity, not a bug in the called process. Output works the same
 way in reverse: only the called process's own declared `outputParameter`s (from its own tasks)
 are visible to `outputParameter`s on the call activity, resolved against the called process's
-instance-wide data. `workflows/composed_delivery.bpmn` calling `workflows/agent_review_cycle.bpmn`
+instance-wide data. `graph_agent/data/workflows/composed_delivery.bpmn` calling `graph_agent/data/workflows/agent_review_cycle.bpmn`
 is the worked example. See `docs/variable-scoping-plan.md` for the full model, including which
 element types this does *not* yet cover (embedded/event subprocesses).
 
@@ -154,7 +154,7 @@ instance per message received, while the parent stays open:
 ```
 
 Deliver a spawn with `POST /instance/{id}/message/spawn_requested` and a JSON `payload`; the
-payload lands on the new child's data. `workflows/project.bpmn` is a working example.
+payload lands on the new child's data. `graph_agent/data/workflows/project.bpmn` is a working example.
 
 ### Putting a build tool in the loop
 
@@ -179,7 +179,7 @@ rather than something the agent is trusted to have run:
 
 `fail_on_error="false"` is what makes the failure branchable: the turn completes even on a
 non-zero exit, publishing `build_status = 'failed'`, so a gateway can route on it instead of
-parking the instance in `failed`. `workflows/beamer_slides.bpmn` is a working example — a
+parking the instance in `failed`. `graph_agent/data/workflows/beamer_slides.bpmn` is a working example — a
 LaTeX error reaches a human diagnosis gate holding `${build_log}`, who either hands it back
 to the slide agent or abandons the deck, and the human deck review is only reached by a deck
 that compiled.

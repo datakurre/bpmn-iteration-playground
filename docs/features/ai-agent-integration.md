@@ -6,7 +6,7 @@ Pi Workflow Studio executes local AI agents through a stateless, non-interactive
 
 ## 1. Stateless Turn Protocol
 
-The communication between the FastAPI backend and the Pi agent process is implemented in [`app/pi_client.py`](../../app/pi_client.py):
+The communication between the FastAPI backend and the Pi agent process is implemented in [`graph_agent/pi_client.py`](../../graph_agent/pi_client.py):
 
 ```
 FastAPI (PiClient)                      Pi Subprocess (node_modules/.bin/pi)
@@ -68,16 +68,16 @@ ever one credential for the proxy to inject.
 
 ---
 
-## 3. Deterministic Mock Fallback (`scripts/pi-demo`)
+## 3. Deterministic Mock Fallback (`graph_agent/data/pi-demo`)
 
-For local testing, offline development, or environments without live model credentials, the system includes an automatic fallback to `scripts/pi-demo`:
+For local testing, offline development, or environments without live model credentials, the system includes an automatic fallback to `graph_agent/data/pi-demo`:
 
 ```bash
 # Force offline deterministic mode
 export PI_OFFLINE=1
 ```
 
-When offline or when the remote model is unavailable, `PiClient` automatically routes execution to `scripts/pi-demo`, returning a validated mock analysis instantly and allowing the BPMN workflow to continue seamlessly.
+When offline or when the remote model is unavailable, `PiClient` automatically routes execution to `graph_agent/data/pi-demo`, returning a validated mock analysis instantly and allowing the BPMN workflow to continue seamlessly.
 
 ---
 

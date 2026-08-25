@@ -1,9 +1,9 @@
 import asyncio
 
-from app.api.server import create_app
-from app.persistence import WorkflowStore
-from app.pi_client import PiResult
-from app.workflow_service import WorkflowService
+from graph_agent.api.server import create_app
+from graph_agent.persistence import WorkflowStore
+from graph_agent.pi_client import PiResult
+from graph_agent.workflow_service import WorkflowService
 
 
 class FakePi:
@@ -35,7 +35,7 @@ def test_history_instances_and_savepoint_detail() -> None:
         assert service.history_instances() == []
 
         # 2. Start a workflow and complete human task
-        started = await service.start("workflows/contract_review.bpmn", None, {"contract": "text"})
+        started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
         await asyncio.gather(*service.jobs.values())
 
         review_task = next(task for task in service.state(started["workflow_id"])["tasks"] if task["bpmn_id"] == "ServiceTask_Review")
@@ -74,7 +74,7 @@ def test_history_instances_and_savepoint_detail() -> None:
         assert service.history_instances() == []
 
         # 7. Verify clear instances
-        await service.start("workflows/contract_review.bpmn", None, {"contract": "text 2"})
+        await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text 2"})
         assert len(service.history_instances()) == 1
         assert await service.clear_instances() == 1
         assert service.history_instances() == []

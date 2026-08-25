@@ -5,16 +5,16 @@ from typing import Any
 from SpiffWorkflow.bpmn.workflow import BpmnWorkflow
 from SpiffWorkflow.task import TaskState
 
-from app.engine import WorkflowRunner
+from graph_agent.engine import WorkflowRunner
 
 
 def _load_any_workflow() -> BpmnWorkflow:
-    wf, _ = WorkflowRunner().load_workflow("workflows/contract_review.bpmn")
+    wf, _ = WorkflowRunner().load_workflow("graph_agent/data/workflows/contract_review.bpmn")
     return wf
 
 
 def _workflow_parked_on_message_catch() -> BpmnWorkflow:
-    wf, _ = WorkflowRunner().load_workflow("workflows/external_gate.bpmn")
+    wf, _ = WorkflowRunner().load_workflow("graph_agent/data/workflows/external_gate.bpmn")
     wf.do_engine_steps()
     for _ in range(20):
         if wf.waiting_events():
@@ -30,7 +30,7 @@ def _workflow_parked_on_message_catch() -> BpmnWorkflow:
 
 
 def test_migrate_reattaches_missing_320_attributes() -> None:
-    from app.migrations import migrate_workflow_object
+    from graph_agent.migrations import migrate_workflow_object
 
     wf = _load_any_workflow()
     del wf.event_manager
@@ -46,7 +46,7 @@ def test_migrate_reattaches_missing_320_attributes() -> None:
 
 
 def test_migrate_reregisters_waiting_catch_events() -> None:
-    from app.migrations import migrate_workflow_object
+    from graph_agent.migrations import migrate_workflow_object
 
     wf = _workflow_parked_on_message_catch()
     assert wf.waiting_events()
@@ -57,7 +57,7 @@ def test_migrate_reregisters_waiting_catch_events() -> None:
 
 
 def test_migrate_is_idempotent_on_fresh_workflow() -> None:
-    from app.migrations import migrate_workflow_object
+    from graph_agent.migrations import migrate_workflow_object
 
     wf = _load_any_workflow()
     wf.do_engine_steps()
@@ -74,7 +74,7 @@ def test_store_load_migrates_legacy_workflow(store: Any) -> None:
     store.save("wf1", {
         "workflow_id": "wf1",
         "process_id": "external_gate",
-        "bpmn_path": "workflows/external_gate.bpmn",
+        "bpmn_path": "graph_agent/data/workflows/external_gate.bpmn",
         "status": "running",
         "workflow": wf,
         "data": {},

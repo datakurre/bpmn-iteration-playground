@@ -1,6 +1,6 @@
 # BPMN 2.0 Orchestration & ZODB Persistence
 
-Pi Workflow Studio combines the formal execution semantics of **BPMN 2.0** with durable **ZODB ACID storage**, ensuring that enterprise workflows, AI agent invocations, and human decisions proceed reliably without transient failures or state loss.
+**graph-agent** combines the formal execution semantics of **BPMN 2.0** with durable **ZODB ACID storage** local to the workspace (`.agents/state/Data.fs`), ensuring that long-running workflows, AI agent turns, and human decisions proceed reliably across process restarts.
 
 ---
 
@@ -8,22 +8,23 @@ Pi Workflow Studio combines the formal execution semantics of **BPMN 2.0** with 
 
 ```
 +-------------------------------------------------------------+
-|                      FastAPI Web Layer                      |
+|                     FastAPI Local Daemon                    |
 +-------------------------------------------------------------+
                               |
                               v
 +-------------------------------------------------------------+
 |                       WorkflowService                       |
 |  - Manages SpiffWorkflow engine instances                   |
-|  - Synchronizes task and workflow variable scope            |
-|  - Dispatches agent turns via the AdapterRegistry           |
-|  - Creates and manages savepoint checkpoints                |
+|  - Selects WorkspaceStrategy (Worktree / InPlace / Blob)    |
+|  - Synchronizes task scope via outputParameters             |
+|  - Dispatches turns via AdapterRegistry                     |
+|  - Captures durable SavePoint checkpoints                   |
 +-------------------------------------------------------------+
          |                                           |
          v                                           v
 +-----------------------+                 +-----------------------+
 |     SpiffWorkflow     |                 |     WorkflowStore     |
-|   (BPMN 2.0 Engine)   |                 |     (ZODB / File)     |
+|   (BPMN 2.0 Engine)   |                 | (.agents/state/Data.fs|
 +-----------------------+                 +-----------------------+
 ```
 
@@ -31,46 +32,27 @@ Pi Workflow Studio combines the formal execution semantics of **BPMN 2.0** with 
 
 ## 1. BPMN Process Definition
 
-The contract review workflow is modeled in standard BPMN 2.0 XML located at `workflows/contract_review.bpmn`:
+Workflows are standard BPMN 2.0 XML files placed in `.agents/workflows/` (or bundled templates):
 
-1. **Start Event (`StartEvent_1`)**: Accepts the initial process payload (e.g. `contract` text).
-2. **Service Task (`ServiceTask_Extract`)**: Delegates contract clause extraction and risk analysis to the local Pi agent.
-3. **Exclusive Gateway (`ExclusiveGateway_Success`)**: Evaluates `agent_status == 'success'` to branch execution:
-   - **Success Branch**: Routes to human review user task (`ServiceTask_Review`).
-   - **Failure Branch**: Routes to failure handling review task (`ServiceTask_FailureReview`).
-4. **User Task (`ServiceTask_Review`)**: Waits for human operator review and decision (`approved` / `rejected`).
-5. **End Event (`EndEvent_1`)**: Completes the workflow execution.
+1. **Start Event**: Accepts the initial process payload (e.g. `goal` text).
+2. **Service Task**: Delegates execution to an adapter (`harness_type="pi_agent"` or `shell`).
+3. **Exclusive Gateway**: Evaluates boolean conditions (e.g. `agent_status == 'success'` or `plan_status == 'success'`) to branch execution.
+4. **User Task**: Waits for human review and decisions with native FormJS schemas.
+5. **End Event**: Completes the workflow run, triggering auto-merge under `WorktreeStrategy`.
 
 ---
 
 ## 2. ZODB ACID Persistence
 
-State persistence is managed via [`app/persistence.py`](../../app/persistence.py):
+State persistence is managed via [`graph_agent/persistence.py`](../../graph_agent/persistence.py):
 
-- **Storage Engine**: `ZODB.FileStorage` writing durable transaction logs to `data/workflows.fs`.
+- **Storage Engine**: `ZODB.FileStorage` writing transaction logs to `.agents/state/Data.fs`.
 - **In-Memory Mode**: Supported for testing via `WorkflowStore(":memory:")`.
-- **ACID Transactions**: Every workflow state transition, save point creation, and task completion commits cleanly through `transaction.commit()`.
-- **Process Isolation**: Workflows can be paused, restarted, and inspected at any point without memory corruption.
-
-```python
-from app.persistence import WorkflowStore
-
-store = WorkflowStore("data/workflows.fs")
-store.save(workflow_id, instance_state)
-state = store.load(workflow_id)
-```
+- **ACID Transactions**: Every workflow state transition, savepoint creation, and task completion commits cleanly through `transaction.commit()`.
+- **Metadata Indexing**: Lightweight metadata records (`WorkflowMetadata`) support rapid pagination and history queries without loading complete SpiffWorkflow object graphs.
 
 ---
 
-## 3. Scope & State Synchronization
+## 3. Scoped Variable Publication
 
-SpiffWorkflow evaluates expressions on sequence flows (such as `agent_status == 'success'`) against the active task's data scope.
-
-When an AI agent completes, the service synchronizes both the task's data dictionary and the parent workflow's global data dictionary:
-
-```python
-task.data.update(agent_result_data)
-workflow.data.update(agent_result_data)
-```
-
-This guarantees seamless gateway routing and variable visibility across all downstream BPMN nodes.
+Service tasks publish variables to the workflow exclusively through declared `camunda:outputParameters`. This prevents parallel agent branches from overwriting each other's verdicts and isolates task telemetry to `job` records while publishing cleanly to `task.data` and `workflow.data`.
