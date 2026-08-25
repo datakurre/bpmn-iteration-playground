@@ -45,9 +45,16 @@ It:
 ## Architecture & Module Map
 
 ```
-app/
+bpmn_agent/
+  cli.py             – `bpmn` console-script entry point: init/serve/status/open/stop
+  agents_root.py     – Workspace: `.agents/` root discovery and directory layout
+  daemon.py          – `bpmn serve`'s free-port bind, runtime.json handshake, is_daemon_alive
+  workspace_strategy.py – WorkspaceStrategy: BlobStrategy / WorktreeStrategy / InPlaceStrategy
+                        and select_strategy() -- see AGENTS.md §4d
   api/
     server.py        – FastAPI app factory: lifespan, static mounts, includes routers/ below
+    security.py      – OriginHostGuardMiddleware: blocks a page on another origin from
+                        driving the daemon (HTTP + WebSocket)
     ui.py            – Server-side HTML page renderers (inline HTML)
     routers/         – One APIRouter per OpenAPI tag; each builds from `get_service`/
                         `get_project_service` closures passed in by server.py
@@ -338,6 +345,52 @@ process on `localhost:8000` and for `agent-sandbox`/container markers rather tha
 - **Output contract**: mirrors the agent JSON contract (`status`, `summary`, `findings`, `artifacts`, `next_action`) plus `exit_code`, `stdout`, `stderr`, `log`, so the same `camunda:outputParameter` idiom works for agent and non-agent tasks alike.
 - **Workspace templates**: `template="<name>"` copies `bpmn_agent/data/workspace_templates/<name>/` into the instance workspace via the `prepare_workspace` hook, **never overwriting existing files** — so agent edits survive later turns re-running the scaffold. A task declaring only `template` (no `command`) is a pure scaffold step.
 - **Streaming**: each output line is emitted as a `shell_output` event through the same `on_event` channel Pi turns use, so a long build tails live in the instance UI. Output is chunk-read, not `readline()`-read, because a LaTeX log line can exceed `StreamReader`'s 64 KiB limit.
+
+## 4d. Workspace Execution Strategies
+
+Phase 3 of the meta-agent refactor (`docs/meta-agent-refactor-plan.md`) — where an agent
+turn's files actually live is a `WorkspaceStrategy`
+(`bpmn_agent/workspace_strategy.py`), not one hardcoded behaviour:
+
+- **`BlobStrategy`** — the original behaviour and the only strategy when a
+  `WorkflowService` has no `Workspace` attached (every test in this suite, and any
+  library usage that hasn't opted in): an ephemeral scratch dir unpacked from a ZODB blob
+  per turn, packed back with an optimistic-concurrency version check
+  (`WorkspaceConflictError`) on release. The only correct choice for a template that
+  wants an empty directory to scaffold into (`beamer_slides.bpmn` declares
+  `workspace_mode=blob` on every task for exactly this reason — its `template="beamer"`
+  step would be nonsensical against a full project checkout).
+- **`WorktreeStrategy`** — automatic once a real `Workspace` is attached (a genuine
+  `bpmn serve`) and it's a git checkout: a real `git worktree` per run
+  (`.agents/worktrees/<workflow_id>`, branch `bpmn/run/<workflow_id>`), off HEAD. A
+  savepoint is a commit on that branch (`workspace_ref`, a SHA); fork is a new worktree
+  at that commit on its own new branch (`WorktreeStrategy.restore`) — an isolated,
+  mergeable checkout, not a blob copy. This is the default for the same reason it is also
+  the safer one: `.agents/` is never git-tracked, so it is structurally absent from every
+  worktree checkout regardless of what an agent turn does inside it.
+- **`InPlaceStrategy`** — automatic when the workspace isn't a git repo (or an explicit
+  opt-in). The launch directory itself, serialised by a per-workspace-root
+  `asyncio.Lock` so concurrent turns don't collide — several graphs can still park,
+  think, and wait on humans concurrently, but only one harness holds the tree at a time.
+  `supports_snapshot = False`: savepoints still capture graph state (retry, resume,
+  history), just no file-level checkpoint, and a fork attempt is rejected with a typed
+  409 (`{"error": "workspace_snapshot_unsupported", "mode": "in_place"}`) rather than
+  silently handing the new instance an empty workspace.
+
+**Security posture, stated plainly**: under `InPlaceStrategy`, an agent turn's `cwd` *is*
+`workspace.root` — which contains `.agents/` as a real, ordinary subdirectory (ZODB
+state, the running daemon's bearer token in `runtime.json`, other runs' worktrees). A
+non-sandboxed adapter (`PiAdapter`, `ShellAdapter`) has full read/write filesystem access
+from that `cwd`, the same as any traditional coding agent — there is no code-level
+boundary keeping a turn out of `.agents/` in this mode, only the agent's own restraint. A
+sandboxed adapter's `--workspace` mount is similarly scoped to whatever `cwd` it's handed,
+so it inherits the same exposure under in-place mode (`agent-sandbox` mounts the directory
+it's launched in wholesale; it has no sub-path exclusion flag to carve `.agents/` back
+out). This is exactly why worktree is the default wherever git makes it possible — a
+worktree's checkout structurally never contains `.agents/` at all, sandboxed or not — and
+why `bpmn init` prints an explicit warning (see `bpmn_agent/cli.py`'s `_cmd_init`) the
+moment it detects a non-git workspace, rather than letting a user discover this by
+reading code.
 
 ## 5. Auth & Security
 

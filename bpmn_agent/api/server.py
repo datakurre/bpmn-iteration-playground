@@ -58,7 +58,7 @@ def create_app(service: WorkflowService | None = None, workspace: Workspace | No
         nonlocal _service
         if _service is None:
             _workspace.ensure()
-            _service = WorkflowService(WorkflowStore(str(_workspace.state_dir / "Data.fs")))
+            _service = WorkflowService(WorkflowStore(str(_workspace.state_dir / "Data.fs")), workspace=_workspace)
         return _service
 
     def get_project_service() -> ProjectService:

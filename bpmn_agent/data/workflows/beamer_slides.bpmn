@@ -11,6 +11,7 @@
         <camunda:properties>
           <camunda:property name="harness_type" value="pi_agent" />
           <camunda:property name="agent_role" value="presentation_planner" />
+          <camunda:property name="workspace_mode" value="blob" />
         </camunda:properties>
         <camunda:inputOutput>
           <camunda:inputParameter name="brief">Plan a ${duration_minutes}-minute talk on ${topic} for ${audience}. Write the agreed structure to outline.md in the workspace: one section per major beat, with the intended slide titles and the single point each slide must land. Do not write LaTeX yet.</camunda:inputParameter>
@@ -53,6 +54,7 @@
         <camunda:properties>
           <camunda:property name="harness_type" value="shell" />
           <camunda:property name="template" value="beamer" />
+          <camunda:property name="workspace_mode" value="blob" />
         </camunda:properties>
         <camunda:inputOutput>
           <camunda:outputParameter name="scaffold_status">${status}</camunda:outputParameter>
@@ -69,6 +71,7 @@
         <camunda:properties>
           <camunda:property name="harness_type" value="pi_agent" />
           <camunda:property name="agent_role" value="beamer_slide_author" />
+          <camunda:property name="workspace_mode" value="blob" />
         </camunda:properties>
         <camunda:inputOutput>
           <camunda:inputParameter name="brief">Edit slides.tex so it realises outline.md as a ${duration_minutes}-minute Metropolis deck for ${audience}. Keep the metropolis theme and the XeLaTeX-compatible preamble; build with `make pdf` yourself before reporting. Report artifacts you changed.</camunda:inputParameter>
@@ -95,6 +98,7 @@
           <camunda:property name="artifacts" value="slides.pdf" />
           <camunda:property name="timeout" value="1800" />
           <camunda:property name="fail_on_error" value="false" />
+          <camunda:property name="workspace_mode" value="blob" />
         </camunda:properties>
         <camunda:inputOutput>
           <camunda:outputParameter name="build_status">${status}</camunda:outputParameter>
@@ -151,6 +155,7 @@
           <camunda:property name="command" value="make images" />
           <camunda:property name="artifacts" value="images/*.png, slides.pdf" />
           <camunda:property name="timeout" value="600" />
+          <camunda:property name="workspace_mode" value="blob" />
         </camunda:properties>
         <camunda:inputOutput>
           <camunda:outputParameter name="images_status">${status}</camunda:outputParameter>

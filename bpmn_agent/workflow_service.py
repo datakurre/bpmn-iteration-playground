@@ -17,6 +17,7 @@ from bpmn_agent.adapters.base import AdapterCapabilities, AgentResult, BaseAdapt
 from bpmn_agent.adapters.pi_adapter import PiAdapter
 from bpmn_agent.adapters.registry import AdapterRegistry
 from bpmn_agent.adapters.sandbox_adapter import SandboxPiAdapter
+from bpmn_agent.agents_root import Workspace
 from bpmn_agent.engine import WorkflowRunner, resolve_output_mapping
 from bpmn_agent.events import EventBus
 from bpmn_agent.orchestration import children, jobs, savepoints
@@ -66,8 +67,16 @@ class WorkflowService:
         store: WorkflowStore,
         pi_client: Any = None,
         adapter_registry: AdapterRegistry | None = None,
+        workspace: Workspace | None = None,
     ) -> None:
         self.store = store
+        # None (the default -- every existing caller that hasn't opted in, including this
+        # whole test suite) means turns always run against BlobStrategy's ephemeral
+        # scratch directories, exactly as before. Only a caller that explicitly hands
+        # this service a real Workspace (create_app(), for a genuine `bpmn serve`) gets
+        # worktree-by-default -- see workspace_strategy.select_strategy's docstring for
+        # why guessing one from the current directory here would be wrong.
+        self.workspace = workspace
         self.runner = WorkflowRunner()
         self.registry = adapter_registry or AdapterRegistry()
         self.events = EventBus(store)
@@ -176,7 +185,7 @@ class WorkflowService:
     def _save_point_summary(point: dict[str, Any]) -> dict[str, Any]:
         return {key: value for key, value in point.items() if key != "workflow"}
 
-    def _add_save_point(
+    async def _add_save_point(
         self,
         workflow_id: str,
         record: dict[str, Any],
@@ -186,7 +195,7 @@ class WorkflowService:
         resume_action: str,
         key_suffix: str = "",
     ) -> None:
-        savepoints.add_save_point(self, workflow_id, record, workflow, task, phase, resume_action, key_suffix)
+        await savepoints.add_save_point(self, workflow_id, record, workflow, task, phase, resume_action, key_suffix)
 
     @staticmethod
     def _parent_scope_id(task: Any) -> str | None:
@@ -499,7 +508,7 @@ class WorkflowService:
             job["generation"] = int(job.get("generation", 0)) + 1
             job.pop("conflict", None)
             record["status"] = "retry_requested"
-            self._add_save_point(
+            await self._add_save_point(
                 workflow_id,
                 record,
                 workflow,

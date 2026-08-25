@@ -66,9 +66,13 @@ def _cmd_init(workspace_root: Path | None) -> None:
     print(f"  .agents/workflows/: {copied} template(s) added, {skipped} already present")
     if not workspace.is_git:
         print(
-            "  Note: this directory isn't a git repository. Savepoints and retries still "
-            "work, but a savepoint fork won't be able to restore the workspace files it "
-            "captured -- run `git init` here to enable that."
+            "  Note: this directory isn't a git repository, so agent turns will run "
+            "in-place -- directly in this directory, one at a time -- rather than in an "
+            "isolated git worktree. Savepoints and retries still work, but a savepoint "
+            "fork won't be able to restore the workspace files it captured. In-place "
+            "mode also gives an agent turn read/write access to .agents/ itself (this "
+            "workspace's state and its daemon's runtime token), not just your project "
+            "files -- run `git init` here to switch to the isolated worktree mode."
         )
 
 

@@ -14,6 +14,7 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from bpmn_agent.workspace_strategy import WorkspaceSnapshotUnsupportedError, WorktreeStrategy
 from bpmn_agent.ws import manager as ws_manager
 
 if TYPE_CHECKING:
@@ -43,6 +44,14 @@ async def fork(
             )
         if point is None or point.get("workflow") is None:
             raise KeyError(save_point_id)
+        # An in-place-sourced savepoint (InPlaceStrategy, supports_snapshot=False) carries
+        # no workspace copy at all -- forking it would silently hand the new instance an
+        # empty workspace instead of failing loudly, so reject it before doing anything
+        # else. supports_snapshot defaults True (see SavePointSnapshot): every savepoint
+        # persisted before this field existed was captured in the blob-only world, where
+        # a snapshot always meant "yes, restorable".
+        if not point.get("supports_snapshot", True):
+            raise WorkspaceSnapshotUnsupportedError("in_place")
         workflow = copy.deepcopy(point["workflow"])
         source_save_points = copy.deepcopy(source.get("save_points", []))
         source_bpmn_path = source["bpmn_path"]
@@ -54,6 +63,17 @@ async def fork(
         task.complete()
         workflow.do_engine_steps()
     fork_id = uuid.uuid4().hex
+
+    # A WorktreeStrategy savepoint's checkpoint is a commit, not a blob: materialise a
+    # new worktree at that commit, on its own branch, rather than passing a blob through.
+    # workspace_ref and workspace_blob are mutually exclusive (see savepoints.py), so at
+    # most one of these branches ever does anything.
+    workspace_ref = point.get("workspace_ref")
+    if workspace_ref is not None:
+        if service.workspace is None:
+            raise WorkspaceSnapshotUnsupportedError("worktree")
+        await WorktreeStrategy(service.workspace).restore(workspace_ref, fork_id)
+
     record = service.runner.record(
         fork_id,
         workflow,
@@ -67,6 +87,8 @@ async def fork(
         forked_from_save_point=save_point_id,
         # load_save_point() already hands back a standalone Blob copy, independent
         # of the savepoint's own stored blob -- no need to duplicate it again here.
+        # None for a worktree-sourced fork (its new worktree, not a blob, is the
+        # restored workspace) and for one taken before any workspace existed yet.
         workspace_blob=point.get("workspace_blob"),
         parent_workflow_id=point.get("parent_workflow_id"),
     )
