@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from app.adapters.sandbox_adapter import _SANDBOX_API_KEY_PLACEHOLDER, SandboxPiAdapter
-from app.adapters.sandbox_policy import build_agents_md
-from app.persistence import WorkflowStore
-from app.workflow_service import WorkflowService
+from bpmn_agent.adapters.sandbox_adapter import _SANDBOX_API_KEY_PLACEHOLDER, SandboxPiAdapter
+from bpmn_agent.adapters.sandbox_policy import build_agents_md
+from bpmn_agent.persistence import WorkflowStore
+from bpmn_agent.workflow_service import WorkflowService
 
 
 def test_build_agents_md_defaults() -> None:

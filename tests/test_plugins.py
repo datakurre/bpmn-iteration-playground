@@ -1,11 +1,11 @@
 import asyncio
 from typing import Any
 
-from app.adapters.base import AgentResult, BaseAdapter
-from app.adapters.mock_adapter import MockAdapter
-from app.adapters.registry import AdapterRegistry
-from app.persistence import WorkflowStore
-from app.workflow_service import WorkflowService
+from bpmn_agent.adapters.base import AgentResult, BaseAdapter
+from bpmn_agent.adapters.mock_adapter import MockAdapter
+from bpmn_agent.adapters.registry import AdapterRegistry
+from bpmn_agent.persistence import WorkflowStore
+from bpmn_agent.workflow_service import WorkflowService
 
 
 class CustomSecurityAdapter(BaseAdapter):

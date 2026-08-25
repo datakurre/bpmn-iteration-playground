@@ -2,7 +2,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from app.registry import WorkflowRegistry
+from bpmn_agent.registry import WorkflowRegistry
 
 
 def test_registry_caching_and_invalidation() -> None:
@@ -114,7 +114,7 @@ def test_shipped_workflows_do_not_share_element_ids() -> None:
     """
     import collections
 
-    from app.xml_utils import safe_parse_xml
+    from bpmn_agent.xml_utils import safe_parse_xml
 
     ns = "{http://www.omg.org/spec/BPMN/20100524/MODEL}"
 

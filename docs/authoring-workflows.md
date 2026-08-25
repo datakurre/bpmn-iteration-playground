@@ -67,7 +67,7 @@ All executable workflows are standard BPMN 2.0 XML files placed in `workflows/`.
 ### Input Parameters — feeding data into a prompt
 
 `camunda:inputParameter` builds the values an agent turn sees. Values are resolved by
-`resolve_input()` (`app/engine.py`), a plain dict/list lookup with string interpolation —
+`resolve_input()` (`bpmn_agent/engine.py`), a plain dict/list lookup with string interpolation —
 **no `eval`, no script engine**, so nothing in workflow data can execute.
 
 ```xml

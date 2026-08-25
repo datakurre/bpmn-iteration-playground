@@ -102,9 +102,9 @@ wheels = [
 ]
 
 [[package]]
-name = "bpmn-ai-starter"
+name = "bpmn-agent"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "defusedxml" },
     { name = "fastapi" },

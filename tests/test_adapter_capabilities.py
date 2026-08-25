@@ -6,13 +6,13 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.adapters.base import AdapterCapabilities, AgentResult, BaseAdapter, resolve_timeout
-from app.adapters.registry import AdapterRegistry
-from app.adapters.shell_adapter import ShellAdapter
-from app.api.server import create_app
-from app.persistence import WorkflowStore
-from app.pi_client import PiResult
-from app.workflow_service import WorkflowService
+from bpmn_agent.adapters.base import AdapterCapabilities, AgentResult, BaseAdapter, resolve_timeout
+from bpmn_agent.adapters.registry import AdapterRegistry
+from bpmn_agent.adapters.shell_adapter import ShellAdapter
+from bpmn_agent.api.server import create_app
+from bpmn_agent.persistence import WorkflowStore
+from bpmn_agent.pi_client import PiResult
+from bpmn_agent.workflow_service import WorkflowService
 
 BEAMER = "workflows/beamer_slides.bpmn"
 BRIEF = {"topic": "adapters", "audience": "engineers", "duration_minutes": 10}
@@ -95,7 +95,7 @@ def test_plugin_importing_a_builtin_adapter_does_not_re_register_it(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     plugin = tmp_path / "importer.py"
-    plugin.write_text("from app.adapters.shell_adapter import ShellAdapter\n")
+    plugin.write_text("from bpmn_agent.adapters.shell_adapter import ShellAdapter\n")
     monkeypatch.setenv("ADAPTER_PLUGINS", str(tmp_path))
 
     registry = AdapterRegistry(auto_discover=False)

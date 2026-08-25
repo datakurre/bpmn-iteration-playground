@@ -25,15 +25,15 @@ help:
 	@echo "  make clean            - Remove Python and pytest cache files"
 
 watch:
-	$(UV) run uvicorn app.api.server:app --reload --host $(HOST) --port $(PORT) 2>&1 | tee $(WATCH_LOG)
+	$(UV) run uvicorn bpmn_agent.api.server:app --reload --host $(HOST) --port $(PORT) 2>&1 | tee $(WATCH_LOG)
 
 run:
-	$(UV) run uvicorn app.api.server:app --host $(HOST) --port $(PORT)
+	$(UV) run uvicorn bpmn_agent.api.server:app --host $(HOST) --port $(PORT)
 
 start: run
 
 demo:
-	PI_EXECUTABLE="$(CURDIR)/scripts/pi-demo" $(UV) run uvicorn app.api.server:app --reload --host $(HOST) --port $(PORT)
+	PI_EXECUTABLE="$(CURDIR)/bpmn_agent/data/pi-demo" $(UV) run uvicorn bpmn_agent.api.server:app --reload --host $(HOST) --port $(PORT)
 
 lint:
 	devenv shell -- lint

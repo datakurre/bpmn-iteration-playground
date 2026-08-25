@@ -11,7 +11,9 @@ devenv.local.yaml
 # Environment & Data
 .env
 .env.local
-data/
+# Root-anchored: bpmn_agent/data/ is tracked package data (pi-demo, workspace_templates),
+# not the ZODB storage directory this is meant to ignore.
+/data/
 *.db
 *.zodb
 
@@ -26,15 +28,15 @@ coverage/
 
 # Node
 node_modules/
-app/static/bpmn-modeler-bundle.js
-app/static/bpmn-viewer-bundle.js
-app/static/pages/
-app/static/tailwind.css
-app/static/diagram-js-minimap.css
-app/static/properties-panel.css
-app/static/bpmn-js-token-simulation.css
-app/static/bpmn-js-bpmnlint.css
-app/static/element-template-chooser.css
+bpmn_agent/static/bpmn-modeler-bundle.js
+bpmn_agent/static/bpmn-viewer-bundle.js
+bpmn_agent/static/pages/
+bpmn_agent/static/tailwind.css
+bpmn_agent/static/diagram-js-minimap.css
+bpmn_agent/static/properties-panel.css
+bpmn_agent/static/bpmn-js-token-simulation.css
+bpmn_agent/static/bpmn-js-bpmnlint.css
+bpmn_agent/static/element-template-chooser.css
 
 # Temporary & Verification Outputs
 *.log

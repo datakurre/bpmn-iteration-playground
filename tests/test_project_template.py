@@ -4,12 +4,12 @@ import asyncio
 
 import pytest
 
-from app.adapters.mock_adapter import MockAdapter
-from app.engine import WorkflowRunner
-from app.persistence import WorkflowStore
-from app.pi_client import PiResult
-from app.registry import WorkflowRegistry
-from app.workflow_service import WorkflowService
+from bpmn_agent.adapters.mock_adapter import MockAdapter
+from bpmn_agent.engine import WorkflowRunner
+from bpmn_agent.persistence import WorkflowStore
+from bpmn_agent.pi_client import PiResult
+from bpmn_agent.registry import WorkflowRegistry
+from bpmn_agent.workflow_service import WorkflowService
 
 BPMN_PATH = "workflows/project.bpmn"
 

@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from app.workflow_service import WorkflowService
+from bpmn_agent.workflow_service import WorkflowService
 
 
 def test_savepoint_detail_and_fork_endpoints(client: TestClient) -> None:

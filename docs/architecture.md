@@ -25,7 +25,7 @@ flowchart TD
 
 ### 1. BPMN Engine & Execution Scope
 - Powered by **SpiffWorkflow 3.2.0**, diagrams parsed from `workflows/*.bpmn`.
-- Instances persisted by earlier versions are upgraded on read by `app/migrations.py`
+- Instances persisted by earlier versions are upgraded on read by `bpmn_agent/migrations.py`
   (`migrate_workflow_object`), which is idempotent and runs on both `load()` and
   `load_save_point()`, so a stored workflow never has to be migrated by hand.
 - Tasks execute in topological order; script tasks and service tasks update the workflow environment.

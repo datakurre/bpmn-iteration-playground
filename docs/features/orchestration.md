@@ -45,7 +45,7 @@ The contract review workflow is modeled in standard BPMN 2.0 XML located at `wor
 
 ## 2. ZODB ACID Persistence
 
-State persistence is managed via [`app/persistence.py`](../../app/persistence.py):
+State persistence is managed via [`bpmn_agent/persistence.py`](../../bpmn_agent/persistence.py):
 
 - **Storage Engine**: `ZODB.FileStorage` writing durable transaction logs to `data/workflows.fs`.
 - **In-Memory Mode**: Supported for testing via `WorkflowStore(":memory:")`.
@@ -53,7 +53,7 @@ State persistence is managed via [`app/persistence.py`](../../app/persistence.py
 - **Process Isolation**: Workflows can be paused, restarted, and inspected at any point without memory corruption.
 
 ```python
-from app.persistence import WorkflowStore
+from bpmn_agent.persistence import WorkflowStore
 
 store = WorkflowStore("data/workflows.fs")
 store.save(workflow_id, instance_state)

@@ -2,9 +2,9 @@
 
 import asyncio
 
-from app.adapters.base import AgentResult, BaseAdapter
-from app.persistence import WorkflowStore
-from app.workflow_service import WorkflowService
+from bpmn_agent.adapters.base import AgentResult, BaseAdapter
+from bpmn_agent.persistence import WorkflowStore
+from bpmn_agent.workflow_service import WorkflowService
 
 
 class StubAgent(BaseAdapter):

@@ -57,10 +57,10 @@ jobs:
           cd vendor/operaton-element-templates && npm install
 
       - name: Run Python tests
-        run: pytest -v --cov=app --cov-report=term-missing --cov-report=xml
+        run: pytest -v --cov=bpmn_agent --cov-report=term-missing --cov-report=xml
 
       - name: Run Python lint / typecheck
-        run: mypy app/
+        run: mypy bpmn_agent/
 
       - name: Build frontend assets
         run: npm run build
@@ -70,3 +70,46 @@ jobs:
 
       - name: Run JS/TS tests
         run: npm test -- --coverage
+
+  wheel-smoke-test:
+    # Package-data bugs (a path built from Path(__file__).parents[N] that assumes a source
+    # checkout, an asset dir excluded by an over-broad .gitignore pattern) are invisible from
+    # a source checkout, since editable installs and `pytest` from the repo root never
+    # exercise the installed layout. This job is the only thing that catches them: build a
+    # real wheel, install it with nothing else on PYTHONPATH, then run the console script
+    # from a directory with no relationship to this repo.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+
+      - name: Install into a clean venv
+        run: |
+          python -m venv /tmp/wheel-smoke-venv
+          /tmp/wheel-smoke-venv/bin/pip install --quiet dist/*.whl
+
+      - name: Run the console script and verify package data resolves, from an unrelated directory
+        run: |
+          mkdir -p /tmp/wheel-smoke-cwd
+          cd /tmp/wheel-smoke-cwd
+          /tmp/wheel-smoke-venv/bin/bpmn --help
+          /tmp/wheel-smoke-venv/bin/python -c "
+          from pathlib import Path
+          import bpmn_agent.pi_client as pc
+          from bpmn_agent.adapters.shell_adapter import TEMPLATE_ROOT
+          assert TEMPLATE_ROOT.is_dir(), f'missing {TEMPLATE_ROOT}'
+          assert (TEMPLATE_ROOT / 'beamer' / 'Makefile').is_file()
+          demo = Path(pc.__file__).resolve().parent / 'data' / 'pi-demo'
+          assert demo.is_file() and demo.stat().st_mode & 0o111, f'missing or non-executable {demo}'
+          print('package data resolves correctly from an installed wheel')
+          "

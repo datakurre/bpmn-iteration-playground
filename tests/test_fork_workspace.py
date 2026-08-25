@@ -6,10 +6,10 @@ from typing import Any
 
 import pytest
 
-from app.adapters.base import AgentResult
-from app.adapters.mock_adapter import MockAdapter
-from app.workflow_service import WorkflowService
-from app.workspace import cleanup_workspace, unpack_workspace
+from bpmn_agent.adapters.base import AgentResult
+from bpmn_agent.adapters.mock_adapter import MockAdapter
+from bpmn_agent.workflow_service import WorkflowService
+from bpmn_agent.workspace import cleanup_workspace, unpack_workspace
 
 
 class FileWritingAdapter(MockAdapter):

@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.workflow_service import WorkflowService
+from bpmn_agent.workflow_service import WorkflowService
 
 
 async def _start_and_wait(service: WorkflowService) -> dict[str, Any]:

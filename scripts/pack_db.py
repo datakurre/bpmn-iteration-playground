@@ -17,7 +17,7 @@ def main() -> None:
         pass
 
     try:
-        from app.persistence import WorkflowStore
+        from bpmn_agent.persistence import WorkflowStore
         store = WorkflowStore()
         data = store.pack()
         print(f"ZODB storage packed (direct): reclaimed {data['reclaimed_human']} (current size: {data['size_after_human']})")

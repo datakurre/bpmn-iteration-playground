@@ -5,13 +5,13 @@ from typing import Any
 
 import pytest
 
-from app.adapters.base import AgentResult
-from app.adapters.shell_adapter import ShellAdapter
-from app.engine import WorkflowRunner
-from app.persistence import WorkflowStore
-from app.pi_client import PiResult
-from app.registry import WorkflowRegistry
-from app.workflow_service import WorkflowService
+from bpmn_agent.adapters.base import AgentResult
+from bpmn_agent.adapters.shell_adapter import ShellAdapter
+from bpmn_agent.engine import WorkflowRunner
+from bpmn_agent.persistence import WorkflowStore
+from bpmn_agent.pi_client import PiResult
+from bpmn_agent.registry import WorkflowRegistry
+from bpmn_agent.workflow_service import WorkflowService
 
 BPMN_PATH = "workflows/beamer_slides.bpmn"
 BRIEF = {"topic": "BPMN as an agent controller", "audience": "platform engineers", "duration_minutes": 20}

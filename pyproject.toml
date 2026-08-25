@@ -1,5 +1,9 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name="bpmn-ai-starter"
+name="bpmn-agent"
 version="0.1.0"
 requires-python=">=3.11"
 dependencies = [
@@ -16,6 +20,9 @@ dependencies = [
     "defusedxml>=0.7.1",
 ]
 
+[project.scripts]
+bpmn = "bpmn_agent.cli:main"
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
@@ -25,6 +32,15 @@ dev = [
     "pytest-timeout>=2.3",
     "ruff>=0.16.4",
 ]
+
+# The wheel ships bpmn_agent/ only. Browser-UI assets (bpmn-js, form-js, the built modeler
+# and viewer bundles) are non-.py package data under bpmn_agent/static/ and
+# bpmn_agent/templates/; `npm run build` must have populated them before `uv build` runs.
+# workspace_templates/ and the pi-demo mock live under bpmn_agent/data/ as ordinary package
+# files -- no special include needed beyond the package itself, since hatchling includes
+# non-.py files under an included package by default.
+[tool.hatch.build.targets.wheel]
+packages = ["bpmn_agent"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -72,7 +88,7 @@ ignore = [
 # FastAPI's Depends()/Header()/Query() and this app's require_role() are the idiomatic way
 # to declare a route dependency as a default argument -- not the mutable-default footgun B008
 # exists to catch.
-extend-immutable-calls = ["fastapi.Depends", "fastapi.Header", "fastapi.Query", "app.auth.require_role"]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Header", "fastapi.Query", "bpmn_agent.auth.require_role"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 15
@@ -93,9 +109,9 @@ strict = true
 plugins = ["pydantic.mypy"]
 
 [tool.coverage.run]
-source = ["app"]
+source = ["bpmn_agent"]
 branch = true
-omit = ["app/main.py", "app/handlers/base.py"]
+omit = ["bpmn_agent/main.py", "bpmn_agent/handlers/base.py"]
 
 [tool.coverage.report]
 show_missing = true

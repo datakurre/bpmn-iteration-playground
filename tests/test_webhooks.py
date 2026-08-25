@@ -4,8 +4,8 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.events import EventBus, WorkflowEvent
-from app.workflow_service import WorkflowService
+from bpmn_agent.events import EventBus, WorkflowEvent
+from bpmn_agent.workflow_service import WorkflowService
 
 
 def test_webhook_crud_api(client: TestClient) -> None:
@@ -99,7 +99,7 @@ def test_event_bus_tracks_pending_tasks() -> None:
 async def test_webhook_delivery_retry_and_failure(monkeypatch) -> None:
     from unittest.mock import AsyncMock, MagicMock
 
-    from app.events import EventBus, WorkflowEvent
+    from bpmn_agent.events import EventBus, WorkflowEvent
 
     bus = EventBus(store=None)
     event = WorkflowEvent(event_type="workflow_completed", workflow_id="wf-99")

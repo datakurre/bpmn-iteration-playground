@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from app.persistence import WorkflowStore
-from app.pi_client import PiResult
-from app.workflow_service import WorkflowService
+from bpmn_agent.persistence import WorkflowStore
+from bpmn_agent.pi_client import PiResult
+from bpmn_agent.workflow_service import WorkflowService
 
 
 class FakePi:
@@ -286,7 +286,7 @@ def test_completed_instance_data_excludes_harness_scratch_keys() -> None:
 
 
 def test_sanitize_output_recursive() -> None:
-    from app.orchestration.jobs import _sanitize_output
+    from bpmn_agent.orchestration.jobs import _sanitize_output
 
     nested = {
         "short": "ok",
@@ -312,7 +312,7 @@ def test_workflow_service_non_numeric_timeout_fallback(monkeypatch) -> None:
 
 @pytest.mark.anyio
 async def test_output_parameters_missing_fallback_none() -> None:
-    from app.adapters.base import AgentResult
+    from bpmn_agent.adapters.base import AgentResult
 
     store = WorkflowStore(":memory:")
     service = WorkflowService(store, FakePi())
@@ -346,8 +346,8 @@ async def test_output_parameters_missing_fallback_none() -> None:
 
 
 def test_all_bundled_workflows_parse_and_have_failure_paths() -> None:
-    from app.engine import WorkflowRunner
-    from app.registry import WorkflowRegistry
+    from bpmn_agent.engine import WorkflowRunner
+    from bpmn_agent.registry import WorkflowRegistry
 
     runner = WorkflowRunner()
     registry = WorkflowRegistry("workflows")
@@ -363,7 +363,7 @@ def test_all_bundled_workflows_parse_and_have_failure_paths() -> None:
 def test_workflow_registry_logs_warning_on_malformed_file(tmp_path: Path, caplog) -> None:
     import logging
 
-    from app.registry import WorkflowRegistry
+    from bpmn_agent.registry import WorkflowRegistry
 
     bad_bpmn = tmp_path / "broken.bpmn"
     bad_bpmn.write_text("invalid xml <><>", encoding="utf-8")
