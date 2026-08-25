@@ -28,6 +28,7 @@ from bpmn_agent.models import (
 )
 from bpmn_agent.workflow_service import WorkflowNotFoundError, WorkflowService
 from bpmn_agent.workspace import cleanup_workspace, extract_workspace_file, pack_workspace_to_bytes
+from bpmn_agent.workspace_strategy import WorkspaceSnapshotUnsupportedError
 
 
 def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # noqa: C901, PLR0915 -- FastAPI's route-factory pattern nests every route in this one function by convention; splitting it up would fight the framework, not the complexity
@@ -199,6 +200,17 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
             raise HTTPException(404, "workflow not found") from exc
         except KeyError as exc:
             raise HTTPException(404, f"save point not found: {exc.args[0]}") from exc
+        except WorkspaceSnapshotUnsupportedError as exc:
+            # A typed body, not a bare string, so a client branches on `error`/`mode`
+            # rather than parsing prose -- see docs/meta-agent-refactor-plan.md phase 3.
+            raise HTTPException(
+                409,
+                {
+                    "error": "workspace_snapshot_unsupported",
+                    "mode": exc.mode,
+                    "message": str(exc),
+                },
+            ) from exc
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 

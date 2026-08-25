@@ -191,6 +191,8 @@ class SavePointSnapshot(Persistent):  # type: ignore[misc]  # persistent ships n
         workflow: Any,
         parent_workflow_id: str | None = None,
         workspace_blob: Any = None,
+        workspace_ref: Any = None,
+        supports_snapshot: bool = True,
     ) -> None:
         self.id = id
         self.workflow_id = workflow_id
@@ -206,6 +208,18 @@ class SavePointSnapshot(Persistent):  # type: ignore[misc]  # persistent ships n
         self.workflow = workflow
         self.parent_workflow_id = parent_workflow_id
         self.workspace_blob = workspace_blob
+        # A WorktreeStrategy savepoint's checkpoint (a git commit SHA), mutually exclusive
+        # with workspace_blob -- BlobStrategy sets one, WorktreeStrategy the other, and an
+        # InPlaceStrategy savepoint (supports_snapshot=False) sets neither.
+        self.workspace_ref = workspace_ref
+        # Mirrors the strategy's own `supports_snapshot` at capture time -- the
+        # unambiguous signal fork.py needs to reject an in-place-sourced savepoint rather
+        # than guessing intent from workspace_blob/workspace_ref both being empty (which
+        # also legitimately happens for a BlobStrategy savepoint captured before any
+        # workspace existed yet). Defaults True: every savepoint persisted before this
+        # field existed was captured under the blob-only world, where snapshot always
+        # meant "yes, blob-restorable".
+        self.supports_snapshot = supports_snapshot
 
     def to_summary(self) -> dict[str, Any]:
         return {
@@ -227,6 +241,8 @@ class SavePointSnapshot(Persistent):  # type: ignore[misc]  # persistent ships n
         result = self.to_summary()
         result["workflow"] = self.workflow
         result["workspace_blob"] = self.workspace_blob
+        result["workspace_ref"] = getattr(self, "workspace_ref", None)
+        result["supports_snapshot"] = getattr(self, "supports_snapshot", True)
         return result
 
 
@@ -407,6 +423,8 @@ class WorkflowStore:
                 workflow=d.get("workflow"),
                 parent_workflow_id=d.get("parent_workflow_id"),
                 workspace_blob=d.get("workspace_blob"),
+                workspace_ref=d.get("workspace_ref"),
+                supports_snapshot=d.get("supports_snapshot", True),
             )
             root["save_points"][snapshot.id] = snapshot
         return snapshot
@@ -579,6 +597,8 @@ class WorkflowStore:
                                 workflow=point.get("workflow"),
                                 parent_workflow_id=point.get("parent_workflow_id"),
                                 workspace_blob=point.get("workspace_blob"),
+                                workspace_ref=point.get("workspace_ref"),
+                                supports_snapshot=point.get("supports_snapshot", True),
                             )
                             save_points_root[point_id] = snapshot
                             summaries.append(snapshot.to_summary())

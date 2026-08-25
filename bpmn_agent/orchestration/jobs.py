@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import os
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -26,13 +25,8 @@ from bpmn_agent.engine import resolve_scope_inputs
 from bpmn_agent.paths import contained_path
 from bpmn_agent.persistence import WorkspaceConflictError
 from bpmn_agent.pi_client import PiResult
-from bpmn_agent.workspace import (
-    WORKSPACE_OP_TIMEOUT_SECONDS,
-    cleanup_workspace,
-    get_workspace_metadata,
-    pack_workspace_to_bytes,
-    unpack_workspace,
-)
+from bpmn_agent.workspace import WORKSPACE_OP_TIMEOUT_SECONDS, get_workspace_metadata
+from bpmn_agent.workspace_strategy import select_strategy
 from bpmn_agent.ws import manager as ws_manager
 
 if TYPE_CHECKING:
@@ -52,30 +46,6 @@ DEFAULT_HARNESS_TYPE = "pi_agent"
 # workspace it never actually agreed on, defeating the whole point of the conflict check.
 # Only an explicit retry_task() call clears the flag.
 WORKSPACE_CONFLICT_MESSAGE = "workspace changed during this turn; re-run against current state"
-
-_SEED_IGNORE = shutil.ignore_patterns(
-    ".git", "node_modules", ".venv", ".devenv", ".direnv", "data", "vendor",
-    "__pycache__", ".mypy_cache", ".pytest_cache", "site", "result", "*.log",
-)
-
-
-def _seed_workspace(workdir: str) -> None:
-    """Seed a fresh instance workspace from PI_WORKDIR.
-
-    PI_WORKDIR is a template copied in once per instance, never the directory the agent
-    runs in: agents always work in their own unpacked workspace so that concurrent
-    instances cannot collide and savepoints capture what the agent actually touched.
-    """
-    seed = os.getenv("PI_WORKDIR")
-    if not seed:
-        return
-    seed_path = Path(seed).resolve()
-    if not seed_path.is_dir():
-        logger.warning("PI_WORKDIR=%s is not a directory; starting from an empty workspace", seed)
-        return
-    shutil.copytree(seed_path, workdir, dirs_exist_ok=True, ignore=_SEED_IGNORE, symlinks=True)
-    logger.info("Seeded workspace from PI_WORKDIR=%s", seed_path)
-
 
 def _sanitize(value: Any, max_length: int = 50_000, depth: int = 0, max_depth: int = 10) -> Any:
     if depth > max_depth:
@@ -235,7 +205,7 @@ async def dispatch(service: WorkflowService, workflow_id: str, _lock_held: bool 
             )
 
             record["status"] = "waiting_pi"
-            service._add_save_point(
+            await service._add_save_point(
                 workflow_id,
                 record,
                 workflow,
@@ -300,7 +270,7 @@ async def dispatch(service: WorkflowService, workflow_id: str, _lock_held: bool 
                     input_params = extensions.get("inputParameters", {})
                     scope_inputs = resolve_scope_inputs(input_params, task.workflow.data)
                     service._record_scope(record, task, "UserTask", status="active", inputs=scope_inputs)
-                    service._add_save_point(workflow_id, record, workflow, task, "human_wait", "submit_human")
+                    await service._add_save_point(workflow_id, record, workflow, task, "human_wait", "submit_human")
                     service.events.emit(
                         "human_task_ready",
                         workflow_id,
@@ -340,9 +310,10 @@ async def dispatch(service: WorkflowService, workflow_id: str, _lock_held: bool 
 
 async def run_pi(service: WorkflowService, workflow_id: str, task_id: str) -> None:
     workflow_id = service._get_root_workflow_id(workflow_id)
-    workdir = None
     ws_meta: dict[str, Any] | None = None
     prompt: str | None = None
+    strategy = None
+    acquired = False
     try:
         record = service._record(workflow_id)
         task = service.runner.find_task(record["workflow"], task_id)
@@ -366,14 +337,15 @@ async def run_pi(service: WorkflowService, workflow_id: str, task_id: str) -> No
                 f"(registered: {', '.join(sorted(service.registry.list_types()))})"
             )
 
-        # Unpack the per-instance workspace archive into a scratch directory the adapter
-        # actually runs in -- see the module docstring's data-flow summary.
-        blob_or_bytes = service.store.get_workspace(workflow_id)
-        workspace_version = service.store.get_workspace_version(workflow_id)
-        workdir = await unpack_workspace(blob_or_bytes, prefix=f"bpmn-{workflow_id[:8]}-")
-        if not blob_or_bytes:
-            await asyncio.wait_for(asyncio.to_thread(_seed_workspace, workdir), timeout=WORKSPACE_OP_TIMEOUT_SECONDS)
-        cwd = workdir
+        # Acquire this run's directory through the selected strategy -- an ephemeral
+        # scratch dir (BlobStrategy, the default), a real git worktree off the
+        # workspace's HEAD (WorktreeStrategy), or the launch directory itself, serialised
+        # by a mutex (InPlaceStrategy). See workspace_strategy.py's module docstring for
+        # what selects which.
+        strategy = select_strategy(service.workspace, service.store, config, record["workflow"].data)
+        cwd_path = await strategy.acquire(workflow_id)
+        acquired = True
+        cwd = str(cwd_path)
 
         # Harness-specific workspace setup is the adapter's business, not ours
         await adapter.prepare_workspace(cwd, config)
@@ -398,7 +370,7 @@ async def run_pi(service: WorkflowService, workflow_id: str, task_id: str) -> No
             asyncio.to_thread(
                 _process_workspace_artifacts,
                 cwd,
-                workdir,
+                cwd,
                 result.output,
                 wf_data.get("document_content"),
             ),
@@ -406,16 +378,13 @@ async def run_pi(service: WorkflowService, workflow_id: str, task_id: str) -> No
         )
         record["workspace_metadata"] = ws_meta
 
-        # Repack modified workspace back into storage. This is an interim
-        # optimistic-concurrency guard, not the real fix: concurrent turns on the same
-        # instance still share one workspace and cannot merge their changes. The real
-        # fix is a workspace per branch (git worktree model), not yet designed -- see
-        # plans/data.md "Not a backlog item: the worktree model". Until then, refuse to
-        # silently overwrite a workspace another concurrent turn has already moved on
-        # from; expected_version turns that into a loud, retryable failure instead.
-        if workdir and Path(workdir).exists():
-            archive_bytes = await pack_workspace_to_bytes(workdir)
-            service.store.set_workspace(workflow_id, archive_bytes, expected_version=workspace_version)
+        # Release the directory back to the strategy, persisting what changed. For
+        # BlobStrategy this is the optimistic-concurrency repack: concurrent turns on the
+        # same instance still share one workspace and cannot merge their changes, so a
+        # stale expected_version turns that into a loud, retryable WorkspaceConflictError
+        # rather than a silent overwrite. WorktreeStrategy and InPlaceStrategy have
+        # nothing to repack -- the directory was always live -- so this is a no-op there.
+        await strategy.release(workflow_id)
     except asyncio.CancelledError:
         logger.info(f"Agent task {task_id} was cancelled")
         result = AgentResult("cancelled", None, "", [], "Task was cancelled", 1)
@@ -430,8 +399,16 @@ async def run_pi(service: WorkflowService, workflow_id: str, task_id: str) -> No
         logger.exception(f"Error running agent task {task_id}: {exc}")
         result = AgentResult("failed", None, "", [], str(exc), 1)
     finally:
-        if workdir:
-            cleanup_workspace(workdir)
+        # A safety net, not the primary path: the success path above already released
+        # normally. Calling release() again here is a deliberate no-op for every
+        # strategy when it already ran (each pops its own per-run bookkeeping before
+        # acting, so a second call finds nothing left to do) -- what it actually catches
+        # is every path that raised *before* reaching that call, where persist=False
+        # discards a crashed turn's uncommitted scratch edits instead of committing them
+        # (BlobStrategy only; worktree/in-place have nothing to discard either way).
+        if acquired and strategy is not None:
+            with contextlib.suppress(Exception):
+                await strategy.release(workflow_id, persist=False)
 
     await service._complete_pi(workflow_id, task_id, result, workspace_metadata=ws_meta, prompt=prompt)
 
@@ -569,7 +546,7 @@ async def complete_pi(  # noqa: C901, PLR0912, PLR0915 -- reconciles one agent-t
 
         attempt = job.get("attempts", 1)
         generation = job.get("generation", 0)
-        service._add_save_point(
+        await service._add_save_point(
             workflow_id,
             record,
             workflow,

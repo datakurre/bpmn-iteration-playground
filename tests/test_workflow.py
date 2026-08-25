@@ -399,7 +399,7 @@ def test_superseded_savepoint_attempts_are_pruned(monkeypatch) -> None:
         )
 
         for attempt in range(2, 5):
-            service._add_save_point(
+            await service._add_save_point(
                 wf_id, record, workflow, task, "before_harness", "run_harness", f":run_0:attempt_{attempt}"
             )
 
@@ -430,7 +430,7 @@ def test_savepoint_retention_is_configurable(monkeypatch) -> None:
             t for t in workflow.get_tasks() if getattr(t.task_spec, "bpmn_id", None) == "ServiceTask_Extract"
         )
         for attempt in range(2, 6):
-            service._add_save_point(
+            await service._add_save_point(
                 wf_id, record, workflow, task, "before_harness", "run_harness", f":run_0:attempt_{attempt}"
             )
 

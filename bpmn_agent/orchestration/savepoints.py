@@ -18,7 +18,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from ZODB.blob import Blob
+from bpmn_agent.workspace_strategy import BlobStrategy, select_strategy
 
 if TYPE_CHECKING:
     from bpmn_agent.workflow_service import WorkflowService
@@ -45,7 +45,7 @@ def _generation_of(key: str) -> str:
     return match.group(1) if match else ""
 
 
-def add_save_point(
+async def add_save_point(
     service: WorkflowService,
     workflow_id: str,
     record: dict[str, Any],
@@ -59,17 +59,23 @@ def add_save_point(
     key = f"{task.id}:{phase}{key_suffix}"
     if any(point.get("key") == key for point in save_points):
         return
-    # Read the live workspace from the store rather than `record` -- the record's
-    # keys are rebuilt on every save by runner.record() and don't reliably carry a
-    # workspace_blob (see the _sync_children comment below for the same trap). Wrap
-    # the bytes in a fresh Blob so the savepoint holds an independent copy: two
-    # savepoints must never share one blob, or purging one corrupts the other.
-    workspace_bytes = service.store.get_workspace(workflow_id)
+
+    # Which strategy this task's turns run under decides what a durable checkpoint even
+    # means: BlobStrategy's snapshot is a duplicated ZODB Blob (workspace_blob below,
+    # unchanged from before this module knew about strategies at all); WorktreeStrategy's
+    # is a git commit SHA (workspace_ref); InPlaceStrategy has none at all
+    # (supports_snapshot=False) -- graph state (data/tasks/workflow below) is still
+    # captured regardless, only the file-level checkpoint is missing.
+    config = service.runner.pi_config(task)
+    strategy = select_strategy(service.workspace, service.store, config, workflow.data)
     workspace_blob = None
-    if workspace_bytes:
-        workspace_blob = Blob()
-        with workspace_blob.open("w") as f:
-            f.write(workspace_bytes)
+    workspace_ref = None
+    if strategy.supports_snapshot:
+        snapshot = await strategy.snapshot(workflow_id, key)
+        if isinstance(strategy, BlobStrategy):
+            workspace_blob = snapshot
+        else:
+            workspace_ref = snapshot
 
     save_points.append(
         {
@@ -86,6 +92,8 @@ def add_save_point(
             "workflow": copy.deepcopy(workflow),
             "parent_workflow_id": record.get("parent_workflow_id"),
             "workspace_blob": workspace_blob,
+            "workspace_ref": workspace_ref,
+            "supports_snapshot": strategy.supports_snapshot,
         }
     )
     _prune_save_points(service, record, str(task.id), phase)
