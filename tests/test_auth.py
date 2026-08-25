@@ -50,7 +50,7 @@ def test_rbac_with_api_keys(client: TestClient, monkeypatch) -> None:
 
     # 6. Admin token via X-Admin-Token header
     token_headers = {"X-Admin-Token": "secret-admin-token"}
-    admin_list = client.get("/admin/instances", headers=token_headers)
+    admin_list = client.get("/api/history/instances", headers=token_headers)
     assert admin_list.status_code == 200
 
 

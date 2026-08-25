@@ -160,6 +160,16 @@ class WorkflowState(BaseModel):
     forked_from: str | None = None
     forked_from_save_point: str | None = None
     workspace_metadata: dict[str, Any] | None = None
+    merge_status: str | None = None
+    merge_error: str | None = None
+    merged_at: str | None = None
+
+
+class MergeResponse(BaseModel):
+    workflow_id: str
+    status: str
+    message: str
+    branch: str | None = None
 
 
 class WorkflowResponse(BaseModel):

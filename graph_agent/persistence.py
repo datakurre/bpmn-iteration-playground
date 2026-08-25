@@ -51,7 +51,21 @@ def _retry_on_conflict(max_retries: int = 5) -> Callable[[F], F]:
     return decorator
 
 
-def _create_storage(path: str) -> tuple[Any, str | None]:
+def _safe_blob_copy(b: Any) -> Any:
+    if isinstance(b, Blob):
+        new_b = Blob()
+        with b.open("r") as src, new_b.open("w") as dst:
+            dst.write(src.read())
+        return new_b
+    elif isinstance(b, bytes):
+        new_b = Blob()
+        with new_b.open("w") as dst:
+            dst.write(b)
+        return new_b
+    return b
+
+
+def _create_storage(path: str | Path) -> tuple[Any, str | None]:
     """Create ZODB storage, supporting in-memory or local FileStorage.
 
     No remote ZEO option: state is local to the workspace (`.agents/state/`) now, not a
@@ -59,13 +73,20 @@ def _create_storage(path: str) -> tuple[Any, str | None]:
     it with. (Removed in the meta-agent refactor's phase 1 -- see
     docs/meta-agent-refactor-plan.md.)
     """
-    if path == ":memory:":
+    path_str = str(path)
+    if path_str == ":memory:":
         blob_dir = tempfile.mkdtemp(prefix="bpmn-blobs-")
         return BlobStorage(blob_dir, MappingStorage()), blob_dir
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    blob_dir = str(Path(path).parent / "blobs")
+    p = Path(path_str)
+    if p.is_dir():
+        db_path = p / "Data.fs"
+        blob_dir = str(p / "blobs")
+    else:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        db_path = p
+        blob_dir = str(p.parent / "blobs")
     Path(blob_dir).mkdir(parents=True, exist_ok=True)
-    return BlobStorage(blob_dir, FileStorage(path)), None
+    return BlobStorage(blob_dir, FileStorage(str(db_path))), None
 
 
 class WorkflowMetadata(Persistent):  # type: ignore[misc]  # persistent ships no type stubs
@@ -85,6 +106,9 @@ class WorkflowMetadata(Persistent):  # type: ignore[misc]  # persistent ships no
         failure_reason: str | None = None,
         parent_workflow_id: str | None = None,
         workspace_metadata: dict[str, Any] | None = None,
+        merge_status: str | None = None,
+        merge_error: str | None = None,
+        merged_at: str | None = None,
     ) -> None:
         self.workflow_id = workflow_id
         self.process_id = process_id
@@ -98,6 +122,9 @@ class WorkflowMetadata(Persistent):  # type: ignore[misc]  # persistent ships no
         self.failure_reason = failure_reason
         self.parent_workflow_id = parent_workflow_id
         self.workspace_metadata = dict(workspace_metadata or {})
+        self.merge_status = merge_status
+        self.merge_error = merge_error
+        self.merged_at = merged_at
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -113,6 +140,9 @@ class WorkflowMetadata(Persistent):  # type: ignore[misc]  # persistent ships no
             "data": dict(self.data),
             "failure_reason": self.failure_reason,
             "workspace_metadata": dict(getattr(self, "workspace_metadata", {})),
+            "merge_status": getattr(self, "merge_status", None),
+            "merge_error": getattr(self, "merge_error", None),
+            "merged_at": getattr(self, "merged_at", None),
         }
 
 
@@ -422,7 +452,7 @@ class WorkflowStore:
                 tasks=d.get("tasks", []),
                 workflow=d.get("workflow"),
                 parent_workflow_id=d.get("parent_workflow_id"),
-                workspace_blob=d.get("workspace_blob"),
+                workspace_blob=_safe_blob_copy(d.get("workspace_blob")),
                 workspace_ref=d.get("workspace_ref"),
                 supports_snapshot=d.get("supports_snapshot", True),
             )
@@ -596,7 +626,7 @@ class WorkflowStore:
                                 tasks=point.get("tasks", []),
                                 workflow=point.get("workflow"),
                                 parent_workflow_id=point.get("parent_workflow_id"),
-                                workspace_blob=point.get("workspace_blob"),
+                                workspace_blob=_safe_blob_copy(point.get("workspace_blob")),
                                 workspace_ref=point.get("workspace_ref"),
                                 supports_snapshot=point.get("supports_snapshot", True),
                             )
@@ -627,7 +657,7 @@ class WorkflowStore:
                 else:
                     events = raw_record.get("events", [])
 
-                workspace_blob = (
+                workspace_blob = _safe_blob_copy(
                     raw_record.get("workspace_blob")
                     or getattr(existing, "workspace_blob", None)
                 )
@@ -727,6 +757,10 @@ class WorkflowStore:
             if not ws_meta and existing is not None:
                 ws_meta = getattr(existing, "workspace_metadata", {})
 
+            merge_st = raw_record.get("merge_status") or getattr(instance, "merge_status", None)
+            merge_err = raw_record.get("merge_error") or getattr(instance, "merge_error", None)
+            merge_time = raw_record.get("merged_at") or getattr(instance, "merged_at", None)
+
             if workflow_id in metadata_root and isinstance(metadata_root[workflow_id], WorkflowMetadata):
                 metadata = metadata_root[workflow_id]
                 metadata.process_id = instance.process_id
@@ -739,6 +773,9 @@ class WorkflowStore:
                 metadata.failure_reason = instance.failure_reason
                 metadata.parent_workflow_id = getattr(instance, "parent_workflow_id", None)
                 metadata.workspace_metadata = dict(ws_meta)
+                metadata.merge_status = merge_st
+                metadata.merge_error = merge_err
+                metadata.merged_at = merge_time
                 metadata._p_changed = True
             else:
                 metadata = WorkflowMetadata(
@@ -754,6 +791,9 @@ class WorkflowStore:
                     failure_reason=instance.failure_reason,
                     parent_workflow_id=getattr(instance, "parent_workflow_id", None),
                     workspace_metadata=ws_meta,
+                    merge_status=merge_st,
+                    merge_error=merge_err,
+                    merged_at=merge_time,
                 )
                 metadata_root[workflow_id] = metadata
 

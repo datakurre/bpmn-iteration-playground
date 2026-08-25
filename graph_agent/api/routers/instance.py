@@ -20,6 +20,7 @@ from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 from graph_agent.auth import Role, require_role
 from graph_agent.models import (
     ForkRequest,
+    MergeResponse,
     MessageRequest,
     PurgeSavePointsRequest,
     PurgeSavePointsResponse,
@@ -275,6 +276,16 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
         except WorkflowNotFoundError as exc:
             raise HTTPException(404, "workflow not found") from exc
         except KeyError as exc:
+            raise HTTPException(404, "workflow not found") from exc
+
+    @router.post("/instance/{workflow_id}/merge", response_model=MergeResponse, tags=["Instance"], summary="Merge completed workflow branch")
+    async def merge_instance(
+        workflow_id: str,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR),
+    ) -> dict[str, Any]:
+        try:
+            return await get_service().merge_run(workflow_id)
+        except WorkflowNotFoundError as exc:
             raise HTTPException(404, "workflow not found") from exc
 
     @router.get("/instance/{workflow_id}/events/stream", tags=["Instance"], summary="Stream instance events via SSE")

@@ -1,58 +1,87 @@
 # Getting Started & Development Guide
 
-This guide covers setting up your local environment, running the application, and configuring AI agent executables.
+This guide covers setting up your local development environment for contributing to **graph-agent**, running tests, and developing workflow templates.
 
 ---
 
 ## 1. Prerequisites & Environment Setup
 
-Pi Workflow Studio uses [devenv](https://devenv.sh/) and [Nix](https://nixos.org/) for hermetic, reproducible developer environments.
+`graph-agent` uses [devenv](https://devenv.sh/) and [Nix](https://nixos.org/) for hermetic, reproducible development environments (Python 3.14, Node 22, and toolchains).
 
-### Clone & Launch Environment
+### Clone & Launch Development Environment
+
 ```bash
-git clone https://github.com/datakurre/bpmn-ai-starter.git
-cd bpmn-ai-starter
+git clone https://github.com/datakurre/graph-agent.git
+cd graph-agent
 
-# Launch devenv background processes
-devenv up -d
-devenv processes wait
+# Enter hermetic development shell
+devenv shell
 ```
 
-The application is now accessible at `http://127.0.0.1:8000/`.
+---
+
+## 2. Running graph-agent Locally
+
+### Initialize Workspace
+In any project repository or workspace directory:
+
+```bash
+graph-agent init
+```
+
+### Launch Interactive TUI or Attach
+```bash
+# Start daemon and open TUI
+graph-agent
+
+# Or attach to an already running daemon
+graph-agent attach
+```
+
+### Launch Headless Server for Web Studio
+```bash
+graph-agent serve --no-tui
+```
+Open `http://127.0.0.1:8000/` (or the dynamically assigned port displayed in the console) for the Web Studio interface.
 
 ---
 
-## 2. Process Management (`devenv`)
+## 3. Running Tests and Checks
 
-| Command | Purpose |
-| :--- | :--- |
-| `devenv up -d` | Launch background processes (FastAPI backend on port 8000). |
-| `devenv processes wait` | Block until health check passes (`http://127.0.0.1:8000/health`). |
-| `devenv processes list` | Check running processes and restart counts. |
-| `devenv processes restart api` | Restart the FastAPI API server after code changes. |
-| `devenv processes down` | Terminate all background processes. |
+Inside `devenv shell`:
+
+```bash
+# Run full test suite (pytest with anyio)
+pytest tests/
+
+# Strict type checking (mypy)
+mypy --strict graph_agent/
+
+# Linter and formatting checks (ruff)
+ruff check graph_agent/ tests/
+```
 
 ---
 
-## 3. Configuration & Environment Variables
+## 4. Configuration & Environment Variables
 
-Key environment variables configured in `devenv.nix`:
+Key settings configurable via environment variables or `config.toml`:
 
 | Variable | Default Value | Description |
 | :--- | :--- | :--- |
-| `PI_EXECUTABLE` | `node_modules/.bin/pi` | Path to the local Pi coding agent binary. |
-| `PI_MODEL` | `gpt-4o-mini` | Target LLM model for the agent. |
-| `PI_OFFLINE` | `0` | Set to `1` to force fallback to deterministic `graph_agent/data/pi-demo`. |
-| `OPENAI_BASE_URL` | `https://opencode.ai/go/v1` | OpenAI-compatible endpoint. |
-| `OPENAI_API_KEY` | `"secret-injected-by-proxy"` | Token used for proxy secret injection. |
+| `PI_EXECUTABLE` | `node_modules/.bin/pi` | Path to the Pi coding agent binary (falls back to `graph_agent/data/pi-demo`). |
+| `PI_MODEL` | `gpt-5.6-luna` | Target LLM model for the agent. |
+| `PI_OFFLINE` | `0` | Set to `1` to force fallback to deterministic mock runner. |
+| `MAX_PARALLEL_TURNS`| `4` | Maximum concurrent active agent turns across all graphs. |
+| `MERGE_ON_COMPLETE` | `true` | Auto-merge completed worktree runs into the base branch. |
+| `TIMER_TICK_SECONDS`| `10` | Frequency of background BPMN timer event ticks (`0` disables). |
 
 ---
 
-## 4. Deterministic Showcase Mode
+## 5. Deterministic Showcase Mode
 
-To run a fast, offline demonstration without requiring external model credentials or network access:
+To run a fast, offline test without requiring LLM credentials or network access:
 
 ```bash
-# Run server with deterministic mock Pi demo runner
-make demo
+PI_OFFLINE=1 graph-agent run plan_and_execute.bpmn --var goal="Test offline run"
 ```

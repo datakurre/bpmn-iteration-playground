@@ -103,7 +103,7 @@ class ProjectService:
         ]
 
     def resolve(self, slug: str) -> str:
-        """Root workflow id for a slug, accepting a raw workflow id as a fallback.
+        """Root workflow id for a slug, accepting a raw workflow id or 'current' as a fallback.
 
         Slug uniqueness is advisory, not enforced by a unique index (see the module
         docstring): a fork of a Project, or a direct store write, can produce a second
@@ -111,7 +111,10 @@ class ProjectService:
         **first-match-wins over the newest-activity ordering** rather than an error --
         addressing an ambiguous slug must not break, and `list_projects()` still shows both.
         """
-        for project in self.list_projects():
+        projects = self.list_projects()
+        if slug in ("current", "default", "") and projects:
+            return str(projects[0]["workflow_id"])
+        for project in projects:
             if project["slug"] == slug or project["workflow_id"] == slug:
                 return str(project["workflow_id"])
         raise ProjectNotFoundError(slug)

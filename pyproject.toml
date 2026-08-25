@@ -17,6 +17,7 @@ dependencies = [
     "jinja2",
     "httpx",
     "defusedxml>=0.7.1",
+    "textual>=0.70.0",
 ]
 
 [project.scripts]

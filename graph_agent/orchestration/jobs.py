@@ -289,6 +289,7 @@ async def dispatch(service: WorkflowService, workflow_id: str, _lock_held: bool 
             await ws_manager.broadcast(workflow_id, service.state(workflow_id))
             if record["status"] == "completed":
                 service.events.emit("workflow_completed", workflow_id, data=record["data"])
+                await service._maybe_auto_merge(workflow_id, record, _lock_held=True)
 
         if unresolved:
             reason = unresolved[-1][2]
@@ -343,48 +344,49 @@ async def run_pi(service: WorkflowService, workflow_id: str, task_id: str) -> No
         # by a mutex (InPlaceStrategy). See workspace_strategy.py's module docstring for
         # what selects which.
         strategy = select_strategy(service.workspace, service.store, config, record["workflow"].data)
-        cwd_path = await strategy.acquire(workflow_id)
-        acquired = True
-        cwd = str(cwd_path)
+        async with service._turn_semaphore:
+            cwd_path = await strategy.acquire(workflow_id)
+            acquired = True
+            cwd = str(cwd_path)
 
-        # Harness-specific workspace setup is the adapter's business, not ours
-        await adapter.prepare_workspace(cwd, config)
+            # Harness-specific workspace setup is the adapter's business, not ours
+            await adapter.prepare_workspace(cwd, config)
 
-        prompt = service.runner.prompt(workflow_id, task, record["workflow"])
+            prompt = service.runner.prompt(workflow_id, task, record["workflow"])
 
-        async def _on_event(ev: dict[str, Any]) -> None:
-            with contextlib.suppress(Exception):
-                await ws_manager.broadcast(workflow_id, {
-                    "type": "pi_event",
-                    "workflow_id": workflow_id,
-                    "task_id": task_id,
-                    "task_name": getattr(task, "name", task_id),
-                    "event": ev,
-                })
+            async def _on_event(ev: dict[str, Any]) -> None:
+                with contextlib.suppress(Exception):
+                    await ws_manager.broadcast(workflow_id, {
+                        "type": "pi_event",
+                        "workflow_id": workflow_id,
+                        "task_id": task_id,
+                        "task_name": getattr(task, "name", task_id),
+                        "event": ev,
+                    })
 
-        result = await adapter.run(prompt, config, cwd, on_event=_on_event)
+            result = await adapter.run(prompt, config, cwd, on_event=_on_event)
 
-        # Capture generated artifacts and documents into the isolated instance workspace
-        wf_data = record["workflow"].data
-        _artifacts_list, ws_meta = await asyncio.wait_for(
-            asyncio.to_thread(
-                _process_workspace_artifacts,
-                cwd,
-                cwd,
-                result.output,
-                wf_data.get("document_content"),
-            ),
-            timeout=WORKSPACE_OP_TIMEOUT_SECONDS,
-        )
-        record["workspace_metadata"] = ws_meta
+            # Capture generated artifacts and documents into the isolated instance workspace
+            wf_data = record["workflow"].data
+            _artifacts_list, ws_meta = await asyncio.wait_for(
+                asyncio.to_thread(
+                    _process_workspace_artifacts,
+                    cwd,
+                    cwd,
+                    result.output,
+                    wf_data.get("document_content"),
+                ),
+                timeout=WORKSPACE_OP_TIMEOUT_SECONDS,
+            )
+            record["workspace_metadata"] = ws_meta
 
-        # Release the directory back to the strategy, persisting what changed. For
-        # BlobStrategy this is the optimistic-concurrency repack: concurrent turns on the
-        # same instance still share one workspace and cannot merge their changes, so a
-        # stale expected_version turns that into a loud, retryable WorkspaceConflictError
-        # rather than a silent overwrite. WorktreeStrategy and InPlaceStrategy have
-        # nothing to repack -- the directory was always live -- so this is a no-op there.
-        await strategy.release(workflow_id)
+            # Release the directory back to the strategy, persisting what changed. For
+            # BlobStrategy this is the optimistic-concurrency repack: concurrent turns on the
+            # same instance still share one workspace and cannot merge their changes, so a
+            # stale expected_version turns that into a loud, retryable WorkspaceConflictError
+            # rather than a silent overwrite. WorktreeStrategy and InPlaceStrategy have
+            # nothing to repack -- the directory was always live -- so this is a no-op there.
+            await strategy.release(workflow_id)
     except asyncio.CancelledError:
         logger.info(f"Agent task {task_id} was cancelled")
         result = AgentResult("cancelled", None, "", [], "Task was cancelled", 1)

@@ -42,12 +42,17 @@ class FileWritingAdapter(BaseAdapter):
 
 
 def _init_git_repo(root: Path) -> None:
-    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+    subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=root, check=True)
     (root / "README.md").write_text("project root\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=root, check=True)
-    subprocess.run(["git", "commit", "-q", "-m", "initial"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", "commit", "-q", "-m", "initial"],
+        cwd=root,
+        check=True,
+    )
 
 
 async def _wait_for_agent_turns(service: WorkflowService) -> None:
@@ -73,7 +78,11 @@ async def test_a_workspace_backed_service_runs_turns_in_a_real_git_worktree(tmp_
     service = WorkflowService(store, adapter_registry=None, workspace=workspace)
     service.registry.register(adapter)
 
-    started = await service.start("tests/fixtures/sequential_agents.bpmn", "sequential_agents", {})
+    started = await service.start(
+        "tests/fixtures/sequential_agents.bpmn",
+        "sequential_agents",
+        {"merge_on_complete": False},
+    )
     workflow_id = started["workflow_id"]
     await _wait_for_agent_turns(service)
 
@@ -253,7 +262,11 @@ async def test_fork_of_worktree_savepoint_creates_a_new_worktree_at_that_commit(
     service = WorkflowService(store, adapter_registry=None, workspace=workspace)
     service.registry.register(FileWritingAdapter())
 
-    started = await service.start("tests/fixtures/sequential_agents.bpmn", "sequential_agents", {})
+    started = await service.start(
+        "tests/fixtures/sequential_agents.bpmn",
+        "sequential_agents",
+        {"merge_on_complete": False},
+    )
     workflow_id = started["workflow_id"]
     await _wait_for_agent_turns(service)
 

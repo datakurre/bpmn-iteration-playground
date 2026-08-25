@@ -203,7 +203,11 @@ async def _run_git(*args: str, cwd: Path) -> subprocess.CompletedProcess[bytes]:
 
     def _run() -> subprocess.CompletedProcess[bytes]:
         return subprocess.run(
-            ["git", *args], cwd=str(cwd), capture_output=True, timeout=GIT_OP_TIMEOUT_SECONDS, check=False
+            ["git", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", *args],
+            cwd=str(cwd),
+            capture_output=True,
+            timeout=GIT_OP_TIMEOUT_SECONDS,
+            check=False,
         )
 
     return await asyncio.to_thread(_run)
@@ -291,6 +295,61 @@ class WorktreeStrategy:
             return
         with contextlib.suppress(GitOperationError):
             await _git("worktree", "remove", "--force", str(path), cwd=self.workspace.root)
+
+    async def merge(
+        self,
+        run_id: str,
+        commit_message: str | None = None,
+        base_branch: str | None = None,
+    ) -> tuple[bool, str]:
+        """Merge a completed run's branch (`bpmn/run/<run-id>`) into the base branch.
+
+        Preconditions (§6):
+        1. The run branch exists.
+        2. Workspace working tree is clean if target branch is currently checked out.
+
+        Mechanics:
+        Runs `git merge --no-ff bpmn/run/<id> -m "<message>"`.
+        On success: discards the worktree, returns (True, message).
+        On failure: runs `git merge --abort`, leaves branch intact, returns (False, reason).
+        """
+        run_branch = self._branch_name(run_id)
+        branch_exists = (
+            await _run_git("rev-parse", "--verify", "--quiet", run_branch, cwd=self.workspace.root)
+        ).returncode == 0
+        if not branch_exists:
+            return False, f"Run branch {run_branch} does not exist"
+
+        target_branch = base_branch
+        if not target_branch:
+            cur_proc = await _run_git("branch", "--show-current", cwd=self.workspace.root)
+            if cur_proc.returncode == 0 and cur_proc.stdout.strip():
+                target_branch = cur_proc.stdout.decode(errors="replace").strip()
+            else:
+                target_branch = "main"
+
+        cur_proc = await _run_git("branch", "--show-current", cwd=self.workspace.root)
+        cur_branch = cur_proc.stdout.decode(errors="replace").strip() if cur_proc.returncode == 0 else ""
+        if cur_branch == target_branch:
+            status_proc = await _run_git("status", "--porcelain", cwd=self.workspace.root)
+            status_out = status_proc.stdout.decode(errors="replace")
+            dirty_lines = [
+                line
+                for line in status_out.splitlines()
+                if line.strip() and not line.strip().startswith("?? .agents/") and line.strip() != "?? .agents"
+            ]
+            if dirty_lines:
+                return False, "Working tree is dirty; merge deferred"
+
+        msg = commit_message or f"Merge run {run_id} into {target_branch}"
+        merge_proc = await _run_git("merge", "--no-ff", run_branch, "-m", msg, cwd=self.workspace.root)
+        if merge_proc.returncode != 0:
+            err = merge_proc.stderr.decode(errors="replace").strip() or merge_proc.stdout.decode(errors="replace").strip()
+            await _run_git("merge", "--abort", cwd=self.workspace.root)
+            return False, f"Merge conflict or error: {err}"
+
+        await self.discard(run_id)
+        return True, f"Merged {run_branch} into {target_branch}"
 
 
 # One lock per workspace root, not one per strategy instance -- a strategy may be

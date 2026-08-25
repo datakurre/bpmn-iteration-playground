@@ -1,108 +1,126 @@
-# BPMN Pi Workflow
+# graph-agent
 
-A personal, iterative digital design and manufacturing pipeline: BPMN 2.0 processes are the
-controller for agent work, replacing bespoke agentic loops without reinventing their atoms —
-Pi stays the agent runtime. BPMN contributes what an ad hoc loop doesn't: durable state,
-composable/reusable pipeline fragments (`CallActivity`), human-in-the-loop checkpoints
-(FormJS forms), and branchable history (savepoint fork — try a design variant from any past
-step). Orchestration is decoupled from the agent runtime through the adapter registry
-(`harness_type` → adapter), so future pipeline steps — a slicer, CAM tool, or other non-LLM
-process — plug in the same way Pi does, without engine changes.
+**graph-agent** is a durable BPMN 2.0 orchestration engine and agent runtime. It replaces bespoke, fragile agentic loops with structured, durable BPMN workflows without reinventing the agent atoms.
 
-FastAPI persists SpiffWorkflow instances in ZODB and orchestrates AI service tasks
-as stateless, step-by-step turns via Pi's non-interactive JSON print mode (`--mode json -p <prompt>`),
-preserving context across turns by propagating `session_id`.
+- **Durable Orchestration**: Built on [SpiffWorkflow](https://spiffworkflow.org/) with per-workspace local **ZODB** persistence.
+- **Agent Turns as Tasks**: Service tasks dispatch to local AI agent harnesses (such as [Pi](https://github.com/badlogic/pi-mono)) or deterministic tools ([ShellAdapter](graph_agent/adapters/shell_adapter.py)).
+- **Isolated Workspace Strategies**:
+  - `worktree`: Runs each graph on an isolated Git worktree branch (`bpmn/run/<id>`) with auto-merge on clean completion.
+  - `in_place`: Serialized in-place execution with concurrency mutex for non-Git repositories.
+  - `blob`: Ephemeral workspace snapshots stored directly in ZODB.
+- **Interactive TUI & Web Studio**: Terminal user interface ([Textual](https://textual.textualize.io/)) and web dashboard with visual BPMN viewer, FormJS human checkpoints, and SavePoint branch/forking.
+- **CLI Suite**: Full set of verbs to run, inspect, follow, cancel, merge, and manage workflows.
 
-## Run
+---
 
-```bash
-devenv up -d
-devenv processes wait
-```
+## Quick Start
 
-Open `http://127.0.0.1:8000/` for the Workflow Studio dashboard. Start a
-workflow with `POST /workflow/start`, or use the dashboard. Pi tasks run in a
-local non-interactive CLI subprocess and return a validated JSON contract. Human tasks remain
-waiting until `POST /workflow/{workflow_id}/submit-task/{task_id}` is called.
-Failed Pi tasks remain persisted with their failure reason until the user
-presses `Retry` in the instance UI or calls the retry endpoint.
-
-Service tasks publish their results to the workflow only through declared
-`camunda:outputParameters`, so gateways route on task-scoped names
-(`plan_status == 'success'`) and parallel agent turns cannot overwrite each other.
-
-A graph can also wait on the outside world: a message catch event parks the instance
-until `POST /instance/{instanceId}/message/{name}` delivers a payload, and timer events
-fire from a background ticker (`TIMER_TICK_SECONDS`, `0` disables). See
-`graph_agent/data/workflows/external_gate.bpmn`. `graph_agent/data/workflows/composed_delivery.bpmn` shows a whole
-agent-plus-human cycle reused as a single CallActivity node.
-
-Each persisted instance has stateful routes under `/instance/{instanceId}`:
-`/state`, `/diagram`, `/form/{taskId}`, and `/submit-task/{taskId}`. The
-`/instance/{instanceId}` page renders the persisted BPMN XML with local
-`bpmn-js` assets and highlights active tasks. `/admin` lists and deletes stored
-instances; set `ADMIN_TOKEN` to require an `X-Admin-Token` header.
-
-Every wait boundary creates a durable save point: `before_harness`,
-`after_harness`, and `human_wait` where applicable. The instance page exposes a
-`Fork` action for each save point. Forking before the harness reruns Pi;
-forking after the harness resumes orchestration without rerunning Pi.
-
-## Deterministic steps: the shell harness
-
-Not every node in a pipeline is an agent. A task with `harness_type: shell` runs a command
-declared in its BPMN properties inside the instance workspace, and publishes the result
-through the same output contract agent tasks use:
-
-```xml
-<camunda:property name="harness_type" value="shell" />
-<camunda:property name="command" value="make pdf" />
-<camunda:property name="artifacts" value="slides.pdf" />
-<camunda:property name="fail_on_error" value="false" />
-```
-
-The command never comes from workflow data — only from the diagram — because workflow data
-is largely agent-written. `fail_on_error="false"` is the interesting part: a non-zero exit
-then completes the turn with `${status}` set to `failed` instead of halting the instance, so
-a gateway can *route* on the failure. That turns a compiler into a participant in the loop.
-
-`graph_agent/data/workflows/beamer_slides.bpmn` is the worked example: an agent plans a deck outline, a human
-settles the outline, `template="beamer"` scaffolds a pinned TeX Live toolchain
-(`graph_agent/data/workspace_templates/beamer/` — `texliveBasic.withPackages` + a `Makefile`), an agent writes
-`slides.tex`, and `make pdf` compiles it. If LaTeX rejects the deck the instance parks on a
-diagnosis gate with the log, where you either hand it back to the slide agent for another
-attempt or abandon the deck — a build the agent cannot fix costs one turn, not an unbounded
-spiral. Once it compiles, `make images` renders one PNG per slide, so the human reviews the
-deck as it actually looks rather than approving source.
-
-For a deterministic local showcase without model credentials:
+### 1. Initialize a Workspace
+Initialize `.agents/` in any project folder:
 
 ```bash
-devenv processes down
-devenv shell -- demo
+graph-agent init
 ```
 
-The demo command uses `graph_agent/data/pi-demo` as a deterministic CLI mock. The
-normal devenv installs the pinned Pi CLI at `node_modules/.bin/pi` and points
-`PI_EXECUTABLE` there automatically.
+This creates the workspace structure:
+- `.agents/workflows/`: Editable BPMN workflow templates.
+- `.agents/state/`: Local ZODB workflow database (`Data.fs`).
+- `.agents/worktrees/`: Git worktrees for isolated parallel executions.
+- `.agents/logs/`: Daemon and activity logs.
 
-## Pi Variants
-
-The flake packages focused wrappers around the local Pi CLI:
+### 2. Launch the TUI
+Run `graph-agent` with no arguments to start or attach to the local daemon and open the interactive TUI:
 
 ```bash
-nix run .#pi-bpmn-json-form-builder -- "Build a Camunda form"
-nix run .#pi-text-analysis -- "Analyze this text"
-nix run .#pi-contract-review -- "Review this contract"
-nix run .#pi-beamer-author -- "Turn outline.md into slides.tex"
+graph-agent
 ```
 
-Each wrapper supplies a task-specific system prompt and tool allowlist. The
-underlying executable is selected with `PI_EXECUTABLE` and defaults to `pi`.
+Or attach to an already-running daemon:
 
-Pi runs with the permissions of its parent process. Use a dedicated user or container.
-Each instance gets its own unpacked workspace; `PI_WORKDIR` is an optional template
-directory copied into a fresh workspace, not the directory the agent runs in.
+```bash
+graph-agent attach
+```
 
-A failed Pi run only retries against the demo mock when `PI_ALLOW_DEMO_FALLBACK=1`.
-Leave it off in any deployment where a fabricated agent result would be acted on.
+### 3. Headless Daemon Mode
+To run the daemon in the background or headlessly:
+
+```bash
+graph-agent serve --no-tui
+```
+
+---
+
+## Command Line Interface (CLI)
+
+`graph-agent` (or `bpmn`) provides a complete set of commands:
+
+```bash
+# Start a new workflow run
+graph-agent run plan_and_execute.bpmn --var goal="Implement user authentication"
+
+# List all active and historical runs
+graph-agent ls
+graph-agent ls --all
+
+# View details of a specific workflow run
+graph-agent show <run-id>
+
+# View or follow streaming logs of a run
+graph-agent logs <run-id> -f
+
+# Merge a completed run branch into the base branch
+graph-agent merge <run-id>
+
+# Cancel a running workflow
+graph-agent cancel <run-id>
+
+# Check daemon status or open web UI
+graph-agent status
+graph-agent open
+graph-agent stop
+```
+
+---
+
+## Interactive Terminal UI (TUI)
+
+The TUI provides 6 purpose-built screens:
+
+1. **Runs Screen**: Overview of active, completed, and waiting workflows with status, current task, elapsed time, and merge state.
+2. **Run Detail Screen**: Task timeline, streaming agent/shell output logs, workflow data inspector, and savepoint checkpoints.
+3. **Inbox Screen**: Cross-graph aggregator for pending human tasks (`waiting_human`) and deferred merges (`merge_deferred`).
+4. **Form Screen**: Native interactive rendering of FormJS schemas (`textfield`, `textarea`, `number`, `checkbox`, `select`, `radio`) with a fallback deep-link to the browser.
+5. **Start Screen**: Template chooser listing `.agents/workflows/` with variable prompt fields.
+6. **Log Screen**: Live auto-scrolling tail of workspace activity logs.
+
+---
+
+## Workspace Strategies
+
+Workflows configure how their filesystem is managed via `workspace_mode` (in template properties, `config.toml`, or automatically inferred):
+
+| Mode | Applicable When | Isolation | Concurrency | Branch / Merge |
+|---|---|---|---|---|
+| `worktree` | Git repository | Isolated Git worktree | Full turn parallelism | Creates `bpmn/run/<id>`, auto-merges on clean completion |
+| `in_place` | Any directory | Direct project root | Serialized via workspace mutex | Direct edits in workspace, no Git branches |
+| `blob` | Scratch / ephemeral runs | Temporary directory | Fully isolated | Packed as `tar.zst` blobs in ZODB |
+
+---
+
+## Development
+
+To develop and test `graph-agent` itself:
+
+```bash
+# Enter development shell with Python, Node, and toolchains
+devenv shell
+
+# Run full test suite (400+ tests)
+pytest tests/
+
+# Strict type checking
+mypy --strict graph_agent/
+
+# Linter and formatter
+ruff check graph_agent/ tests/
+```

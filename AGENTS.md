@@ -46,11 +46,16 @@ It:
 
 ```
 graph_agent/
-  cli.py             – `bpmn` console-script entry point: init/serve/status/open/stop
+  cli.py             – `graph-agent` / `bpmn` entry point: init/attach/run/ls/show/logs/merge/cancel/serve/status/open/stop
   agents_root.py     – Workspace: `.agents/` root discovery and directory layout
-  daemon.py          – `bpmn serve`'s free-port bind, runtime.json handshake, is_daemon_alive
+  daemon.py          – `graph-agent serve` free-port bind, runtime.json handshake, is_daemon_alive
   workspace_strategy.py – WorkspaceStrategy: BlobStrategy / WorktreeStrategy / InPlaceStrategy
                         and select_strategy() -- see AGENTS.md §4d
+  tui/               – Textual Terminal User Interface
+    client.py        – DaemonClient: async HTTP/WebSocket API client
+    forms.py         – FormJS schema parser & data extractor
+    app.py           – GraphAgentApp main application
+    screens/         – RunsScreen, RunDetailScreen, InboxScreen, FormScreen, StartScreen, LogScreen
   api/
     server.py        – FastAPI app factory: lifespan, static mounts, includes routers/ below
     security.py      – OriginHostGuardMiddleware: blocks a page on another origin from
@@ -64,11 +69,10 @@ graph_agent/
       templates.py     – harness/template discovery + save-BPMN-XML endpoint
       webhooks.py       – webhook subscription CRUD
       history.py        – /api/history/* storage stats, pack, browse
-      admin.py          – legacy /admin/* endpoints (kept for existing clients)
       instance.py       – /instance/* : state, diagram, workspace, forms, savepoints, fork,
                           messaging, retry, cancel, SSE event stream (largest router)
       workflow.py       – original pre-/instance API surface (start, submit-task, form)
-      projects.py       – /project : create/list/detail/spawn over ProjectService
+      projects.py       – /project : create/list/detail/spawn/current over ProjectService
   adapters/
     base.py          – BaseAdapter ABC (run + prepare_workspace hook) + AgentResult dataclass
     sandbox_policy.py – shared agent-sandbox setup: executable resolution, workspace

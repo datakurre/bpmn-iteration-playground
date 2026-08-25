@@ -139,6 +139,11 @@ class WorkflowService:
         self.jobs: dict[str, asyncio.Task[None]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._timer_task: asyncio.Task[None] | None = None
+        try:
+            self.max_parallel_turns = int(os.getenv("MAX_PARALLEL_TURNS", "4"))
+        except (ValueError, TypeError):
+            self.max_parallel_turns = 4
+        self._turn_semaphore = asyncio.Semaphore(self.max_parallel_turns)
 
     def _lock(self, workflow_id: str) -> asyncio.Lock:
         return self._locks.setdefault(workflow_id, asyncio.Lock())
@@ -179,6 +184,9 @@ class WorkflowService:
             "parent_workflow_id": record.get("parent_workflow_id"),
             "forked_from": record.get("forked_from"),
             "forked_from_save_point": record.get("forked_from_save_point"),
+            "merge_status": record.get("merge_status"),
+            "merge_error": record.get("merge_error"),
+            "merged_at": record.get("merged_at"),
         }
 
     @staticmethod
@@ -484,8 +492,6 @@ class WorkflowService:
             self._sync_children(workflow_id, record)
             await self._dispatch(workflow_id, _lock_held=True)
         state = self.state(workflow_id)
-        if state["status"] == "completed":
-            self.events.emit("workflow_completed", workflow_id, data=state["data"])
         await ws_manager.broadcast(workflow_id, state)
         return state
 
@@ -640,8 +646,6 @@ class WorkflowService:
             self._sync_children(workflow_id, record)
             await self._dispatch(workflow_id, _lock_held=True)
         state = self.state(workflow_id)
-        if state["status"] == "completed":
-            self.events.emit("workflow_completed", workflow_id, data=state["data"])
         await ws_manager.broadcast(workflow_id, state)
         return state
 
@@ -817,11 +821,79 @@ class WorkflowService:
             "fields": fields,
         }
 
+    async def merge_run(self, workflow_id: str, _lock_held: bool = False) -> dict[str, Any]:
+        """Attempt to merge a completed worktree workflow's branch back into the base branch (§6)."""
+        workflow_id = self._get_root_workflow_id(workflow_id)
+        guard: Any = contextlib.nullcontext() if _lock_held else self._lock(workflow_id)
+        async with guard:
+            record = self._record(workflow_id)
+            if record["status"] != "completed":
+                msg = f"Run is in status {record['status']!r}; only completed runs can be merged"
+                return {
+                    "workflow_id": workflow_id,
+                    "status": "merge_deferred",
+                    "message": msg,
+                }
+            if not self.workspace or not self.workspace.is_git:
+                msg = "Workspace is not a git repository"
+                return {
+                    "workflow_id": workflow_id,
+                    "status": "unsupported",
+                    "message": msg,
+                }
+            from graph_agent.workspace_strategy import WorktreeStrategy
+            strategy = WorktreeStrategy(self.workspace)
+            turns_count = sum(j.get("attempts", 1) for j in record.get("jobs", {}).values())
+            bpmn_name = Path(record.get("bpmn_path", "workflow")).stem
+            msg = f"Merge run {workflow_id[:8]} ({bpmn_name}, {turns_count} turn(s))"
+            success, msg_result = await strategy.merge(workflow_id, commit_message=msg)
+            if success:
+                record["merge_status"] = "merged"
+                record["merged_at"] = datetime.now(UTC).isoformat()
+                record.pop("merge_error", None)
+                await asyncio.to_thread(self.store.save, workflow_id, record)
+                self.events.emit("run_merged", workflow_id, data={"message": msg_result})
+                return {
+                    "workflow_id": workflow_id,
+                    "status": "merged",
+                    "message": msg_result,
+                }
+            else:
+                record["merge_status"] = "merge_deferred"
+                record["merge_error"] = msg_result
+                await asyncio.to_thread(self.store.save, workflow_id, record)
+                self.events.emit("run_merge_deferred", workflow_id, data={"reason": msg_result})
+                return {
+                    "workflow_id": workflow_id,
+                    "status": "merge_deferred",
+                    "message": msg_result,
+                }
+
+    async def _maybe_auto_merge(self, workflow_id: str, record: dict[str, Any], _lock_held: bool = False) -> None:
+        """Attempt auto-merge on clean completion if enabled (§6)."""
+        if not self.workspace or not self.workspace.is_git:
+            return
+        wf_data = record.get("data") or {}
+        merge_on_complete = wf_data.get("merge_on_complete", True)
+        if isinstance(merge_on_complete, str):
+            merge_on_complete = merge_on_complete.lower() in ("true", "1", "yes")
+        if not merge_on_complete:
+            logger.info("Auto-merge disabled for workflow %s", workflow_id)
+            return
+
+        logger.info("Attempting auto-merge for completed workflow %s", workflow_id)
+        await self.merge_run(workflow_id, _lock_held=_lock_held)
+
     async def recover_orphaned_workflows(self) -> int:
-        """Scan for orphaned workflows in 'waiting_pi' with no active jobs and mark them failed."""
+        """Scan for orphaned workflows and clean up dangling worktrees.
+
+        1. Workflows in 'waiting_pi', 'running', or 'retry_requested' with no active jobs
+           are marked failed.
+        2. Prune dangling worktrees for non-existent or terminated runs.
+        """
         recovered = 0
         for item in self.instances():
-            if item["status"] == "waiting_pi":
+            if item["status"] in ("waiting_pi", "running", "retry_requested"):
                 record = self.store.load(item["workflow_id"])
                 if not record:
                     continue
@@ -832,9 +904,21 @@ class WorkflowService:
                     record["status"] = "failed"
                     record["failure_reason"] = "Recovered orphaned workflow on system startup"
                     for j in record.get("jobs", {}).values():
-                        if j.get("status") == "running":
+                        if j.get("status") in ("running", "retry_requested"):
                             j["status"] = "failed"
                             j["failure_reason"] = "Process terminated unexpectedly"
                     await asyncio.to_thread(self.store.save, item["workflow_id"], record)
                     recovered += 1
+
+        if self.workspace and self.workspace.is_git and self.workspace.worktrees_dir.is_dir():
+            from graph_agent.workspace_strategy import WorktreeStrategy
+            strategy = WorktreeStrategy(self.workspace)
+            for child in list(self.workspace.worktrees_dir.iterdir()):
+                if child.is_dir():
+                    run_id = child.name
+                    rec = self.store.load(run_id)
+                    if not rec or rec.get("status") in ("completed", "failed", "cancelled"):
+                        with contextlib.suppress(Exception):
+                            await strategy.discard(run_id)
+
         return recovered

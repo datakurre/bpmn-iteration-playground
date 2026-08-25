@@ -9,7 +9,6 @@ from fastapi.staticfiles import StaticFiles
 
 from graph_agent.agents_root import Workspace
 from graph_agent.api.routers import (
-    admin,
     history,
     instance,
     pages,
@@ -104,7 +103,6 @@ def create_app(service: WorkflowService | None = None, workspace: Workspace | No
             {"name": "Webhooks", "description": "Event subscription and delivery"},
             {"name": "Templates", "description": "BPMN template discovery and catalog"},
             {"name": "Projects", "description": "Long-running Projects: create, list, and spawn child tasks"},
-            {"name": "Admin", "description": "Administrative maintenance and storage compaction"},
         ],
     )
 
@@ -127,7 +125,6 @@ def create_app(service: WorkflowService | None = None, workspace: Workspace | No
     app.include_router(templates.build_router(get_service, template_registry, element_templates_registry))
     app.include_router(webhooks.build_router(get_service))
     app.include_router(history.build_router(get_service))
-    app.include_router(admin.build_router(get_service))
     app.include_router(instance.build_router(get_service))
     app.include_router(workflow.build_router(get_service))
     app.include_router(projects.build_router(get_project_service))

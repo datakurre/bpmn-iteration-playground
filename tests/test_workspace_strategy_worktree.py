@@ -8,12 +8,17 @@ from graph_agent.workspace_strategy import GitOperationError, WorktreeStrategy
 
 
 def _init_git_repo(root: Path) -> None:
-    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+    subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=root, check=True)
     (root / "README.md").write_text("hello\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=root, check=True)
-    subprocess.run(["git", "commit", "-q", "-m", "initial"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", "commit", "-q", "-m", "initial"],
+        cwd=root,
+        check=True,
+    )
 
 
 def _workspace(tmp_path: Path) -> Workspace:
