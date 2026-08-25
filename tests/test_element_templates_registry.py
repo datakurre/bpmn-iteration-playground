@@ -2,7 +2,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from bpmn_agent.element_templates_registry import ElementTemplatesRegistry
+from graph_agent.element_templates_registry import ElementTemplatesRegistry
 
 
 def test_registry_merges_array_and_object_files() -> None:

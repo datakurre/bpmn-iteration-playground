@@ -2,7 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const templatesDir = path.join(__dirname, '../bpmn_agent/templates');
+const templatesDir = path.join(__dirname, '../graph_agent/templates');
 const files = fs.readdirSync(templatesDir).filter(f => f.endsWith('.html'));
 
 let errors = 0;

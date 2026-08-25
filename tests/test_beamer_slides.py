@@ -5,15 +5,15 @@ from typing import Any
 
 import pytest
 
-from bpmn_agent.adapters.base import AgentResult
-from bpmn_agent.adapters.shell_adapter import ShellAdapter
-from bpmn_agent.engine import WorkflowRunner
-from bpmn_agent.persistence import WorkflowStore
-from bpmn_agent.pi_client import PiResult
-from bpmn_agent.registry import WorkflowRegistry
-from bpmn_agent.workflow_service import WorkflowService
+from graph_agent.adapters.base import AgentResult
+from graph_agent.adapters.shell_adapter import ShellAdapter
+from graph_agent.engine import WorkflowRunner
+from graph_agent.persistence import WorkflowStore
+from graph_agent.pi_client import PiResult
+from graph_agent.registry import WorkflowRegistry
+from graph_agent.workflow_service import WorkflowService
 
-BPMN_PATH = "bpmn_agent/data/workflows/beamer_slides.bpmn"
+BPMN_PATH = "graph_agent/data/workflows/beamer_slides.bpmn"
 BRIEF = {"topic": "BPMN as an agent controller", "audience": "platform engineers", "duration_minutes": 20}
 
 

@@ -35,7 +35,7 @@ them.
 
 | Decision | Answer | Consequence |
 |---|---|---|
-| CLI + package name | **`bpmn`** / `bpmn_agent` | Names the tool after what distinguishes it: BPMN graphs as the controller. The state directory stays `.agents/` as specified — the slight mismatch is deliberate, since `.agents/` is the name that reads right next to a project's other agent config |
+| CLI + package name | **`bpmn`** / `graph_agent` | Names the tool after what distinguishes it: BPMN graphs as the controller. The state directory stays `.agents/` as specified — the slight mismatch is deliberate, since `.agents/` is the name that reads right next to a project's other agent config |
 | Non-git workspaces | **Must work anywhere** | `InPlaceStrategy` is first-class, not an escape hatch. Phase 3 grows a degraded-mode UX across API, web, and TUI |
 | Merge-back | **Auto-merge on clean completion** | Successful runs land on the base branch without asking. § 6 designs the guard rails this needs |
 | Browser UI | **Stays first-class** | The esbuild/Tailwind pipeline and vendored bpmn-js ship inside the wheel; phase 0 must vendor them properly |
@@ -116,7 +116,7 @@ against the local daemon, exactly like the browser UI. One protocol, one auth pa
   runtime.json           # pid, port, url, token, schema version of the live daemon
   worktrees/<run-id>/    # git worktrees, one per run (worktree strategy)
   runs/<run-id>/         # per-run scratch: prompts, raw adapter output, artifacts
-  logs/bpmn-agent.log
+  logs/graph-agent.log
 ```
 
 `config.toml` and `workflows/` are meant to be committed — a project's graphs are part of
@@ -135,25 +135,25 @@ plumbing with no behavioural change; phase 3 is the one with real design risk.
 
 *No behaviour change. This is the phase that makes every later phase possible.*
 
-1. `git mv app bpmn_agent` + mechanical import rewrite. The top-level name `app` cannot ship
+1. `git mv app graph_agent` + mechanical import rewrite. The top-level name `app` cannot ship
    on PyPI or coexist in a site-packages with anything else. Doing it first keeps it a pure
    rename diff instead of tangling with logic changes later.
-2. Add `[build-system]` (hatchling) and `[project.scripts] bpmn = "bpmn_agent.cli:main"`.
+2. Add `[build-system]` (hatchling) and `[project.scripts] bpmn = "graph_agent.cli:main"`.
 3. Delete the module-level `app = create_app()`. `create_app(settings: Settings)` becomes
    the only constructor; `Settings` is passed in, never read from the environment inside
    the factory.
-4. New `bpmn_agent/config.py`: a `Settings` dataclass that layers **defaults → `.agents/config.toml`
+4. New `graph_agent/config.py`: a `Settings` dataclass that layers **defaults → `.agents/config.toml`
    → environment → CLI flags**, absorbing the ~25 scattered `os.getenv` calls. Adapters keep
    reading a settings object, not `os.environ`.
 5. Vendor the runtime assets into package data so nothing resolves through `parents[2]`.
    The browser UI stays first-class, so this has to be done properly rather than trimmed:
-   - `npm run build` copies `bpmn-js` / `@bpmn-io/form-js` dist into `bpmn_agent/static/vendor/`,
+   - `npm run build` copies `bpmn-js` / `@bpmn-io/form-js` dist into `graph_agent/static/vendor/`,
      and the built `pages/`, modeler and viewer bundles ship as package data too.
    - The vendored `operaton-element-templates` submodules are a **build-time** dependency:
      their `dist/` output is bundled by esbuild into the modeler bundle, so the wheel ships
      the bundle, not the submodules. Wheel size lands in the tens of MB, which was the
      accepted cost of keeping the diagram view.
-   - `workspace_templates/` and `scripts/pi-demo` move under `bpmn_agent/` as package data;
+   - `workspace_templates/` and `scripts/pi-demo` move under `graph_agent/` as package data;
      `shell_adapter.TEMPLATE_ROOT` and `pi_client`'s demo path resolve via
      `importlib.resources`.
    - `sandbox_policy.REPO_ROOT` splits into two distinct things it currently conflates: the
@@ -168,7 +168,7 @@ works, and `pytest` is green.
 
 ### Phase 1 — `.agents/` as the state root
 
-1. New `bpmn_agent/workspace.py` (`Workspace`): root discovery — walk up from CWD for
+1. New `graph_agent/workspace.py` (`Workspace`): root discovery — walk up from CWD for
    `.agents/`, then for `.git/`, else use CWD; `--workspace PATH` overrides. Owns the
    directory layout above and creates it lazily. Records `is_git` at discovery, which is
    what phase 3 selects a strategy on.
@@ -300,7 +300,7 @@ HTTP + `/ws/instance/{id}` on the loopback port.
 | **Inbox** | Pending human tasks *and* deferred merges across all runs. This is the screen that makes parallel graphs usable — without it, N graphs means N places to look. |
 | **Form** | Renders the FormJS subset natively (textfield, textarea, number, checkbox, select, radio). Anything richer shows a one-key "open in browser" deep link rather than a bad approximation. |
 | **Start** | Template picker from `.agents/workflows/`, with variable prompts. |
-| **Log** | Tail of `.agents/logs/bpmn-agent.log`. |
+| **Log** | Tail of `.agents/logs/graph-agent.log`. |
 
 `bpmn` with no arguments = start-or-attach + TUI. `bpmn attach` = TUI against an
 already-running daemon. `bpmn serve --no-tui` = headless.
@@ -368,7 +368,7 @@ change — which is why it is a setting rather than a hard-coded policy.
 
 | # | Decision | Why | Reversal cost |
 |---|---|---|---|
-| 1 | `bpmn` / `bpmn_agent`, state in `.agents/` | Names the tool after what distinguishes it; `.agents/` was specified and reads right beside other agent config | sed, during phase 0 only |
+| 1 | `bpmn` / `graph_agent`, state in `.agents/` | Names the tool after what distinguishes it; `.agents/` was specified and reads right beside other agent config | sed, during phase 0 only |
 | 2 | Worktree where git allows it, in-place otherwise — both first-class | The tool must run in any directory; git is what makes isolation possible, not a requirement to use it | — |
 | 3 | Auto-merge on clean completion, guarded per § 6 | Chosen; friction on unattended pipelines | `merge_on_complete = false` |
 | 4 | The web UI stays first-class | It does what a TUI does badly: the diagram, the modeler, rich FormJS, the savepoint inspector | — |

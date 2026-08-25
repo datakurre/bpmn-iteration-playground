@@ -1,9 +1,9 @@
 import asyncio
 
-from bpmn_agent.persistence import WorkflowStore
-from bpmn_agent.pi_client import PiResult
-from bpmn_agent.sync_children import sync_children
-from bpmn_agent.workflow_service import WorkflowService
+from graph_agent.persistence import WorkflowStore
+from graph_agent.pi_client import PiResult
+from graph_agent.sync_children import sync_children
+from graph_agent.workflow_service import WorkflowService
 
 
 class FakePi:
@@ -26,7 +26,7 @@ def test_sync_children_no_op_for_unknown_workflow() -> None:
 def test_sync_children_syncs_existing_root() -> None:
     async def scenario() -> None:
         service = WorkflowService(WorkflowStore(":memory:"), FakePi())
-        state = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+        state = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
         await asyncio.gather(*service.jobs.values())
         sync_children(service, state["workflow_id"])
 

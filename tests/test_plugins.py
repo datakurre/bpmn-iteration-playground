@@ -1,11 +1,11 @@
 import asyncio
 from typing import Any
 
-from bpmn_agent.adapters.base import AgentResult, BaseAdapter
-from bpmn_agent.adapters.mock_adapter import MockAdapter
-from bpmn_agent.adapters.registry import AdapterRegistry
-from bpmn_agent.persistence import WorkflowStore
-from bpmn_agent.workflow_service import WorkflowService
+from graph_agent.adapters.base import AgentResult, BaseAdapter
+from graph_agent.adapters.mock_adapter import MockAdapter
+from graph_agent.adapters.registry import AdapterRegistry
+from graph_agent.persistence import WorkflowStore
+from graph_agent.workflow_service import WorkflowService
 
 
 class CustomSecurityAdapter(BaseAdapter):
@@ -46,7 +46,7 @@ def test_adapter_registry_and_custom_adapter_execution() -> None:
         store = WorkflowStore(":memory:")
         service = WorkflowService(store, adapter_registry=registry)
 
-        started = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {"contract": "Test"})
+        started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "Test"})
         wf_id = started["workflow_id"]
 
         async def _wait():

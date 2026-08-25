@@ -2,9 +2,9 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from bpmn_agent.api.server import create_app
-from bpmn_agent.persistence import WorkflowStore
-from bpmn_agent.workflow_service import WorkflowService
+from graph_agent.api.server import create_app
+from graph_agent.persistence import WorkflowStore
+from graph_agent.workflow_service import WorkflowService
 
 
 def _client() -> TestClient:
@@ -36,7 +36,7 @@ def test_post_with_mismatched_origin_is_blocked_before_reaching_the_route() -> N
     with _client() as client:
         resp = client.post(
             "/workflow/start",
-            json={"bpmn_path": "bpmn_agent/data/workflows/contract_review.bpmn", "variables": {}},
+            json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {}},
             headers={"Origin": "https://evil.example"},
         )
     assert resp.status_code == 403

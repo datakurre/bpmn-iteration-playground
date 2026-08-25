@@ -11,12 +11,12 @@ devenv.local.yaml
 # Environment & Data
 .env
 .env.local
-# Root-anchored: bpmn_agent/data/ is tracked package data (pi-demo, workspace_templates),
+# Root-anchored: graph_agent/data/ is tracked package data (pi-demo, workspace_templates),
 # not the ZODB storage directory this is meant to ignore.
 /data/
 *.db
 *.zodb
-# This repo's own checkout is also a valid `bpmn` workspace (running `bpmn serve` or the
+# This repo's own checkout is also a valid `graph-agent` workspace (running `graph-agent serve` or the
 # tests from here creates .agents/ at the repo root the same way it would in any project).
 /.agents/
 
@@ -31,15 +31,15 @@ coverage/
 
 # Node
 node_modules/
-bpmn_agent/static/bpmn-modeler-bundle.js
-bpmn_agent/static/bpmn-viewer-bundle.js
-bpmn_agent/static/pages/
-bpmn_agent/static/tailwind.css
-bpmn_agent/static/diagram-js-minimap.css
-bpmn_agent/static/properties-panel.css
-bpmn_agent/static/bpmn-js-token-simulation.css
-bpmn_agent/static/bpmn-js-bpmnlint.css
-bpmn_agent/static/element-template-chooser.css
+graph_agent/static/bpmn-modeler-bundle.js
+graph_agent/static/bpmn-viewer-bundle.js
+graph_agent/static/pages/
+graph_agent/static/tailwind.css
+graph_agent/static/diagram-js-minimap.css
+graph_agent/static/properties-panel.css
+graph_agent/static/bpmn-js-token-simulation.css
+graph_agent/static/bpmn-js-bpmnlint.css
+graph_agent/static/element-template-chooser.css
 
 # Temporary & Verification Outputs
 *.log

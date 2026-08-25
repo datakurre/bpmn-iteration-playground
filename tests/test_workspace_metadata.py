@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from bpmn_agent.workflow_service import WorkflowService
-from bpmn_agent.workspace import (
+from graph_agent.workflow_service import WorkflowService
+from graph_agent.workspace import (
     cleanup_workspace,
     extract_workspace_file,
     get_workspace_metadata,
@@ -54,7 +54,7 @@ async def test_workspace_metadata_and_single_file_extraction() -> None:
 def test_workspace_api_endpoints(client: TestClient) -> None:
     # Start a workflow
     start_resp = client.post("/workflow/start", json={
-        "bpmn_path": "bpmn_agent/data/workflows/contract_review.bpmn",
+        "bpmn_path": "graph_agent/data/workflows/contract_review.bpmn",
         "variables": {"contract": "Test contract agreement."}
     })
     assert start_resp.status_code == 200
@@ -73,7 +73,7 @@ async def test_unpack_workspace_gz_fallback() -> None:
     import io
     import tarfile
 
-    from bpmn_agent.workspace import unpack_workspace
+    from graph_agent.workspace import unpack_workspace
 
     # Create a tar.gz archive in memory
     buf = io.BytesIO()
@@ -99,7 +99,7 @@ async def test_unpack_workspace_plain_tar_no_compression() -> None:
     import io
     import tarfile
 
-    from bpmn_agent.workspace import unpack_workspace
+    from graph_agent.workspace import unpack_workspace
 
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w") as tar:
@@ -121,7 +121,7 @@ async def test_unpack_workspace_plain_tar_no_compression() -> None:
 async def test_unpack_workspace_empty_blob_returns_bare_workdir() -> None:
     from ZODB.blob import Blob
 
-    from bpmn_agent.workspace import unpack_workspace
+    from graph_agent.workspace import unpack_workspace
 
     blob = Blob()
     with blob.open("w") as f:
@@ -139,7 +139,7 @@ async def test_unpack_workspace_empty_blob_returns_bare_workdir() -> None:
 async def test_unpack_workspace_unopenable_blob_returns_bare_workdir() -> None:
     from ZODB.blob import Blob
 
-    from bpmn_agent.workspace import unpack_workspace
+    from graph_agent.workspace import unpack_workspace
 
     # A freshly-constructed Blob has no committed data yet, so .open("r") raises.
     blob = Blob()
@@ -154,7 +154,7 @@ async def test_unpack_workspace_unopenable_blob_returns_bare_workdir() -> None:
 async def test_pack_workspace_falls_back_to_gzip_when_tar_subprocess_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     import subprocess
 
-    from bpmn_agent.workspace import pack_workspace
+    from graph_agent.workspace import pack_workspace
 
     def boom(*args, **kwargs):
         raise FileNotFoundError("no tar binary")
@@ -176,7 +176,7 @@ async def test_pack_workspace_falls_back_to_gzip_when_tar_subprocess_fails(monke
 async def test_pack_workspace_to_bytes_falls_back_to_gzip_when_tar_subprocess_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     import subprocess
 
-    from bpmn_agent.workspace import pack_workspace_to_bytes
+    from graph_agent.workspace import pack_workspace_to_bytes
 
     def boom(*args, **kwargs):
         raise FileNotFoundError("no tar binary")
@@ -199,7 +199,7 @@ def test_get_workspace_metadata_on_missing_directory() -> None:
 
 @pytest.mark.anyio
 async def test_extract_workspace_file_blocks_path_traversal() -> None:
-    from bpmn_agent.workspace import extract_workspace_file
+    from graph_agent.workspace import extract_workspace_file
 
     workdir = tempfile.mkdtemp(prefix="bpmn-test-traversal-")
     try:
@@ -215,8 +215,8 @@ async def test_extract_workspace_file_blocks_path_traversal() -> None:
 async def test_duplicate_blob() -> None:
     import transaction
 
-    from bpmn_agent.persistence import WorkflowStore
-    from bpmn_agent.workspace import duplicate_blob
+    from graph_agent.persistence import WorkflowStore
+    from graph_agent.workspace import duplicate_blob
 
     assert duplicate_blob(None) is None
 
@@ -259,7 +259,7 @@ async def test_state_exposes_workspace_metadata(service: WorkflowService) -> Non
     """
     import asyncio
 
-    started = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+    started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
     await asyncio.gather(*list(service.jobs.values()))
     wf_id = started["workflow_id"]
 

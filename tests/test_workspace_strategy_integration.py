@@ -13,11 +13,11 @@ from typing import Any
 
 import pytest
 
-from bpmn_agent.adapters.base import AgentResult, BaseAdapter
-from bpmn_agent.adapters.mock_adapter import MockAdapter
-from bpmn_agent.agents_root import Workspace
-from bpmn_agent.persistence import WorkflowStore
-from bpmn_agent.workflow_service import WorkflowService
+from graph_agent.adapters.base import AgentResult, BaseAdapter
+from graph_agent.adapters.mock_adapter import MockAdapter
+from graph_agent.agents_root import Workspace
+from graph_agent.persistence import WorkflowStore
+from graph_agent.workflow_service import WorkflowService
 
 
 class FileWritingAdapter(BaseAdapter):
@@ -289,7 +289,7 @@ async def test_fork_of_worktree_savepoint_creates_a_new_worktree_at_that_commit(
 
 @pytest.mark.anyio
 async def test_fork_of_in_place_savepoint_is_rejected(tmp_path: Path) -> None:
-    from bpmn_agent.workspace_strategy import WorkspaceSnapshotUnsupportedError
+    from graph_agent.workspace_strategy import WorkspaceSnapshotUnsupportedError
 
     workspace = Workspace.discover(tmp_path)  # no .git -- InPlaceStrategy
     workspace.ensure()
@@ -316,7 +316,7 @@ async def test_fork_of_in_place_savepoint_is_rejected(tmp_path: Path) -> None:
 def test_fork_rejection_maps_to_a_typed_409(tmp_path: Path) -> None:
     from fastapi.testclient import TestClient
 
-    from bpmn_agent.api.server import create_app
+    from graph_agent.api.server import create_app
 
     async def scenario() -> dict:
         workspace = Workspace.discover(tmp_path)

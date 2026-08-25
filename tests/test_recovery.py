@@ -1,19 +1,19 @@
 import asyncio
 
-from bpmn_agent.engine import WorkflowRunner
-from bpmn_agent.persistence import WorkflowStore
-from bpmn_agent.workflow_service import WorkflowService
+from graph_agent.engine import WorkflowRunner
+from graph_agent.persistence import WorkflowStore
+from graph_agent.workflow_service import WorkflowService
 
 
 def test_orphan_recovery_on_startup() -> None:
     async def scenario() -> None:
         store = WorkflowStore(":memory:")
         runner = WorkflowRunner()
-        workflow, pid = runner.load_workflow("bpmn_agent/data/workflows/contract_review.bpmn")
+        workflow, pid = runner.load_workflow("graph_agent/data/workflows/contract_review.bpmn")
         record = runner.record(
             "orphaned-wf-1",
             workflow,
-            "bpmn_agent/data/workflows/contract_review.bpmn",
+            "graph_agent/data/workflows/contract_review.bpmn",
             pid,
             "waiting_pi",
             jobs={"task-1": {"status": "running"}},

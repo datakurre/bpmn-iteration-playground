@@ -1,8 +1,8 @@
 import asyncio
 
-from bpmn_agent.persistence import WorkflowStore
-from bpmn_agent.pi_client import PiResult
-from bpmn_agent.workflow_service import WorkflowService
+from graph_agent.persistence import WorkflowStore
+from graph_agent.pi_client import PiResult
+from graph_agent.workflow_service import WorkflowService
 
 
 class SubprocessFakePi:
@@ -29,7 +29,7 @@ def test_chained_workflow_execution() -> None:
         service = WorkflowService(store, SubprocessFakePi())
 
         # Execute bug triage workflow
-        bug_started = await service.start("bpmn_agent/data/workflows/bug_triage.bpmn", None, {"bug_report": "Memory leak in auth handler"})
+        bug_started = await service.start("graph_agent/data/workflows/bug_triage.bpmn", None, {"bug_report": "Memory leak in auth handler"})
         bug_id = bug_started["workflow_id"]
         async def _wait_jobs():
             while any(not job.done() for job in list(service.jobs.values())):
@@ -77,7 +77,7 @@ def test_call_activity_runs_child_process_with_human_gate() -> None:
         service = WorkflowService(store, SubprocessFakePi())
 
         started = await service.start(
-            "bpmn_agent/data/workflows/composed_delivery.bpmn", None, {"subject": "the API surface"}
+            "graph_agent/data/workflows/composed_delivery.bpmn", None, {"subject": "the API surface"}
         )
         workflow_id = started["workflow_id"]
         await asyncio.wait_for(_wait_jobs(service), timeout=5.0)
@@ -120,7 +120,7 @@ def test_call_activity_rejected_review_skips_delivery() -> None:
     async def scenario() -> None:
         service = WorkflowService(WorkflowStore(":memory:"), SubprocessFakePi())
         started = await service.start(
-            "bpmn_agent/data/workflows/composed_delivery.bpmn", None, {"subject": "the API surface"}
+            "graph_agent/data/workflows/composed_delivery.bpmn", None, {"subject": "the API surface"}
         )
         workflow_id = started["workflow_id"]
         await asyncio.wait_for(_wait_jobs(service), timeout=5.0)

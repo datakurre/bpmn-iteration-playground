@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name="bpmn-agent"
+name="graph-agent"
 version="0.1.0"
 requires-python=">=3.11"
 dependencies = [
@@ -20,7 +20,8 @@ dependencies = [
 ]
 
 [project.scripts]
-bpmn = "bpmn_agent.cli:main"
+graph-agent = "graph_agent.cli:main"
+bpmn = "graph_agent.cli:main"
 
 [dependency-groups]
 dev = [
@@ -32,14 +33,14 @@ dev = [
     "ruff>=0.16.4",
 ]
 
-# The wheel ships bpmn_agent/ only. Browser-UI assets (bpmn-js, form-js, the built modeler
-# and viewer bundles) are non-.py package data under bpmn_agent/static/ and
-# bpmn_agent/templates/; `npm run build` must have populated them before `uv build` runs.
-# workspace_templates/ and the pi-demo mock live under bpmn_agent/data/ as ordinary package
+# The wheel ships graph_agent/ only. Browser-UI assets (bpmn-js, form-js, the built modeler
+# and viewer bundles) are non-.py package data under graph_agent/static/ and
+# graph_agent/templates/; `npm run build` must have populated them before `uv build` runs.
+# workspace_templates/ and the pi-demo mock live under graph_agent/data/ as ordinary package
 # files -- no special include needed beyond the package itself, since hatchling includes
 # non-.py files under an included package by default.
 [tool.hatch.build.targets.wheel]
-packages = ["bpmn_agent"]
+packages = ["graph_agent"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -87,7 +88,7 @@ ignore = [
 # FastAPI's Depends()/Header()/Query() and this app's require_role() are the idiomatic way
 # to declare a route dependency as a default argument -- not the mutable-default footgun B008
 # exists to catch.
-extend-immutable-calls = ["fastapi.Depends", "fastapi.Header", "fastapi.Query", "bpmn_agent.auth.require_role"]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Header", "fastapi.Query", "graph_agent.auth.require_role"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 15
@@ -108,9 +109,9 @@ strict = true
 plugins = ["pydantic.mypy"]
 
 [tool.coverage.run]
-source = ["bpmn_agent"]
+source = ["graph_agent"]
 branch = true
-omit = ["bpmn_agent/main.py", "bpmn_agent/handlers/base.py"]
+omit = ["graph_agent/main.py", "graph_agent/handlers/base.py"]
 
 [tool.coverage.report]
 show_missing = true

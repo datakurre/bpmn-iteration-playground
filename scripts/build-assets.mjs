@@ -35,13 +35,13 @@ const elementTemplatesAlias = {
 await build({
   ...common,
   entryPoints: ["src/js/viewer-bundle.ts"],
-  outfile: "bpmn_agent/static/bpmn-viewer-bundle.js",
+  outfile: "graph_agent/static/bpmn-viewer-bundle.js",
 });
 
 await build({
   ...common,
   entryPoints: ["src/js/modeler-bundle.ts"],
-  outfile: "bpmn_agent/static/bpmn-modeler-bundle.js",
+  outfile: "graph_agent/static/bpmn-modeler-bundle.js",
   loader: { ".json": "json" },
   alias: elementTemplatesAlias,
 });
@@ -55,27 +55,27 @@ if (pageEntries.length > 0) {
   await build({
     ...common,
     entryPoints: pageEntries,
-    outdir: "bpmn_agent/static/pages",
+    outdir: "graph_agent/static/pages",
   });
 }
 
 copyFileSync(
   "node_modules/diagram-js-minimap/assets/diagram-js-minimap.css",
-  "bpmn_agent/static/diagram-js-minimap.css",
+  "graph_agent/static/diagram-js-minimap.css",
 );
 copyFileSync(
   "node_modules/@bpmn-io/properties-panel/dist/assets/properties-panel.css",
-  "bpmn_agent/static/properties-panel.css",
+  "graph_agent/static/properties-panel.css",
 );
 copyFileSync(
   "node_modules/bpmn-js-token-simulation/assets/css/bpmn-js-token-simulation.css",
-  "bpmn_agent/static/bpmn-js-token-simulation.css",
+  "graph_agent/static/bpmn-js-token-simulation.css",
 );
 copyFileSync(
   "node_modules/bpmn-js-bpmnlint/dist/assets/css/bpmn-js-bpmnlint.css",
-  "bpmn_agent/static/bpmn-js-bpmnlint.css",
+  "graph_agent/static/bpmn-js-bpmnlint.css",
 );
 copyFileSync(
   "node_modules/@bpmn-io/element-template-chooser/dist/element-template-chooser.css",
-  "bpmn_agent/static/element-template-chooser.css",
+  "graph_agent/static/element-template-chooser.css",
 );

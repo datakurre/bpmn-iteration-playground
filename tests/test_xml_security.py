@@ -3,7 +3,7 @@ import io
 import pytest
 from defusedxml.common import EntitiesForbidden
 
-from bpmn_agent.xml_utils import safe_fromstring_xml, safe_parse_xml
+from graph_agent.xml_utils import safe_fromstring_xml, safe_parse_xml
 
 
 def test_safe_xml_parsing_normal() -> None:

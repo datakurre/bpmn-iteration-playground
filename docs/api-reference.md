@@ -21,7 +21,7 @@ When no auth environment variables are set, the system runs in open development 
 **Request Body:**
 ```json
 {
-  "bpmn_path": "bpmn_agent/data/workflows/contract_review.bpmn",
+  "bpmn_path": "graph_agent/data/workflows/contract_review.bpmn",
   "process_id": null,
   "variables": {
     "contract": "Non-Disclosure Agreement terms..."
@@ -167,7 +167,7 @@ Lists the message and timer events the instance is currently parked on.
 - `GET /api/templates` — List auto-discovered BPMN templates with documentation metadata.
 - `GET /api/templates/{id}` — Get detailed template schema and input variables.
 - `GET /api/templates/{id}/xml` — Download raw BPMN 2.0 XML string.
-- `POST /api/workflows/save` — Save or create BPMN 2.0 diagram to `bpmn_agent/data/workflows/`.
+- `POST /api/workflows/save` — Save or create BPMN 2.0 diagram to `graph_agent/data/workflows/`.
 
 ---
 

@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from bpmn_agent.agents_root import Workspace
-from bpmn_agent.workspace_strategy import InPlaceStrategy
+from graph_agent.agents_root import Workspace
+from graph_agent.workspace_strategy import InPlaceStrategy
 
 
 @pytest.mark.anyio

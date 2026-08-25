@@ -42,7 +42,7 @@ Key environment variables configured in `devenv.nix`:
 | :--- | :--- | :--- |
 | `PI_EXECUTABLE` | `node_modules/.bin/pi` | Path to the local Pi coding agent binary. |
 | `PI_MODEL` | `gpt-4o-mini` | Target LLM model for the agent. |
-| `PI_OFFLINE` | `0` | Set to `1` to force fallback to deterministic `bpmn_agent/data/pi-demo`. |
+| `PI_OFFLINE` | `0` | Set to `1` to force fallback to deterministic `graph_agent/data/pi-demo`. |
 | `OPENAI_BASE_URL` | `https://opencode.ai/go/v1` | OpenAI-compatible endpoint. |
 | `OPENAI_API_KEY` | `"secret-injected-by-proxy"` | Token used for proxy secret injection. |
 

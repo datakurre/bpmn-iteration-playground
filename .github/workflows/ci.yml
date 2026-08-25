@@ -57,10 +57,10 @@ jobs:
           cd vendor/operaton-element-templates && npm install
 
       - name: Run Python tests
-        run: pytest -v --cov=bpmn_agent --cov-report=term-missing --cov-report=xml
+        run: pytest -v --cov=graph_agent --cov-report=term-missing --cov-report=xml
 
       - name: Run Python lint / typecheck
-        run: mypy bpmn_agent/
+        run: mypy graph_agent/
 
       - name: Build frontend assets
         run: npm run build
@@ -102,11 +102,11 @@ jobs:
         run: |
           mkdir -p /tmp/wheel-smoke-cwd
           cd /tmp/wheel-smoke-cwd
-          /tmp/wheel-smoke-venv/bin/bpmn --help
+          /tmp/wheel-smoke-venv/bin/graph-agent --help
           /tmp/wheel-smoke-venv/bin/python -c "
           from pathlib import Path
-          import bpmn_agent.pi_client as pc
-          from bpmn_agent.adapters.shell_adapter import TEMPLATE_ROOT
+          import graph_agent.pi_client as pc
+          from graph_agent.adapters.shell_adapter import TEMPLATE_ROOT
           assert TEMPLATE_ROOT.is_dir(), f'missing {TEMPLATE_ROOT}'
           assert (TEMPLATE_ROOT / 'beamer' / 'Makefile').is_file()
           demo = Path(pc.__file__).resolve().parent / 'data' / 'pi-demo'

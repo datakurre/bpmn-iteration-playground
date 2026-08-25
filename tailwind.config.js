@@ -1,8 +1,8 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: [
-    "./bpmn_agent/templates/**/*.html",
-    "./bpmn_agent/static/**/*.js",
+    "./graph_agent/templates/**/*.html",
+    "./graph_agent/static/**/*.js",
     "./src/js/**/*.js"
   ],
   darkMode: 'class',

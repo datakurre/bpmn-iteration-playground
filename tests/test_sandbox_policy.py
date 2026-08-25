@@ -1,6 +1,6 @@
 import json
 
-from bpmn_agent.adapters.sandbox_policy import build_agents_md, parse_agents_md_toml
+from graph_agent.adapters.sandbox_policy import build_agents_md, parse_agents_md_toml
 
 
 def test_parse_agents_md_toml_extracts_block() -> None:

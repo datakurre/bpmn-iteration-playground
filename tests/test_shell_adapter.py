@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from bpmn_agent.adapters.registry import AdapterRegistry
-from bpmn_agent.adapters.shell_adapter import ShellAdapter
+from graph_agent.adapters.registry import AdapterRegistry
+from graph_agent.adapters.shell_adapter import ShellAdapter
 
 
 @pytest.fixture

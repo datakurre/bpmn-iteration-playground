@@ -31,7 +31,7 @@ def main():
                 method: 'POST',
                 headers: {'content-type': 'application/json'},
                 body: JSON.stringify({
-                    bpmn_path: 'bpmn_agent/data/workflows/contract_review.bpmn',
+                    bpmn_path: 'graph_agent/data/workflows/contract_review.bpmn',
                     variables: { contract: 'Test contract visual verification.' }
                 })
             });

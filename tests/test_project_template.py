@@ -4,14 +4,14 @@ import asyncio
 
 import pytest
 
-from bpmn_agent.adapters.mock_adapter import MockAdapter
-from bpmn_agent.engine import WorkflowRunner
-from bpmn_agent.persistence import WorkflowStore
-from bpmn_agent.pi_client import PiResult
-from bpmn_agent.registry import WorkflowRegistry
-from bpmn_agent.workflow_service import WorkflowService
+from graph_agent.adapters.mock_adapter import MockAdapter
+from graph_agent.engine import WorkflowRunner
+from graph_agent.persistence import WorkflowStore
+from graph_agent.pi_client import PiResult
+from graph_agent.registry import WorkflowRegistry
+from graph_agent.workflow_service import WorkflowService
 
-BPMN_PATH = "bpmn_agent/data/workflows/project.bpmn"
+BPMN_PATH = "graph_agent/data/workflows/project.bpmn"
 
 
 class FakePi:

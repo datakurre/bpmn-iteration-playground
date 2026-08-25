@@ -1,5 +1,5 @@
-from bpmn_agent.pi_client import PiResult
-from bpmn_agent.workflow_service import CAMUNDA_TO_FORMJS_TYPE
+from graph_agent.pi_client import PiResult
+from graph_agent.workflow_service import CAMUNDA_TO_FORMJS_TYPE
 
 
 class FormTestPi:

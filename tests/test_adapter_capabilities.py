@@ -6,15 +6,15 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from bpmn_agent.adapters.base import AdapterCapabilities, AgentResult, BaseAdapter, resolve_timeout
-from bpmn_agent.adapters.registry import AdapterRegistry
-from bpmn_agent.adapters.shell_adapter import ShellAdapter
-from bpmn_agent.api.server import create_app
-from bpmn_agent.persistence import WorkflowStore
-from bpmn_agent.pi_client import PiResult
-from bpmn_agent.workflow_service import WorkflowService
+from graph_agent.adapters.base import AdapterCapabilities, AgentResult, BaseAdapter, resolve_timeout
+from graph_agent.adapters.registry import AdapterRegistry
+from graph_agent.adapters.shell_adapter import ShellAdapter
+from graph_agent.api.server import create_app
+from graph_agent.persistence import WorkflowStore
+from graph_agent.pi_client import PiResult
+from graph_agent.workflow_service import WorkflowService
 
-BEAMER = "bpmn_agent/data/workflows/beamer_slides.bpmn"
+BEAMER = "graph_agent/data/workflows/beamer_slides.bpmn"
 BRIEF = {"topic": "adapters", "audience": "engineers", "duration_minutes": 10}
 
 
@@ -95,7 +95,7 @@ def test_plugin_importing_a_builtin_adapter_does_not_re_register_it(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     plugin = tmp_path / "importer.py"
-    plugin.write_text("from bpmn_agent.adapters.shell_adapter import ShellAdapter\n")
+    plugin.write_text("from graph_agent.adapters.shell_adapter import ShellAdapter\n")
     monkeypatch.setenv("ADAPTER_PLUGINS", str(tmp_path))
 
     registry = AdapterRegistry(auto_discover=False)

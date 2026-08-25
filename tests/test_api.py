@@ -25,7 +25,7 @@ def test_instance_page_404_for_missing(client: TestClient) -> None:
 def test_start_and_get_workflow_state(client: TestClient) -> None:
     response = client.post(
         "/workflow/start",
-        json={"bpmn_path": "bpmn_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "Test Agreement"}},
+        json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "Test Agreement"}},
     )
     assert response.status_code == 200
     data = response.json()
@@ -101,7 +101,7 @@ def test_workflow_save_endpoint(client: TestClient) -> None:
 def test_submit_task_validation(client: TestClient) -> None:
     start_resp = client.post(
         "/workflow/start",
-        json={"bpmn_path": "bpmn_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "Test"}},
+        json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "Test"}},
     )
     wf_id = start_resp.json()["workflow_id"]
 
@@ -120,7 +120,7 @@ def test_submit_task_validation(client: TestClient) -> None:
 def test_download_workspace_endpoint(client: TestClient) -> None:
     start_resp = client.post(
         "/workflow/start",
-        json={"bpmn_path": "bpmn_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "Test"}},
+        json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "Test"}},
     )
     wf_id = start_resp.json()["workflow_id"]
 
@@ -136,7 +136,7 @@ def test_download_workspace_endpoint(client: TestClient) -> None:
 def test_request_logging_middleware_handles_errors() -> None:
     from fastapi import FastAPI
 
-    from bpmn_agent.logging_config import RequestLoggingMiddleware
+    from graph_agent.logging_config import RequestLoggingMiddleware
 
     test_app = FastAPI()
     test_app.add_middleware(RequestLoggingMiddleware)
@@ -153,7 +153,7 @@ def test_request_logging_middleware_handles_errors() -> None:
 def test_configure_logging_preserves_external_handlers() -> None:
     import logging
 
-    from bpmn_agent.logging_config import configure_logging
+    from graph_agent.logging_config import configure_logging
 
     root = logging.getLogger()
     custom_handler = logging.NullHandler()
@@ -170,7 +170,7 @@ def test_configure_logging_preserves_external_handlers() -> None:
 def test_cancel_workflow_endpoint(client: TestClient) -> None:
     start_resp = client.post(
         "/workflow/start",
-        json={"bpmn_path": "bpmn_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "Cancel Test"}},
+        json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "Cancel Test"}},
     )
     wf_id = start_resp.json()["workflow_id"]
 
@@ -186,7 +186,7 @@ def test_cancel_workflow_endpoint(client: TestClient) -> None:
 def test_start_workflow_invalid_bpmn_input(client: TestClient) -> None:
     resp = client.post(
         "/workflow/start",
-        json={"bpmn_path": "bpmn_agent/data/workflows/non_existent.bpmn", "variables": {}},
+        json={"bpmn_path": "graph_agent/data/workflows/non_existent.bpmn", "variables": {}},
     )
     assert resp.status_code == 404
 
@@ -203,7 +203,7 @@ def test_prometheus_metrics_endpoint(client: TestClient) -> None:
 def test_sse_events_stream_endpoint(client: TestClient) -> None:
     start_resp = client.post(
         "/workflow/start",
-        json={"bpmn_path": "bpmn_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "SSE Test"}},
+        json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "SSE Test"}},
     )
     wf_id = start_resp.json()["workflow_id"]
 

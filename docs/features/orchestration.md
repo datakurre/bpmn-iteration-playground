@@ -31,7 +31,7 @@ Pi Workflow Studio combines the formal execution semantics of **BPMN 2.0** with 
 
 ## 1. BPMN Process Definition
 
-The contract review workflow is modeled in standard BPMN 2.0 XML located at `bpmn_agent/data/workflows/contract_review.bpmn`:
+The contract review workflow is modeled in standard BPMN 2.0 XML located at `graph_agent/data/workflows/contract_review.bpmn`:
 
 1. **Start Event (`StartEvent_1`)**: Accepts the initial process payload (e.g. `contract` text).
 2. **Service Task (`ServiceTask_Extract`)**: Delegates contract clause extraction and risk analysis to the local Pi agent.
@@ -45,7 +45,7 @@ The contract review workflow is modeled in standard BPMN 2.0 XML located at `bpm
 
 ## 2. ZODB ACID Persistence
 
-State persistence is managed via [`bpmn_agent/persistence.py`](../../bpmn_agent/persistence.py):
+State persistence is managed via [`graph_agent/persistence.py`](../../graph_agent/persistence.py):
 
 - **Storage Engine**: `ZODB.FileStorage` writing durable transaction logs to `data/workflows.fs`.
 - **In-Memory Mode**: Supported for testing via `WorkflowStore(":memory:")`.
@@ -53,7 +53,7 @@ State persistence is managed via [`bpmn_agent/persistence.py`](../../bpmn_agent/
 - **Process Isolation**: Workflows can be paused, restarted, and inspected at any point without memory corruption.
 
 ```python
-from bpmn_agent.persistence import WorkflowStore
+from graph_agent.persistence import WorkflowStore
 
 store = WorkflowStore("data/workflows.fs")
 store.save(workflow_id, instance_state)

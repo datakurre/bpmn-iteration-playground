@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from bpmn_agent.pi_client import PiClient, _parse_json
+from graph_agent.pi_client import PiClient, _parse_json
 
 
 @pytest.mark.parametrize(
@@ -45,7 +45,7 @@ def test_parse_json_valid_variants() -> None:
 
 @pytest.mark.anyio
 async def test_pi_client_subprocess_real_execution(tmp_path: Path) -> None:
-    demo_script = Path("bpmn_agent/data/pi-demo").resolve()
+    demo_script = Path("graph_agent/data/pi-demo").resolve()
     assert demo_script.exists()
 
     client = PiClient(executable=str(demo_script), timeout_seconds=10)
@@ -193,14 +193,14 @@ def test_parse_json_rejects_non_dict_json() -> None:
 
 
 def test_final_text_from_string_content() -> None:
-    from bpmn_agent.pi_client import _final_text
+    from graph_agent.pi_client import _final_text
 
     events = [{"message": {"role": "assistant", "content": "plain string content"}}]
     assert _final_text(events) == "plain string content"
 
 
 def test_final_text_from_legacy_messages_list_format() -> None:
-    from bpmn_agent.pi_client import _final_text
+    from graph_agent.pi_client import _final_text
 
     events = [
         {
@@ -214,27 +214,27 @@ def test_final_text_from_legacy_messages_list_format() -> None:
 
 
 def test_final_text_from_legacy_messages_list_string_content() -> None:
-    from bpmn_agent.pi_client import _final_text
+    from graph_agent.pi_client import _final_text
 
     events = [{"messages": [{"role": "assistant", "content": "legacy plain string"}]}]
     assert _final_text(events) == "legacy plain string"
 
 
 def test_final_text_returns_empty_for_no_assistant_events() -> None:
-    from bpmn_agent.pi_client import _final_text
+    from graph_agent.pi_client import _final_text
 
     assert _final_text([]) == ""
     assert _final_text([{"message": {"role": "user", "content": "hi"}}]) == ""
 
 
 def test_set_resource_limits_does_not_raise() -> None:
-    from bpmn_agent.pi_client import _set_resource_limits
+    from graph_agent.pi_client import _set_resource_limits
 
     _set_resource_limits()
 
 
 def test_kill_process_group_noop_when_already_exited() -> None:
-    from bpmn_agent.pi_client import _kill_process_group_popen
+    from graph_agent.pi_client import _kill_process_group_popen
 
     class FakeProcess:
         def poll(self) -> int:
@@ -246,7 +246,7 @@ def test_kill_process_group_noop_when_already_exited() -> None:
 def test_kill_process_group_kills_running_process() -> None:
     import subprocess
 
-    from bpmn_agent.pi_client import _kill_process_group_popen
+    from graph_agent.pi_client import _kill_process_group_popen
 
     proc = subprocess.Popen(["sleep", "30"], start_new_session=True)
     _kill_process_group_popen(proc)
@@ -255,13 +255,13 @@ def test_kill_process_group_kills_running_process() -> None:
 
 
 def test_pi_client_resolves_relative_executable_against_repo_root() -> None:
-    client = PiClient(executable="bpmn_agent/data/pi-demo")
-    assert client.executable.endswith("bpmn_agent/data/pi-demo")
+    client = PiClient(executable="graph_agent/data/pi-demo")
+    assert client.executable.endswith("graph_agent/data/pi-demo")
     assert Path(client.executable).is_absolute()
 
 
 def test_pi_client_resolves_absolute_executable_path() -> None:
-    demo_script = Path("bpmn_agent/data/pi-demo").resolve()
+    demo_script = Path("graph_agent/data/pi-demo").resolve()
     client = PiClient(executable=str(demo_script))
     assert client.executable == str(demo_script)
 

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from bpmn_agent.agents_root import Workspace
+from graph_agent.agents_root import Workspace
 
 
 def test_discover_falls_back_to_start_dir_when_nothing_found(tmp_path: Path) -> None:
@@ -93,7 +93,7 @@ def test_path_properties_are_derived_from_agents_dir(tmp_path: Path) -> None:
 def test_create_app_default_service_uses_workspace_state_dir(tmp_path: Path) -> None:
     from fastapi.testclient import TestClient
 
-    from bpmn_agent.api.server import create_app
+    from graph_agent.api.server import create_app
 
     workspace = Workspace.discover(tmp_path)
     app = create_app(workspace=workspace)
@@ -105,9 +105,9 @@ def test_create_app_default_service_uses_workspace_state_dir(tmp_path: Path) -> 
 
 
 def test_create_app_explicit_service_ignores_workspace(tmp_path: Path) -> None:
-    from bpmn_agent.api.server import create_app
-    from bpmn_agent.persistence import WorkflowStore
-    from bpmn_agent.workflow_service import WorkflowService
+    from graph_agent.api.server import create_app
+    from graph_agent.persistence import WorkflowStore
+    from graph_agent.workflow_service import WorkflowService
 
     workspace = Workspace.discover(tmp_path)
     service = WorkflowService(WorkflowStore(":memory:"))

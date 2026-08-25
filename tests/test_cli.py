@@ -4,10 +4,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bpmn_agent.agents_root import Workspace
-from bpmn_agent.cli import _materialize_bundled_workflows, main
-from bpmn_agent.daemon import RuntimeInfo, read_runtime_file, write_runtime_file
-from bpmn_agent.registry import BUNDLED_WORKFLOWS_DIR
+from graph_agent.agents_root import Workspace
+from graph_agent.cli import _materialize_bundled_workflows, main
+from graph_agent.daemon import RuntimeInfo, read_runtime_file, write_runtime_file
+from graph_agent.registry import BUNDLED_WORKFLOWS_DIR
 
 
 @pytest.fixture
@@ -96,15 +96,15 @@ def test_cli_init_is_quiet_about_git_when_workspace_is_a_repo(tmp_path: Path, ca
 
 
 def test_cli_serve_reload_falls_back_to_uvicorn_run() -> None:
-    with patch("bpmn_agent.cli.uvicorn.run") as mock_run:
+    with patch("graph_agent.cli.uvicorn.run") as mock_run:
         main(["serve", "--host", "0.0.0.0", "--port", "9001", "--reload"])
-    mock_run.assert_called_once_with("bpmn_agent.api.server:app", host="0.0.0.0", port=9001, reload=True)
+    mock_run.assert_called_once_with("graph_agent.api.server:app", host="0.0.0.0", port=9001, reload=True)
 
 
 def test_cli_serve_reload_with_no_port_defaults_to_8000() -> None:
-    with patch("bpmn_agent.cli.uvicorn.run") as mock_run:
+    with patch("graph_agent.cli.uvicorn.run") as mock_run:
         main(["serve", "--reload"])
-    mock_run.assert_called_once_with("bpmn_agent.api.server:app", host="127.0.0.1", port=8000, reload=True)
+    mock_run.assert_called_once_with("graph_agent.api.server:app", host="127.0.0.1", port=8000, reload=True)
 
 
 def test_cli_serve_binds_free_port_writes_runtime_and_cleans_up(
@@ -118,7 +118,7 @@ def test_cli_serve_binds_free_port_writes_runtime_and_cleans_up(
         captured["admin_token_env"] = os.environ.get("ADMIN_TOKEN")
         captured["sockets"] = sockets
 
-    with patch("bpmn_agent.cli.uvicorn.Server") as mock_server_cls:
+    with patch("graph_agent.cli.uvicorn.Server") as mock_server_cls:
         mock_server_cls.return_value.run.side_effect = fake_run
         main(["serve", "--workspace", str(tmp_path)])
 
@@ -138,8 +138,8 @@ def test_cli_serve_skips_binding_when_daemon_already_running(tmp_path: Path, cap
     write_runtime_file(workspace, _fake_runtime_info(url="http://127.0.0.1:55555"))
 
     with (
-        patch("bpmn_agent.cli.is_daemon_alive", return_value=True),
-        patch("bpmn_agent.cli.bind_free_port") as mock_bind,
+        patch("graph_agent.cli.is_daemon_alive", return_value=True),
+        patch("graph_agent.cli.bind_free_port") as mock_bind,
     ):
         main(["serve", "--workspace", str(tmp_path)])
 
@@ -153,8 +153,8 @@ def test_cli_serve_replaces_stale_runtime_file(tmp_path: Path, _restore_admin_to
     write_runtime_file(workspace, _fake_runtime_info(token="stale-token"))
 
     with (
-        patch("bpmn_agent.cli.is_daemon_alive", return_value=False),
-        patch("bpmn_agent.cli.uvicorn.Server") as mock_server_cls,
+        patch("graph_agent.cli.is_daemon_alive", return_value=False),
+        patch("graph_agent.cli.uvicorn.Server") as mock_server_cls,
     ):
         mock_server_cls.return_value.run = MagicMock()
         main(["serve", "--workspace", str(tmp_path)])
@@ -172,7 +172,7 @@ def test_cli_status_reports_stale_runtime(tmp_path: Path, capsys) -> None:
     workspace.ensure()
     write_runtime_file(workspace, _fake_runtime_info())
 
-    with patch("bpmn_agent.cli.is_daemon_alive", return_value=False):
+    with patch("graph_agent.cli.is_daemon_alive", return_value=False):
         main(["status", "--workspace", str(tmp_path)])
 
     assert "Stale runtime info" in capsys.readouterr().out
@@ -183,7 +183,7 @@ def test_cli_status_reports_running_url(tmp_path: Path, capsys) -> None:
     workspace.ensure()
     write_runtime_file(workspace, _fake_runtime_info(url="http://127.0.0.1:55555"))
 
-    with patch("bpmn_agent.cli.is_daemon_alive", return_value=True):
+    with patch("graph_agent.cli.is_daemon_alive", return_value=True):
         main(["status", "--workspace", str(tmp_path)])
 
     assert "http://127.0.0.1:55555" in capsys.readouterr().out
@@ -195,8 +195,8 @@ def test_cli_open_launches_browser_when_running(tmp_path: Path, capsys) -> None:
     write_runtime_file(workspace, _fake_runtime_info(url="http://127.0.0.1:55555"))
 
     with (
-        patch("bpmn_agent.cli.is_daemon_alive", return_value=True),
-        patch("bpmn_agent.cli.webbrowser.open") as mock_open,
+        patch("graph_agent.cli.is_daemon_alive", return_value=True),
+        patch("graph_agent.cli.webbrowser.open") as mock_open,
     ):
         main(["open", "--workspace", str(tmp_path)])
 
@@ -205,7 +205,7 @@ def test_cli_open_launches_browser_when_running(tmp_path: Path, capsys) -> None:
 
 
 def test_cli_open_reports_nothing_running(tmp_path: Path, capsys) -> None:
-    with patch("bpmn_agent.cli.webbrowser.open") as mock_open:
+    with patch("graph_agent.cli.webbrowser.open") as mock_open:
         main(["open", "--workspace", str(tmp_path)])
     mock_open.assert_not_called()
     assert "No daemon running" in capsys.readouterr().out
@@ -221,7 +221,7 @@ def test_cli_stop_reports_success(tmp_path: Path, capsys) -> None:
     workspace.ensure()
     write_runtime_file(workspace, _fake_runtime_info())
 
-    with patch("bpmn_agent.cli.stop_daemon", return_value=True):
+    with patch("graph_agent.cli.stop_daemon", return_value=True):
         main(["stop", "--workspace", str(tmp_path)])
 
     assert "Stopped the daemon" in capsys.readouterr().out
@@ -232,7 +232,23 @@ def test_cli_stop_reports_timeout(tmp_path: Path, capsys) -> None:
     workspace.ensure()
     write_runtime_file(workspace, _fake_runtime_info())
 
-    with patch("bpmn_agent.cli.stop_daemon", return_value=False):
+    with patch("graph_agent.cli.stop_daemon", return_value=False):
         main(["stop", "--workspace", str(tmp_path)])
 
     assert "Timed out waiting" in capsys.readouterr().out
+
+
+def test_cli_help_displays_graph_agent_prog(capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--help"])
+    assert exc_info.value.code == 0
+    out = capsys.readouterr().out
+    assert "usage: graph-agent" in out
+
+
+def test_cli_serve_prints_graph_agent_banner(tmp_path: Path, capsys, _restore_admin_token_env: None) -> None:
+    with patch("graph_agent.cli.uvicorn.Server") as mock_server_cls:
+        mock_server_cls.return_value.run = MagicMock()
+        main(["serve", "--workspace", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert f"graph-agent · {tmp_path.name} · http://127.0.0.1:" in out

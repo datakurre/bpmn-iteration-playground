@@ -34,7 +34,7 @@ Service tasks publish their results to the workflow only through declared
 A graph can also wait on the outside world: a message catch event parks the instance
 until `POST /instance/{instanceId}/message/{name}` delivers a payload, and timer events
 fire from a background ticker (`TIMER_TICK_SECONDS`, `0` disables). See
-`bpmn_agent/data/workflows/external_gate.bpmn`. `bpmn_agent/data/workflows/composed_delivery.bpmn` shows a whole
+`graph_agent/data/workflows/external_gate.bpmn`. `graph_agent/data/workflows/composed_delivery.bpmn` shows a whole
 agent-plus-human cycle reused as a single CallActivity node.
 
 Each persisted instance has stateful routes under `/instance/{instanceId}`:
@@ -66,9 +66,9 @@ is largely agent-written. `fail_on_error="false"` is the interesting part: a non
 then completes the turn with `${status}` set to `failed` instead of halting the instance, so
 a gateway can *route* on the failure. That turns a compiler into a participant in the loop.
 
-`bpmn_agent/data/workflows/beamer_slides.bpmn` is the worked example: an agent plans a deck outline, a human
+`graph_agent/data/workflows/beamer_slides.bpmn` is the worked example: an agent plans a deck outline, a human
 settles the outline, `template="beamer"` scaffolds a pinned TeX Live toolchain
-(`bpmn_agent/data/workspace_templates/beamer/` — `texliveBasic.withPackages` + a `Makefile`), an agent writes
+(`graph_agent/data/workspace_templates/beamer/` — `texliveBasic.withPackages` + a `Makefile`), an agent writes
 `slides.tex`, and `make pdf` compiles it. If LaTeX rejects the deck the instance parks on a
 diagnosis gate with the log, where you either hand it back to the slide agent for another
 attempt or abandon the deck — a build the agent cannot fix costs one turn, not an unbounded
@@ -82,7 +82,7 @@ devenv processes down
 devenv shell -- demo
 ```
 
-The demo command uses `bpmn_agent/data/pi-demo` as a deterministic CLI mock. The
+The demo command uses `graph_agent/data/pi-demo` as a deterministic CLI mock. The
 normal devenv installs the pinned Pi CLI at `node_modules/.bin/pi` and points
 `PI_EXECUTABLE` there automatically.
 

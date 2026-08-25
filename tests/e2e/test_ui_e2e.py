@@ -3,10 +3,10 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from bpmn_agent.adapters.mock_adapter import MockAdapter
-from bpmn_agent.api.server import create_app
-from bpmn_agent.persistence import WorkflowStore
-from bpmn_agent.workflow_service import WorkflowService
+from graph_agent.adapters.mock_adapter import MockAdapter
+from graph_agent.api.server import create_app
+from graph_agent.persistence import WorkflowStore
+from graph_agent.workflow_service import WorkflowService
 
 
 @pytest.fixture
@@ -50,7 +50,7 @@ def test_e2e_full_workflow_lifecycle(e2e_client: TestClient) -> None:
     # 5. Start a workflow
     start_resp = e2e_client.post(
         "/workflow/start",
-        json={"bpmn_path": "bpmn_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "E2E Agreement"}},
+        json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "E2E Agreement"}},
     )
     assert start_resp.status_code == 200
     wf_id = start_resp.json()["workflow_id"]

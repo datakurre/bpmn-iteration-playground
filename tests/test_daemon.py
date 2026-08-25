@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bpmn_agent.agents_root import Workspace
-from bpmn_agent.daemon import (
+from graph_agent.agents_root import Workspace
+from graph_agent.daemon import (
     RuntimeInfo,
     bind_free_port,
     generate_token,
@@ -109,7 +109,7 @@ def test_is_daemon_alive_false_when_health_check_fails() -> None:
 
 def test_is_daemon_alive_true_when_health_check_succeeds() -> None:
     info = _info(pid=os.getpid())
-    with patch("bpmn_agent.daemon.httpx.get") as mock_get:
+    with patch("graph_agent.daemon.httpx.get") as mock_get:
         mock_get.return_value = MagicMock(status_code=200)
         assert is_daemon_alive(info, check_http=True) is True
         mock_get.assert_called_once_with(
@@ -119,7 +119,7 @@ def test_is_daemon_alive_true_when_health_check_succeeds() -> None:
 
 def test_is_daemon_alive_false_on_non_200() -> None:
     info = _info(pid=os.getpid())
-    with patch("bpmn_agent.daemon.httpx.get") as mock_get:
+    with patch("graph_agent.daemon.httpx.get") as mock_get:
         mock_get.return_value = MagicMock(status_code=401)
         assert is_daemon_alive(info, check_http=True) is False
 
@@ -170,6 +170,6 @@ def test_stop_daemon_times_out_if_process_ignores_sigterm(tmp_path: Path) -> Non
     workspace.ensure()
     write_runtime_file(workspace, _info(pid=os.getpid()))  # our own pid never dies mid-test
 
-    with patch("bpmn_agent.daemon.os.kill") as mock_kill:
+    with patch("graph_agent.daemon.os.kill") as mock_kill:
         assert stop_daemon(workspace, timeout_seconds=0.2) is False
         assert mock_kill.called

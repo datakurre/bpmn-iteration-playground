@@ -1,7 +1,7 @@
 import pytest
 
-from bpmn_agent.persistence import WorkflowStore
-from bpmn_agent.workspace_strategy import BlobStrategy
+from graph_agent.persistence import WorkflowStore
+from graph_agent.workspace_strategy import BlobStrategy
 
 
 def _store_with_record(workflow_id: str = "wf1") -> WorkflowStore:
@@ -43,7 +43,7 @@ async def test_release_packs_written_files_back_into_the_store() -> None:
 
 @pytest.mark.anyio
 async def test_release_raises_on_stale_expected_version() -> None:
-    from bpmn_agent.persistence import WorkspaceConflictError
+    from graph_agent.persistence import WorkspaceConflictError
 
     store = _store_with_record()
     strategy = BlobStrategy(store)

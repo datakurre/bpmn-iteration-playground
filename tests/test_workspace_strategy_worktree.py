@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from bpmn_agent.agents_root import Workspace
-from bpmn_agent.workspace_strategy import GitOperationError, WorktreeStrategy
+from graph_agent.agents_root import Workspace
+from graph_agent.workspace_strategy import GitOperationError, WorktreeStrategy
 
 
 def _init_git_repo(root: Path) -> None:

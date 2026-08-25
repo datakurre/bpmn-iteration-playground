@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from bpmn_agent.persistence import WorkflowStore
-from bpmn_agent.pi_client import PiResult
-from bpmn_agent.workflow_service import WorkflowService
+from graph_agent.persistence import WorkflowStore
+from graph_agent.pi_client import PiResult
+from graph_agent.workflow_service import WorkflowService
 
 
 class FakePi:
@@ -33,7 +33,7 @@ def test_pi_task_persists_and_waits_for_human_task() -> None:
     async def scenario() -> None:
         pi = FakePi()
         service = WorkflowService(WorkflowStore(":memory:"), pi)
-        state = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+        state = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
         await asyncio.gather(*service.jobs.values())
         state = service.state(state["workflow_id"])
         assert state["status"] == "waiting_human"
@@ -82,7 +82,7 @@ def test_session_id_propagated_to_record_and_data() -> None:
     async def scenario() -> None:
         pi = SessionPi()
         service = WorkflowService(WorkflowStore(":memory:"), pi)
-        state = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+        state = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
         await asyncio.gather(*service.jobs.values())
         state = service.state(state["workflow_id"])
 
@@ -108,7 +108,7 @@ def test_failed_pi_state_contains_failure_reason() -> None:
 
     async def scenario() -> None:
         service = WorkflowService(WorkflowStore(":memory:"), FailedPi())
-        started = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {})
+        started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {})
         await asyncio.gather(*service.jobs.values())
         state = service.state(started["workflow_id"])
         assert state["status"] == "failed"
@@ -132,7 +132,7 @@ def test_failed_pi_task_retries_on_explicit_request() -> None:
     async def scenario() -> None:
         pi = FlakyPi()
         service = WorkflowService(WorkflowStore(":memory:"), pi)
-        started = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {})
+        started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {})
         await asyncio.gather(*service.jobs.values())
         state = service.state(started["workflow_id"])
         assert pi.calls == 1
@@ -154,7 +154,7 @@ def test_jobs_and_locks_cleanup() -> None:
     async def scenario() -> None:
         pi = FakePi()
         service = WorkflowService(WorkflowStore(":memory:"), pi)
-        state = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+        state = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
         wf_id = state["workflow_id"]
         assert len(service.jobs) > 0
         assert wf_id in service._locks
@@ -168,7 +168,7 @@ def test_jobs_and_locks_cleanup() -> None:
         assert wf_id not in service._locks
 
         # Test clear_instances cleans up all locks
-        state2 = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+        state2 = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
         wf_id2 = state2["workflow_id"]
         await asyncio.gather(*list(service.jobs.values()))
         assert wf_id2 in service._locks
@@ -186,7 +186,7 @@ def test_cancelled_task_completes_with_cancelled_status() -> None:
 
     async def scenario() -> None:
         service = WorkflowService(WorkflowStore(":memory:"), SlowPi())
-        started = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {})
+        started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {})
         wf_id = started["workflow_id"]
         await asyncio.sleep(0.05)
         for job in list(service.jobs.values()):
@@ -203,7 +203,7 @@ def test_service_task_publishes_only_declared_output_parameters() -> None:
     async def scenario() -> None:
         pi = FakePi()
         service = WorkflowService(WorkflowStore(":memory:"), pi)
-        started = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+        started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
         wf_id = started["workflow_id"]
         await asyncio.gather(*list(service.jobs.values()))
         state = service.state(wf_id)
@@ -262,7 +262,7 @@ def test_completed_instance_data_excludes_harness_scratch_keys() -> None:
     async def scenario() -> None:
         pi = FlakyThenOkPi()
         service = WorkflowService(WorkflowStore(":memory:"), pi)
-        started = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+        started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
         wf_id = started["workflow_id"]
         await asyncio.gather(*list(service.jobs.values()))
         state = service.state(wf_id)
@@ -286,7 +286,7 @@ def test_completed_instance_data_excludes_harness_scratch_keys() -> None:
 
 
 def test_sanitize_output_recursive() -> None:
-    from bpmn_agent.orchestration.jobs import _sanitize_output
+    from graph_agent.orchestration.jobs import _sanitize_output
 
     nested = {
         "short": "ok",
@@ -312,12 +312,12 @@ def test_workflow_service_non_numeric_timeout_fallback(monkeypatch) -> None:
 
 @pytest.mark.anyio
 async def test_output_parameters_missing_fallback_none() -> None:
-    from bpmn_agent.adapters.base import AgentResult
+    from graph_agent.adapters.base import AgentResult
 
     store = WorkflowStore(":memory:")
     service = WorkflowService(store, FakePi())
 
-    wf_started = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {"contract": "Test"})
+    wf_started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "Test"})
     wf_id = wf_started["workflow_id"]
 
     # Get the ready task
@@ -346,8 +346,8 @@ async def test_output_parameters_missing_fallback_none() -> None:
 
 
 def test_all_bundled_workflows_parse_and_have_failure_paths() -> None:
-    from bpmn_agent.engine import WorkflowRunner
-    from bpmn_agent.registry import WorkflowRegistry
+    from graph_agent.engine import WorkflowRunner
+    from graph_agent.registry import WorkflowRegistry
 
     runner = WorkflowRunner()
     registry = WorkflowRegistry()
@@ -363,7 +363,7 @@ def test_all_bundled_workflows_parse_and_have_failure_paths() -> None:
 def test_workflow_registry_logs_warning_on_malformed_file(tmp_path: Path, caplog) -> None:
     import logging
 
-    from bpmn_agent.registry import WorkflowRegistry
+    from graph_agent.registry import WorkflowRegistry
 
     bad_bpmn = tmp_path / "broken.bpmn"
     bad_bpmn.write_text("invalid xml <><>", encoding="utf-8")
@@ -387,7 +387,7 @@ def test_superseded_savepoint_attempts_are_pruned(monkeypatch) -> None:
 
     async def scenario() -> None:
         service = WorkflowService(WorkflowStore(":memory:"), FakePi())
-        started = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+        started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
         wf_id = started["workflow_id"]
         await asyncio.gather(*list(service.jobs.values()))
 
@@ -419,7 +419,7 @@ def test_savepoint_retention_is_configurable(monkeypatch) -> None:
 
     async def scenario() -> None:
         service = WorkflowService(WorkflowStore(":memory:"), FakePi())
-        started = await service.start("bpmn_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+        started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
         await asyncio.gather(*list(service.jobs.values()))
 
         wf_id = started["workflow_id"]
