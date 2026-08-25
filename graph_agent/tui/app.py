@@ -10,6 +10,7 @@ from graph_agent.tui.client import DaemonClient
 
 if TYPE_CHECKING:
     from textual.app import App
+    from textual.binding import BindingType
 else:
     try:
         from textual.app import App
@@ -69,14 +70,14 @@ Screen {
 """
 
 
-class GraphAgentApp(App):  # type: ignore[misc]
+class GraphAgentApp(App[None]):
     """Textual TUI for graph-agent orchestration platform."""
 
     CSS = TUI_CSS
     TITLE = "graph-agent"
     SUB_TITLE = "BPMN Agent Orchestration"
 
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         ("1", "goto_runs", "Runs"),
         ("2", "goto_inbox", "Inbox"),
         ("3", "goto_start", "Start"),
@@ -118,31 +119,6 @@ class GraphAgentApp(App):  # type: ignore[misc]
         from graph_agent.tui.screens.log import LogScreen
 
         self.push_screen(LogScreen())
-
-    def push_screen(self, screen: Any, **kwargs: Any) -> Any:
-        if isinstance(screen, str):
-            if screen == "runs":
-                from graph_agent.tui.screens.runs import RunsScreen
-                return super().push_screen(RunsScreen())
-            elif screen == "inbox":
-                from graph_agent.tui.screens.inbox import InboxScreen
-                return super().push_screen(InboxScreen())
-            elif screen == "start":
-                from graph_agent.tui.screens.start import StartScreen
-                return super().push_screen(StartScreen())
-            elif screen == "log":
-                from graph_agent.tui.screens.log import LogScreen
-                return super().push_screen(LogScreen())
-            elif screen == "detail":
-                from graph_agent.tui.screens.detail import RunDetailScreen
-                wid = kwargs.get("wid", "")
-                return super().push_screen(RunDetailScreen(workflow_id=wid))
-            elif screen == "form":
-                from graph_agent.tui.screens.form import FormScreen
-                wid = kwargs.get("workflow_id", "")
-                tid = kwargs.get("task_id")
-                return super().push_screen(FormScreen(workflow_id=wid, task_id=tid))
-        return super().push_screen(screen)
 
 
 def launch_tui(client: DaemonClient, workspace: Workspace | None = None) -> int:

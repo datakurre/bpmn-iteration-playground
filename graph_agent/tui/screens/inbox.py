@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
+    from textual.binding import BindingType
     from textual.screen import Screen
 else:
     try:
@@ -19,10 +20,10 @@ else:
             pass
 
 
-class InboxScreen(Screen):  # type: ignore[misc]
+class InboxScreen(Screen[None]):
     """Aggregates actionable items across all graphs: human tasks and deferred merges."""
 
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         ("enter", "action_item", "Open/Action"),
         ("escape", "go_back", "Back"),
         ("b", "go_back", "Back"),
@@ -116,7 +117,9 @@ class InboxScreen(Screen):  # type: ignore[misc]
 
         if itype == "human_task":
             tid = item.get("task_id")
-            self.app.push_screen("form", workflow_id=wid, task_id=tid)
+            from graph_agent.tui.screens.form import FormScreen
+
+            self.app.push_screen(FormScreen(workflow_id=wid, task_id=tid))
         elif itype == "deferred_merge":
             client = getattr(self.app, "client", None)
             if client:

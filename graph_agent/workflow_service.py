@@ -139,8 +139,12 @@ class WorkflowService:
         self.jobs: dict[str, asyncio.Task[None]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._timer_task: asyncio.Task[None] | None = None
+        # Clamped to >= 1: asyncio.Semaphore(0) never grants a permit, so
+        # MAX_PARALLEL_TURNS=0 would silently deadlock every agent turn forever, and a
+        # negative value raises ValueError out of the Semaphore constructor, crashing
+        # this whole __init__. Either way this must fail safe, not fail total.
         try:
-            self.max_parallel_turns = int(os.getenv("MAX_PARALLEL_TURNS", "4"))
+            self.max_parallel_turns = max(1, int(os.getenv("MAX_PARALLEL_TURNS", "4")))
         except (ValueError, TypeError):
             self.max_parallel_turns = 4
         self._turn_semaphore = asyncio.Semaphore(self.max_parallel_turns)

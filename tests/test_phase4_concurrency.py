@@ -78,3 +78,26 @@ async def test_turn_concurrency_bounds_parallel_executions(tmp_path: Path, monke
     assert adapter.peak_concurrent <= 2
     assert adapter.peak_concurrent > 0
     await service.shutdown()
+
+
+@pytest.mark.parametrize("raw_value", ["0", "-1", "-100"])
+def test_max_parallel_turns_is_clamped_to_at_least_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raw_value: str) -> None:
+    """MAX_PARALLEL_TURNS=0 would make `asyncio.Semaphore(0)` never grant a permit,
+    silently deadlocking every agent turn forever; a negative value raises ValueError out
+    of the Semaphore constructor, crashing __init__ outright. Both must fail safe."""
+    monkeypatch.setenv("MAX_PARALLEL_TURNS", raw_value)
+    store = WorkflowStore(tmp_path / "data")
+
+    service = WorkflowService(store=store)
+
+    assert service.max_parallel_turns == 1
+    assert service._turn_semaphore._value == 1
+
+
+def test_max_parallel_turns_falls_back_to_default_when_not_a_number(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MAX_PARALLEL_TURNS", "not-a-number")
+    store = WorkflowStore(tmp_path / "data")
+
+    service = WorkflowService(store=store)
+
+    assert service.max_parallel_turns == 4

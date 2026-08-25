@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
+    from textual.binding import BindingType
     from textual.screen import Screen
 else:
     try:
@@ -19,10 +20,10 @@ else:
             pass
 
 
-class StartScreen(Screen):  # type: ignore[misc]
+class StartScreen(Screen[None]):
     """Screen for launching a new workflow run from a template."""
 
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         ("escape", "go_back", "Back"),
         ("b", "go_back", "Back"),
     ]
@@ -129,7 +130,9 @@ class StartScreen(Screen):  # type: ignore[misc]
             self.notify(f"Launched workflow {wid[:8]}!", severity="information")
             self.app.pop_screen()
             if wid:
-                self.app.push_screen("detail", wid=wid)
+                from graph_agent.tui.screens.detail import RunDetailScreen
+
+                self.app.push_screen(RunDetailScreen(workflow_id=wid))
 
         except Exception as exc:
             self.notify(f"Failed to start workflow: {exc}", severity="error")

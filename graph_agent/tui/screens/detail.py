@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
+    from textual.binding import BindingType
     from textual.screen import Screen
 else:
     try:
@@ -20,10 +21,10 @@ else:
             pass
 
 
-class RunDetailScreen(Screen):  # type: ignore[misc]
+class RunDetailScreen(Screen[None]):
     """Detailed view of a single workflow run: timeline, live logs, variables, and savepoints."""
 
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         ("escape", "go_back", "Back"),
         ("b", "go_back", "Back"),
         ("r", "refresh_detail", "Refresh"),

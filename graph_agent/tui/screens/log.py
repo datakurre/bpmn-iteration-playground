@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
+    from textual.binding import BindingType
     from textual.screen import Screen
 else:
     try:
@@ -19,10 +20,10 @@ else:
             pass
 
 
-class LogScreen(Screen):  # type: ignore[misc]
+class LogScreen(Screen[None]):
     """Tails daemon and execution logs from the workspace."""
 
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         ("escape", "go_back", "Back"),
         ("b", "go_back", "Back"),
         ("r", "refresh_logs", "Refresh"),

@@ -92,6 +92,14 @@ def _cmd_serve(workspace_root: Path | None, host: str, port: int, reload: bool) 
             return
         remove_runtime_file(workspace)
 
+    # Must land before api.server's module-level `configure_logging()` call reads it, and
+    # inside `.agents/logs/` rather than logging_config.py's own CWD-relative default --
+    # a genuine `graph-agent serve` is launched from workspace.root, and a log file written
+    # directly there would sit in the git-tracked tree forever, permanently failing
+    # `graph-agent merge`'s clean-working-tree precondition (see workspace_strategy.py's
+    # WorktreeStrategy.merge). setdefault, not assignment: an operator's own LOG_FILE wins.
+    os.environ.setdefault("LOG_FILE", str(workspace.logs_dir / "graph-agent.log"))
+
     # Imported here, not at module level: init/status/open/stop never need FastAPI, all the
     # routers, and the rest of the app-construction machinery loaded at all.
     from graph_agent.api.server import create_app

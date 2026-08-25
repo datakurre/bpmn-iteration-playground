@@ -9,6 +9,7 @@ from graph_agent.tui.forms import FormSchema
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
+    from textual.binding import BindingType
     from textual.screen import Screen
 else:
     try:
@@ -22,10 +23,10 @@ else:
             pass
 
 
-class FormScreen(Screen):  # type: ignore[misc]
+class FormScreen(Screen[None]):
     """Renders FormJS form components natively, or falls back to browser deep link for complex forms."""
 
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         ("escape", "go_back", "Back"),
         ("b", "go_back", "Back"),
         ("o", "open_in_browser", "Open in Browser"),

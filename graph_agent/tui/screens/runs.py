@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
+    from textual.binding import BindingType
     from textual.screen import Screen
     from textual.widgets import DataTable
 else:
@@ -21,10 +22,10 @@ else:
             pass
 
 
-class RunsScreen(Screen):  # type: ignore[misc]
+class RunsScreen(Screen[None]):
     """Screen listing all active and past workflow runs."""
 
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         ("enter", "select_run", "Detail"),
         ("d", "select_run", "Detail"),
         ("i", "goto_inbox", "Inbox"),
@@ -124,16 +125,24 @@ class RunsScreen(Screen):  # type: ignore[misc]
     def action_select_run(self) -> None:
         wid = self.get_selected_run_id()
         if wid:
-            self.app.push_screen("detail", wid=wid)
+            from graph_agent.tui.screens.detail import RunDetailScreen
+
+            self.app.push_screen(RunDetailScreen(workflow_id=wid))
 
     def action_goto_inbox(self) -> None:
-        self.app.push_screen("inbox")
+        from graph_agent.tui.screens.inbox import InboxScreen
+
+        self.app.push_screen(InboxScreen())
 
     def action_start_run(self) -> None:
-        self.app.push_screen("start")
+        from graph_agent.tui.screens.start import StartScreen
+
+        self.app.push_screen(StartScreen())
 
     def action_goto_logs(self) -> None:
-        self.app.push_screen("log")
+        from graph_agent.tui.screens.log import LogScreen
+
+        self.app.push_screen(LogScreen())
 
     async def action_cancel_run(self) -> None:
         wid = self.get_selected_run_id()

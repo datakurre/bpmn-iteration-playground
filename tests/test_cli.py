@@ -24,6 +24,17 @@ def _restore_admin_token_env():
         os.environ["ADMIN_TOKEN"] = original
 
 
+@pytest.fixture
+def _restore_log_file_env():
+    """Same leak risk as `_restore_admin_token_env`, for `LOG_FILE`."""
+    original = os.environ.get("LOG_FILE")
+    yield
+    if original is None:
+        os.environ.pop("LOG_FILE", None)
+    else:
+        os.environ["LOG_FILE"] = original
+
+
 def _fake_runtime_info(**overrides: object) -> RuntimeInfo:
     defaults: dict[str, object] = {
         "schema": 1,
@@ -130,6 +141,35 @@ def test_cli_serve_binds_free_port_writes_runtime_and_cleans_up(
     assert captured["sockets"]
     # Cleaned up once server.run() (our stand-in) returns.
     assert not workspace.runtime_file.exists()
+
+
+def test_cli_serve_defaults_log_file_under_agents_logs(
+    tmp_path: Path, _restore_admin_token_env: None, _restore_log_file_env: None
+) -> None:
+    """A log file written directly into a git-tracked workspace root would sit there
+    forever as untracked cruft, permanently failing `graph-agent merge`'s clean-working-
+    tree precondition (workspace_strategy.py's WorktreeStrategy.merge) -- it must default
+    under `.agents/logs/`, never logging_config.py's own CWD-relative default."""
+    os.environ.pop("LOG_FILE", None)
+    workspace = Workspace.discover(tmp_path)
+
+    with patch("graph_agent.cli.uvicorn.Server") as mock_server_cls:
+        mock_server_cls.return_value.run = MagicMock()
+        main(["serve", "--workspace", str(tmp_path)])
+
+    assert os.environ["LOG_FILE"] == str(workspace.logs_dir / "graph-agent.log")
+
+
+def test_cli_serve_respects_an_operator_set_log_file(
+    tmp_path: Path, _restore_admin_token_env: None, _restore_log_file_env: None
+) -> None:
+    os.environ["LOG_FILE"] = "/tmp/operator-chosen.log"
+
+    with patch("graph_agent.cli.uvicorn.Server") as mock_server_cls:
+        mock_server_cls.return_value.run = MagicMock()
+        main(["serve", "--workspace", str(tmp_path)])
+
+    assert os.environ["LOG_FILE"] == "/tmp/operator-chosen.log"
 
 
 def test_cli_serve_skips_binding_when_daemon_already_running(tmp_path: Path, capsys) -> None:
