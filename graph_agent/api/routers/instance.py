@@ -103,6 +103,39 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
         except ValueError as exc:
             raise HTTPException(404, str(exc)) from exc
 
+    @router.put("/instance/{workflow_id}/spec", tags=["Instance"], summary="Replace instance BPMN spec XML")
+    async def replace_instance_spec(
+        workflow_id: str,
+        request: Request,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR),
+    ) -> dict[str, Any]:
+        body = await request.body()
+        new_xml = body.decode("utf-8")
+        try:
+            return await get_service().replace_spec(workflow_id, new_xml)
+        except WorkflowNotFoundError as exc:
+            raise HTTPException(404, "workflow not found") from exc
+        except ValueError as exc:
+            msg = str(exc)
+            if "mid-execution" in msg or "Active task" in msg:
+                raise HTTPException(409, detail=msg) from exc
+            raise HTTPException(400, detail=msg) from exc
+
+    @router.post("/instance/{workflow_id}/spec/validate", tags=["Instance"], summary="Validate instance BPMN spec replacement")
+    async def validate_instance_spec(
+        workflow_id: str,
+        request: Request,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
+    ) -> dict[str, Any]:
+        body = await request.body()
+        new_xml = body.decode("utf-8")
+        try:
+            return await get_service().validate_spec_replacement(workflow_id, new_xml)
+        except WorkflowNotFoundError as exc:
+            raise HTTPException(404, "workflow not found") from exc
+        except ValueError as exc:
+            raise HTTPException(400, detail=str(exc)) from exc
+
     @router.get("/instance/{workflow_id}/workspace", tags=["Instance"], summary="Download instance workspace")
     async def download_workspace(
         workflow_id: str,

@@ -56,7 +56,13 @@ async def add_save_point(
     key_suffix: str = "",
 ) -> None:
     save_points = record.setdefault("save_points", [])
-    key = f"{task.id}:{phase}{key_suffix}"
+    task_id_str = str(task.id) if task is not None else ""
+    task_name_str = (
+        getattr(task.task_spec, "bpmn_name", task.task_spec.name)
+        if task is not None
+        else phase
+    )
+    key = f"{task_id_str}:{phase}{key_suffix}" if task_id_str else f"{phase}:{uuid.uuid4().hex[:8]}{key_suffix}"
     if any(point.get("key") == key for point in save_points):
         return
 
@@ -66,7 +72,7 @@ async def add_save_point(
     # is a git commit SHA (workspace_ref); InPlaceStrategy has none at all
     # (supports_snapshot=False) -- graph state (data/tasks/workflow below) is still
     # captured regardless, only the file-level checkpoint is missing.
-    config = service.runner.pi_config(task)
+    config = service.runner.pi_config(task) if task is not None else {}
     strategy = select_strategy(service.workspace, service.store, config, workflow.data)
     workspace_blob = None
     workspace_ref = None
@@ -83,8 +89,8 @@ async def add_save_point(
             "key": key,
             "phase": phase,
             "resume_action": resume_action,
-            "task_id": str(task.id),
-            "task_name": getattr(task.task_spec, "bpmn_name", task.task_spec.name),
+            "task_id": task_id_str,
+            "task_name": task_name_str,
             "status": record.get("status", "running"),
             "created_at": datetime.now(UTC).isoformat(),
             "data": dict(workflow.data),
@@ -96,7 +102,8 @@ async def add_save_point(
             "supports_snapshot": strategy.supports_snapshot,
         }
     )
-    _prune_save_points(service, record, str(task.id), phase)
+    if task_id_str:
+        _prune_save_points(service, record, task_id_str, phase)
 
 
 def _prune_save_points(service: WorkflowService, record: dict[str, Any], task_id: str, phase: str) -> None:

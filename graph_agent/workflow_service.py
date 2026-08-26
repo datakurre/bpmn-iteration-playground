@@ -472,6 +472,124 @@ class WorkflowService:
             raise ValueError("No BPMN XML available for this workflow instance")
         return self.runner.extract_bpmn_xml(workflow)
 
+    async def replace_spec(self, workflow_id: str, new_xml: str) -> dict[str, Any]:
+        """Replace a workflow's BPMN spec with new XML.
+
+        Must be called when the workflow is in a stable state
+        (waiting_human, waiting_event, completed, failed).
+        Cannot be called while an agent turn is in progress.
+        """
+        async with self._lock(workflow_id):
+            record = self._record(workflow_id)
+            status = record.get("status")
+            if status == "running":
+                raise ValueError(
+                    "Workflow is mid-execution (running agent turn); wait for completion"
+                )
+
+            from graph_agent.bpmn_utils import replace_spec as do_replace
+
+            workflow = record.get("workflow")
+            if workflow is None:
+                raise ValueError("Workflow object not available for this instance")
+
+            workflow, warnings = do_replace(workflow, new_xml, self.runner)
+
+            # Save with updated spec
+            record["workflow"] = workflow
+            await asyncio.to_thread(self.store.save, workflow_id, record)
+
+            # Create a savepoint at the migration point
+            await self._add_save_point(
+                workflow_id,
+                record,
+                workflow,
+                task=None,
+                phase="spec_replaced",
+                resume_action="continue",
+            )
+            await asyncio.to_thread(self.store.save, workflow_id, record)
+
+            return {
+                "workflow_id": workflow_id,
+                "status": record.get("status", "unknown"),
+                "warnings": warnings,
+            }
+
+    async def validate_spec_replacement(
+        self, workflow_id: str, new_xml: str
+    ) -> dict[str, Any]:
+        """Dry-run validation: check migration feasibility without applying changes."""
+        record = self._record(workflow_id)
+        from SpiffWorkflow.task import TaskState
+
+        from graph_agent.bpmn_utils import validate_bpmn
+
+        val_result = validate_bpmn(new_xml)
+        if not val_result.valid:
+            return {
+                "valid": False,
+                "errors": val_result.errors,
+                "warnings": val_result.warnings,
+                "migrated_tasks": [],
+                "new_tasks": [],
+                "removed_tasks": [],
+            }
+
+        workflow = record.get("workflow")
+        if workflow is None:
+            return {
+                "valid": False,
+                "errors": ["Workflow object not available for this instance"],
+                "warnings": [],
+                "migrated_tasks": [],
+                "new_tasks": [],
+                "removed_tasks": [],
+            }
+
+        new_task_ids = set(val_result.task_ids)
+        current_tasks = [
+            t
+            for t in workflow.get_tasks()
+            if t.state not in (TaskState.FUTURE, TaskState.MAYBE, TaskState.LIKELY)
+        ]
+        migrated_tasks: list[str] = []
+        removed_tasks: list[str] = []
+        warnings = list(val_result.warnings)
+        errors: list[str] = []
+
+        for t in current_tasks:
+            bpmn_id = getattr(t.task_spec, "bpmn_id", None) or t.task_spec.name
+            if bpmn_id in new_task_ids or t.task_spec.name in new_task_ids:
+                if bpmn_id not in migrated_tasks:
+                    migrated_tasks.append(bpmn_id)
+            elif t.state in (TaskState.COMPLETED, TaskState.CANCELLED):
+                removed_tasks.append(bpmn_id)
+                warnings.append(
+                    f"Completed task '{bpmn_id}' not in new spec (history only)"
+                )
+            else:
+                errors.append(
+                    f"Active task '{bpmn_id}' (state={TaskState.get_name(t.state)}) not found in new BPMN spec"
+                )
+
+        new_tasks = [
+            tid
+            for tid in val_result.task_ids
+            if tid not in migrated_tasks
+            and tid not in ("Start", "End", "Root")
+            and not tid.endswith(".EndJoin")
+        ]
+
+        return {
+            "valid": len(errors) == 0,
+            "errors": errors,
+            "warnings": warnings,
+            "migrated_tasks": migrated_tasks,
+            "new_tasks": new_tasks,
+            "removed_tasks": removed_tasks,
+        }
+
     async def diagram(self, workflow_id: str) -> str:
         record = self._record(workflow_id)
         path = Path(record["bpmn_path"]).resolve()
