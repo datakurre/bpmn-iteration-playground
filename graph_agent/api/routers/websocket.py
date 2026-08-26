@@ -24,13 +24,17 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:
                 websocket.headers.get("x-api-key")
                 or websocket.query_params.get("api_key")
                 or websocket.query_params.get("x-api-key")
-                or websocket.query_params.get("token")
+                or websocket.cookies.get("api_key")
             )
             x_admin_token = (
                 websocket.headers.get("x-admin-token")
                 or websocket.query_params.get("admin_token")
                 or websocket.query_params.get("x-admin-token")
+                or websocket.query_params.get("token")
+                or websocket.cookies.get("admin_token")
+                or websocket.cookies.get("token")
             )
+
             role = None
             if admin_token and x_admin_token == admin_token:
                 role = Role.ADMIN
@@ -39,6 +43,7 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:
                     role = Role.ADMIN
                 elif x_api_key in api_keys:
                     role = api_keys[x_api_key]
+
 
             if not auth_enabled and require_auth:
                 await websocket.close(code=1008, reason="Authentication required by policy")

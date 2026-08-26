@@ -135,6 +135,32 @@ def test_malformed_api_keys_handling(monkeypatch) -> None:
     assert "key5" not in keys  # invalid role string skipped
 
 
+def test_ui_page_query_and_cookie_auth(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-secret")
+    monkeypatch.delenv("API_KEYS", raising=False)
+
+    # 1. Loading with query param ?token=admin-secret succeeds and sets cookie
+    resp = client.get("/editor?token=admin-secret")
+    assert resp.status_code == 200
+    assert "admin_token" in resp.cookies or "admin_token=admin-secret" in resp.headers.get("set-cookie", "")
+
+    # 2. Subsequent request using the cookie succeeds
+    cookie_client_resp = client.get("/editor", cookies={"admin_token": "admin-secret"})
+    assert cookie_client_resp.status_code == 200
+
+    # 3. Protected API endpoint with cookie succeeds
+    api_resp = client.get("/api/templates", cookies={"admin_token": "admin-secret"})
+    assert api_resp.status_code == 200
+
+    # 4. Bearer authorization header succeeds
+    bearer_resp = client.get("/api/templates", headers={"Authorization": "Bearer admin-secret"})
+    assert bearer_resp.status_code == 200
+
+    # 5. Invalid token in query returns 401
+    assert client.get("/editor?token=wrong").status_code == 401
+
+
+
 
 
 

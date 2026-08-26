@@ -223,14 +223,13 @@ def _cmd_open(workspace_root: Path | None, editor: str | None = None) -> None:
     if info is None or not is_daemon_alive(info):
         print(f"No daemon running for {workspace.root}. Run `graph-agent serve` first.")
         return
-    if editor is not None:
-        # editor="" → /editor (no specific template); editor="foo" → /editor/foo
-        path = f"/editor/{editor}" if editor else "/editor"
-        url = f"{info.url}{path}"
-    else:
-        url = info.url
+    path = (f"/editor/{editor}" if editor else "/editor") if editor is not None else ""
+    query = f"?token={info.token}" if info.token else ""
+
+    url = f"{info.url}{path}{query}"
     webbrowser.open(url)
     print(f"Opened {url}")
+
 
 
 def _cmd_stop(workspace_root: Path | None) -> None:

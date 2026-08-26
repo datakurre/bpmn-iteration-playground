@@ -232,7 +232,7 @@ def test_cli_status_reports_running_url(tmp_path: Path, capsys) -> None:
 def test_cli_open_launches_browser_when_running(tmp_path: Path, capsys) -> None:
     workspace = Workspace.discover(tmp_path)
     workspace.ensure()
-    write_runtime_file(workspace, _fake_runtime_info(url="http://127.0.0.1:55555"))
+    write_runtime_file(workspace, _fake_runtime_info(url="http://127.0.0.1:55555", token="test-token"))
 
     with (
         patch("graph_agent.cli.is_daemon_alive", return_value=True),
@@ -240,8 +240,23 @@ def test_cli_open_launches_browser_when_running(tmp_path: Path, capsys) -> None:
     ):
         main(["open", "--workspace", str(tmp_path)])
 
-    mock_open.assert_called_once_with("http://127.0.0.1:55555")
-    assert "Opened http://127.0.0.1:55555" in capsys.readouterr().out
+    mock_open.assert_called_once_with("http://127.0.0.1:55555?token=test-token")
+    assert "Opened http://127.0.0.1:55555?token=test-token" in capsys.readouterr().out
+
+
+def test_cli_edit_launches_editor_with_token(tmp_path: Path, capsys) -> None:
+    workspace = Workspace.discover(tmp_path)
+    workspace.ensure()
+    write_runtime_file(workspace, _fake_runtime_info(url="http://127.0.0.1:55555", token="test-token"))
+
+    with (
+        patch("graph_agent.cli.is_daemon_alive", return_value=True),
+        patch("graph_agent.cli.webbrowser.open") as mock_open,
+    ):
+        main(["edit", "contract_review", "--workspace", str(tmp_path)])
+
+    mock_open.assert_called_once_with("http://127.0.0.1:55555/editor/contract_review?token=test-token")
+    assert "Opened http://127.0.0.1:55555/editor/contract_review?token=test-token" in capsys.readouterr().out
 
 
 def test_cli_open_reports_nothing_running(tmp_path: Path, capsys) -> None:
@@ -249,6 +264,7 @@ def test_cli_open_reports_nothing_running(tmp_path: Path, capsys) -> None:
         main(["open", "--workspace", str(tmp_path)])
     mock_open.assert_not_called()
     assert "No daemon running" in capsys.readouterr().out
+
 
 
 def test_cli_stop_reports_nothing_running(tmp_path: Path, capsys) -> None:

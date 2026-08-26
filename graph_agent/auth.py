@@ -6,9 +6,11 @@ import os
 from enum import StrEnum
 from typing import Any
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, HTTPException, Request
 
 logger = logging.getLogger("bpmn.auth")
+
+
 
 
 class Role(StrEnum):
@@ -63,10 +65,7 @@ auth_config = AuthConfig()
 _warned_fail_open = False
 
 
-def get_current_role(
-    x_api_key: str | None = Header(default=None),
-    x_admin_token: str | None = Header(default=None),
-) -> Role | None:
+def get_current_role(request: Request) -> Role | None:
     global _warned_fail_open
     admin_token, api_keys, auth_enabled = parse_auth_config()
     require_auth = _is_require_auth()
@@ -82,13 +81,41 @@ def get_current_role(
             _warned_fail_open = True
         return Role.ADMIN
 
-    if admin_token and x_admin_token == admin_token:
+    # Check Authorization: Bearer <token>
+    auth_header = request.headers.get("authorization") or ""
+    bearer = auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else None
+
+    # Check explicit admin token headers, queries, or cookies
+    candidate_admin = (
+        bearer
+        or request.headers.get("x-admin-token")
+        or request.query_params.get("admin_token")
+        or request.query_params.get("token")
+        or request.cookies.get("admin_token")
+        or request.cookies.get("token")
+    )
+    if admin_token and candidate_admin == admin_token:
         return Role.ADMIN
 
-    if x_api_key and x_api_key in api_keys:
-        return api_keys[x_api_key]
+    # Check explicit api key headers, queries, or cookies
+    candidate_api_key = (
+        request.headers.get("x-api-key")
+        or request.query_params.get("api_key")
+        or request.cookies.get("api_key")
+    )
+    if candidate_api_key and candidate_api_key in api_keys:
+        return api_keys[candidate_api_key]
+
+    # Fallbacks if a key was passed in token query/cookie or vice versa
+    if candidate_admin and candidate_admin in api_keys:
+        return api_keys[candidate_admin]
+    if admin_token and candidate_api_key == admin_token:
+        return Role.ADMIN
 
     return None
+
+
+
 
 
 def require_role(*allowed_roles: Role) -> Any:

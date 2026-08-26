@@ -212,13 +212,16 @@ class FormScreen(Screen):  # type: ignore
 
     def action_open_in_browser(self) -> None:
         client = getattr(self.app, "client", None)
-        base_url = getattr(client, "base_url", "http://127.0.0.1:8000")
-        url = f"{base_url}/instance/{self.workflow_id}"
+        base_url = getattr(client, "base_url", "http://127.0.0.1:8000") if client else "http://127.0.0.1:8000"
+        token = getattr(client, "token", None) if client else None
+        query = f"?token={token}" if token else ""
+        url = f"{base_url}/instance/{self.workflow_id}{query}"
         try:
             webbrowser.open(url)
             self.notify(f"Opened {url} in browser", severity="information")
         except Exception as exc:
             self.notify(f"Failed to open browser: {exc}", severity="error")
+
 
     def action_go_back(self) -> None:
         self.app.pop_screen()

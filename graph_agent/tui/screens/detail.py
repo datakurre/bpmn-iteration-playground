@@ -221,12 +221,15 @@ class RunDetailScreen(Screen):  # type: ignore
 
         client = getattr(self.app, "client", None)
         base_url = getattr(client, "base_url", "http://127.0.0.1:8000") if client else "http://127.0.0.1:8000"
-        url = f"{base_url}/instance/{self.workflow_id}"
+        token = getattr(client, "token", None) if client else None
+        query = f"?token={token}" if token else ""
+        url = f"{base_url}/instance/{self.workflow_id}{query}"
         try:
             webbrowser.open(url)
             self.notify(f"Opened {url} in browser", severity="information")
         except Exception as exc:
             self.notify(f"Failed to open browser: {exc}", severity="error")
+
 
     async def on_button_pressed(self, event: Any) -> None:
         btn_id = getattr(event.button, "id", "")
