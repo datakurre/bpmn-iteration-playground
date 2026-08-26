@@ -23,6 +23,7 @@ KNOWN_HARNESS_TYPES: set[str] = {
     "pi_agent",
     "shell",
     "mock",
+    "mock_agent",
     "sandbox_pi",
     "sandbox_shell",
 }

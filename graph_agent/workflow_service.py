@@ -590,6 +590,47 @@ class WorkflowService:
             "removed_tasks": removed_tasks,
         }
 
+    async def extend_graph(self, workflow_id: str, request: Any) -> dict[str, Any]:
+        """Insert nodes into a running workflow's graph and apply the change.
+
+        Combines insert_nodes() + replace_spec() in one atomic operation.
+        """
+        # 1. Get current spec XML
+        current_xml = self.get_spec_xml(workflow_id)
+
+        # 2. Build InsertionSpec from request
+        from graph_agent.bpmn_utils import BpmnNode, InsertionSpec, insert_nodes
+
+        nodes_list = getattr(request, "nodes", [])
+        after_target = getattr(request, "after", "")
+        after_flow = getattr(request, "after_flow", None)
+
+        insertion = InsertionSpec(
+            after=after_target,
+            nodes=[
+                BpmnNode(
+                    bpmn_id=n.bpmn_id,
+                    name=n.name,
+                    element_type=n.element_type,
+                    properties=n.properties,
+                    input_params=n.input_params,
+                    output_params=n.output_params,
+                    form_fields=n.form_fields,
+                )
+                for n in nodes_list
+            ],
+            after_flow=after_flow,
+        )
+
+        # 3. Insert nodes into XML
+        new_xml = insert_nodes(current_xml, insertion)
+
+        # 4. Apply spec replacement
+        result = await self.replace_spec(workflow_id, new_xml)
+        result["inserted_nodes"] = [n.bpmn_id for n in nodes_list]
+        result["spec_xml"] = new_xml
+        return result
+
     async def diagram(self, workflow_id: str) -> str:
         record = self._record(workflow_id)
         path = Path(record["bpmn_path"]).resolve()

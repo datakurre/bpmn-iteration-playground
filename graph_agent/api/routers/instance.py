@@ -19,6 +19,7 @@ from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 
 from graph_agent.auth import Role, require_role
 from graph_agent.models import (
+    ExtendRequest,
     ForkRequest,
     MergeResponse,
     MessageRequest,
@@ -135,6 +136,22 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
             raise HTTPException(404, "workflow not found") from exc
         except ValueError as exc:
             raise HTTPException(400, detail=str(exc)) from exc
+
+    @router.post("/instance/{workflow_id}/extend", tags=["Instance"], summary="Extend workflow graph with new nodes")
+    async def extend_instance_graph(
+        workflow_id: str,
+        request: ExtendRequest,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR),
+    ) -> dict[str, Any]:
+        try:
+            return await get_service().extend_graph(workflow_id, request)
+        except WorkflowNotFoundError as exc:
+            raise HTTPException(404, "workflow not found") from exc
+        except ValueError as exc:
+            msg = str(exc)
+            if "mid-execution" in msg or "Active task" in msg:
+                raise HTTPException(409, detail=msg) from exc
+            raise HTTPException(400, detail=msg) from exc
 
     @router.get("/instance/{workflow_id}/workspace", tags=["Instance"], summary="Download instance workspace")
     async def download_workspace(

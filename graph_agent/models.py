@@ -319,3 +319,20 @@ class DeleteInstanceResponse(BaseModel):
 class ClearInstancesResponse(BaseModel):
     deleted: int
 
+
+class ExtendNodeRequest(BaseModel):
+    bpmn_id: str
+    name: str
+    element_type: str  # 'serviceTask', 'userTask', 'exclusiveGateway', etc.
+    properties: dict[str, str] = Field(default_factory=dict)
+    input_params: dict[str, str] = Field(default_factory=dict)
+    output_params: dict[str, str] = Field(default_factory=dict)
+    form_fields: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ExtendRequest(BaseModel):
+    after: str  # BPMN ID to insert after
+    nodes: list[ExtendNodeRequest]
+    after_flow: str | None = None
+
+
