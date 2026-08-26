@@ -59,11 +59,11 @@ def minimal_bpmn(
 
 def linear_bpmn(
     process_id: str = "Process_1",
-    tasks: list[tuple[str, str, dict[str, str]]] | None = None,
+    tasks: list[tuple[str, str] | tuple[str, str, dict[str, str]]] | None = None,
 ) -> str:
     """Build Start -> task1 -> task2 -> ... -> End BPMN.
 
-    Each task: (bpmn_id, element_type, camunda_properties).
+    Each task: (bpmn_id, element_type) or (bpmn_id, element_type, camunda_properties).
     element_type: 'userTask', 'serviceTask', etc.
     """
     if tasks is None:
@@ -75,7 +75,12 @@ def linear_bpmn(
     prev_node = "StartEvent_1"
     flow_counter = 1
 
-    for task_id, task_type, properties in tasks:
+    for item in tasks:
+        if len(item) == 2:
+            task_id, task_type = item
+            properties: dict[str, str] = {}
+        else:
+            task_id, task_type, properties = item  # type: ignore[assignment]
         tag = task_type if ":" in task_type else f"bpmn:{task_type}"
         flow_id = f"Flow_{flow_counter}"
         flow_counter += 1

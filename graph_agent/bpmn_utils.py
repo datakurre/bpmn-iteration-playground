@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -83,6 +84,28 @@ class ValidationResult:
     task_ids: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class BpmnNode:
+    """A node to insert into a BPMN graph."""
+
+    bpmn_id: str
+    name: str
+    element_type: str  # 'serviceTask', 'userTask', 'exclusiveGateway', etc.
+    properties: dict[str, str] = field(default_factory=dict)
+    input_params: dict[str, str] = field(default_factory=dict)
+    output_params: dict[str, str] = field(default_factory=dict)
+    form_fields: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class InsertionSpec:
+    """Describes what to insert and where."""
+
+    after: str
+    nodes: list[BpmnNode]
+    after_flow: str | None = None
 
 
 def _local_tag(elem: ET.Element[Any] | etree._Element) -> str:
@@ -502,4 +525,207 @@ def replace_spec(
     workflow._predict()
 
     return workflow, warnings
+
+
+def _build_extensions(node: BpmnNode) -> etree._Element | None:
+    """Build <bpmn:extensionElements> for a BpmnNode."""
+    if not node.properties and not node.input_params and not node.output_params and not node.form_fields:
+        return None
+
+    ext = etree.Element(f"{{{BPMN_NS}}}extensionElements")
+    if node.properties:
+        props = etree.SubElement(ext, f"{{{CAMUNDA_NS}}}properties")
+        for k, v in node.properties.items():
+            etree.SubElement(
+                props,
+                f"{{{CAMUNDA_NS}}}property",
+                attrib={"name": str(k), "value": str(v)},
+            )
+
+    if node.form_fields:
+        form = etree.SubElement(ext, f"{{{CAMUNDA_NS}}}formData")
+        for f in node.form_fields:
+            field_attrib = {
+                "id": str(f.get("id", "")),
+                "label": str(f.get("label", "")),
+                "type": str(f.get("type", "string")),
+            }
+            form_field = etree.SubElement(form, f"{{{CAMUNDA_NS}}}formField", attrib=field_attrib)
+            for v in f.get("values", []):
+                etree.SubElement(
+                    form_field,
+                    f"{{{CAMUNDA_NS}}}value",
+                    attrib={"id": str(v.get("id", "")), "name": str(v.get("name", ""))},
+                )
+
+    if node.input_params or node.output_params:
+        io = etree.SubElement(ext, f"{{{CAMUNDA_NS}}}inputOutput")
+        for k, v in node.input_params.items():
+            p = etree.SubElement(io, f"{{{CAMUNDA_NS}}}inputParameter", attrib={"name": str(k)})
+            p.text = str(v)
+        for k, v in node.output_params.items():
+            p = etree.SubElement(io, f"{{{CAMUNDA_NS}}}outputParameter", attrib={"name": str(k)})
+            p.text = str(v)
+
+    return ext
+
+
+def _find_target_flow(
+    process_elem: etree._Element,
+    after_id: str,
+    after_flow: str | None,
+    ns: dict[str, str],
+) -> etree._Element:
+    """Find matching outgoing sequence flow for after_id."""
+    matching_flows = process_elem.findall(
+        f".//bpmn:sequenceFlow[@sourceRef='{after_id}']", ns
+    )
+    if not matching_flows:
+        raise ValueError(f"Target node '{after_id}' has no outgoing sequence flow")
+
+    if len(matching_flows) > 1:
+        if after_flow:
+            target_flow = next(
+                (f for f in matching_flows if f.get("id") == after_flow), None
+            )
+            if target_flow is None:
+                raise ValueError(
+                    f"Specified flow '{after_flow}' not found among outgoing flows of '{after_id}'"
+                )
+            return target_flow
+        raise ValueError(
+            f"Target node '{after_id}' has multiple outgoing sequence flows; specify after_flow"
+        )
+    return matching_flows[0]
+
+
+def _splice_nodes(
+    process_elem: etree._Element,
+    spec_nodes: list[BpmnNode],
+    prev_node_id: str,
+    prev_node_elem: etree._Element,
+    target_node_elem: etree._Element | None,
+    orig_target_id: str,
+) -> None:
+    """Insert new node elements and wire sequence flows."""
+    for node in spec_nodes:
+        elem_tag = node.element_type
+        if elem_tag.startswith("bpmn:"):
+            elem_tag = elem_tag[5:]
+
+        new_elem = etree.SubElement(
+            process_elem,
+            f"{{{BPMN_NS}}}{elem_tag}",
+            attrib={"id": node.bpmn_id, "name": node.name},
+        )
+
+        ext_elem = _build_extensions(node)
+        if ext_elem is not None:
+            new_elem.append(ext_elem)
+
+        # Wire flow from prev_node to this node
+        flow_id = f"Flow_{uuid.uuid4().hex[:8]}"
+        etree.SubElement(
+            process_elem,
+            f"{{{BPMN_NS}}}sequenceFlow",
+            attrib={"id": flow_id, "sourceRef": prev_node_id, "targetRef": node.bpmn_id},
+        )
+
+        out_ref = etree.SubElement(prev_node_elem, f"{{{BPMN_NS}}}outgoing")
+        out_ref.text = flow_id
+
+        in_ref = etree.SubElement(new_elem, f"{{{BPMN_NS}}}incoming")
+        in_ref.text = flow_id
+
+        prev_node_id = node.bpmn_id
+        prev_node_elem = new_elem
+
+    # Final sequence flow from last inserted node to orig_target_id
+    final_flow_id = f"Flow_{uuid.uuid4().hex[:8]}"
+    etree.SubElement(
+        process_elem,
+        f"{{{BPMN_NS}}}sequenceFlow",
+        attrib={"id": final_flow_id, "sourceRef": prev_node_id, "targetRef": orig_target_id},
+    )
+
+    out_ref = etree.SubElement(prev_node_elem, f"{{{BPMN_NS}}}outgoing")
+    out_ref.text = final_flow_id
+
+    if target_node_elem is not None:
+        in_ref = etree.SubElement(target_node_elem, f"{{{BPMN_NS}}}incoming")
+        in_ref.text = final_flow_id
+
+
+def insert_nodes(base_xml: str, spec: InsertionSpec) -> str:
+    """Insert nodes into BPMN XML after the specified element.
+
+    Returns the updated BPMN XML string.
+    Raises ValueError if:
+    - spec.after is not found in the XML
+    - spec.after has no outgoing sequence flow
+    - spec.after has multiple outgoing sequence flows and spec.after_flow is not specified
+    - The resulting XML fails validate_bpmn()
+    """
+    if not spec.nodes:
+        return base_xml
+
+    xml_bytes = base_xml.encode("utf-8") if isinstance(base_xml, str) else base_xml
+    try:
+        root = etree.fromstring(xml_bytes)
+    except Exception as exc:
+        raise ValueError(f"Failed to parse base BPMN XML: {exc}") from exc
+
+    ns = {"bpmn": BPMN_NS, "camunda": CAMUNDA_NS}
+
+    # Find the target element 'after'
+    node_elem = root.find(f".//*[@id='{spec.after}']")
+    if node_elem is None:
+        raise ValueError(f"Target node '{spec.after}' not found in BPMN XML")
+
+    process_elem = node_elem.getparent()
+    if process_elem is None:
+        raise ValueError(f"Parent process element for '{spec.after}' not found")
+
+    target_flow = _find_target_flow(process_elem, spec.after, spec.after_flow, ns)
+    orig_flow_id = target_flow.get("id")
+    orig_target_id = target_flow.get("targetRef")
+    if not orig_target_id:
+        raise ValueError(f"Outgoing sequence flow '{orig_flow_id}' has no targetRef")
+
+    target_node_elem = root.find(f".//*[@id='{orig_target_id}']")
+
+    # Remove the existing sequence flow
+    process_elem.remove(target_flow)
+
+    # Clean up incoming/outgoing tags referring to orig_flow_id if present
+    for out_elem in node_elem.findall("bpmn:outgoing", ns):
+        if out_elem.text == orig_flow_id:
+            node_elem.remove(out_elem)
+
+    if target_node_elem is not None:
+        for in_elem in target_node_elem.findall("bpmn:incoming", ns):
+            if in_elem.text == orig_flow_id:
+                target_node_elem.remove(in_elem)
+
+    _splice_nodes(
+        process_elem=process_elem,
+        spec_nodes=spec.nodes,
+        prev_node_id=spec.after,
+        prev_node_elem=node_elem,
+        target_node_elem=target_node_elem,
+        orig_target_id=orig_target_id,
+    )
+
+    result_xml = etree.tostring(
+        root, encoding="utf-8", xml_declaration=True, pretty_print=True
+    ).decode("utf-8")
+
+    # Validate output
+    val_result = validate_bpmn(result_xml)
+    if not val_result.valid:
+        raise ValueError(f"Resulting BPMN XML is invalid: {'; '.join(val_result.errors)}")
+
+    return str(result_xml)
+
+
 
