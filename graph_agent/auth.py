@@ -112,13 +112,14 @@ def get_current_role(request: Request) -> Role | None:
     if admin_token and candidate_api_key == admin_token:
         return Role.ADMIN
 
-    # Single-user local daemon fallback (no API_KEYS configured and REQUIRE_AUTH not set)
-    if not api_keys and not require_auth:
+    # Single-user local daemon fallback (no API_KEYS configured, REQUIRE_AUTH not set, and no credentials provided)
+    if not api_keys and not require_auth and not candidate_admin and not candidate_api_key:
         client_host = request.client.host if request.client else ""
         if client_host in ("127.0.0.1", "::1", "localhost", "testclient"):
             return Role.ADMIN
 
     return None
+
 
 
 
