@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -369,7 +370,11 @@ class WorkflowRunner:
         # No fallback to the whole of target_wf.data: an undeclared input means an empty
         # scope, not implicit access to everything the containing process knows -- see
         # docs/variable-scoping-plan.md.
-        variables = resolve_scope_inputs(input_params, target_wf.data)
+        target_data = dict(target_wf.data)
+        if "__current_spec" not in target_data:
+            with contextlib.suppress(Exception):
+                target_data["__current_spec"] = self.extract_bpmn_xml(target_wf)
+        variables = resolve_scope_inputs(input_params, target_data)
 
         context = {
             "workflow_id": workflow_id,

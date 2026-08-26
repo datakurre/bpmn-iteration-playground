@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from SpiffWorkflow.task import TaskState
 
 from graph_agent.adapters.base import AdapterCapabilities, AgentResult
-from graph_agent.engine import resolve_scope_inputs
+from graph_agent.engine import _resolve_path, resolve_scope_inputs
 from graph_agent.paths import contained_path
 from graph_agent.persistence import WorkspaceConflictError
 from graph_agent.pi_client import PiResult
@@ -151,7 +151,7 @@ def job_workflow(service: WorkflowService, task_id: str, workflow_id: str) -> bo
     return bool(record and task_id in record.get("jobs", {}))
 
 
-async def dispatch(service: WorkflowService, workflow_id: str, _lock_held: bool = False) -> None:  # noqa: PLR0915 -- scans/launches every STARTED ServiceTask for the instance in one pass; pre-existing complexity
+async def dispatch(service: WorkflowService, workflow_id: str, _lock_held: bool = False) -> None:  # noqa: C901, PLR0915 -- scans/launches every STARTED ServiceTask for the instance in one pass; pre-existing complexity
     workflow_id = service._get_root_workflow_id(workflow_id)
     guard: Any = contextlib.nullcontext() if _lock_held else service._lock(workflow_id)
     async with guard:
@@ -198,7 +198,11 @@ async def dispatch(service: WorkflowService, workflow_id: str, _lock_held: bool 
             generation = int(existing_job.get("generation", 0)) if existing_job else 0
 
             extensions = getattr(task.task_spec, "extensions", {}) or {}
-            scope_inputs = resolve_scope_inputs(extensions.get("inputParameters", {}), task.workflow.data)
+            source_data = dict(task.workflow.data)
+            if "__current_spec" not in source_data:
+                with contextlib.suppress(Exception):
+                    source_data["__current_spec"] = service.get_spec_xml(workflow_id)
+            scope_inputs = resolve_scope_inputs(extensions.get("inputParameters", {}), source_data)
             task.data = scope_inputs
             service._record_scope(
                 record, task, "ServiceTask", status="active", inputs=scope_inputs, data=scope_inputs
@@ -524,16 +528,17 @@ async def complete_pi(  # noqa: C901, PLR0912, PLR0915 -- reconciles one agent-t
                 if source_expr.startswith("${") and source_expr.endswith("}")
                 else source_expr
             )
+            val = _resolve_path(source_key, sources) if "." in source_key else sources.get(source_key)
             # Only actionable when the agent actually produced a result: on a failed
             # or cancelled turn every agent-JSON key is legitimately absent.
-            if source_key not in sources and sanitized_output:
+            if val is None and source_key not in sources and "." not in source_key and sanitized_output:
                 logger.warning(
                     "Task %s maps outputParameter %r from unknown key %r; publishing None",
                     task_id,
                     target_var,
                     source_key,
                 )
-            published[target_var] = sources.get(source_key)
+            published[target_var] = val
         if published:
             # task.data is inherited by successor tasks, so this is the scope BPMN
             # gateway conditions evaluate in -- and it is per-branch, which is what

@@ -78,6 +78,9 @@ class WorkflowService:
         self.workspace = workspace
         self.runner = WorkflowRunner()
         self.registry = adapter_registry or AdapterRegistry()
+        from graph_agent.adapters.graph_extend_adapter import GraphExtendAdapter
+
+        self.registry.register(GraphExtendAdapter(self))
         self.events = EventBus(store)
 
         if pi_client is not None:

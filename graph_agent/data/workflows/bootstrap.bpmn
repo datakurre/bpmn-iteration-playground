@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_Bootstrap" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Process_Bootstrap" name="Self-Extending Bootstrap Loop" isExecutable="true">
+    <bpmn:documentation>Minimal self-extending BPMN loop: prompt user -> architect plans extension -> human review/edit -> migrate -> execute -> repeat.</bpmn:documentation>
+    <bpmn:startEvent id="Start_Bootstrap" name="Start">
+      <bpmn:outgoing>Flow_Start_To_Prompt</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_Start_To_Prompt" sourceRef="Start_Bootstrap" targetRef="UserTask_Prompt" />
+    <bpmn:userTask id="UserTask_Prompt" name="Prompt User">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="goal" label="What would you like to do?" type="textarea" />
+          <camunda:formField id="context" label="Additional context or requirements" type="textarea" />
+        </camunda:formData>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Start_To_Prompt</bpmn:incoming>
+      <bpmn:incoming>Flow_Loop_Prompt</bpmn:incoming>
+      <bpmn:incoming>Flow_Reject_Prompt</bpmn:incoming>
+      <bpmn:outgoing>Flow_Prompt_To_Extend</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="Flow_Prompt_To_Extend" sourceRef="UserTask_Prompt" targetRef="ServiceTask_Extend" />
+    <bpmn:serviceTask id="ServiceTask_Extend" name="Plan Graph Extension">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="graph_architect" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="goal">${goal}</camunda:inputParameter>
+          <camunda:inputParameter name="context">${context}</camunda:inputParameter>
+          <camunda:inputParameter name="current_spec">${__current_spec}</camunda:inputParameter>
+          <camunda:outputParameter name="status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="summary">${summary}</camunda:outputParameter>
+          <camunda:outputParameter name="extension_spec">${findings.0}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Prompt_To_Extend</bpmn:incoming>
+      <bpmn:incoming>Flow_Retry_To_Extend</bpmn:incoming>
+      <bpmn:outgoing>Flow_Extend_To_GW</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_Extend_To_GW" sourceRef="ServiceTask_Extend" targetRef="ExclusiveGateway_Check" />
+    <bpmn:exclusiveGateway id="ExclusiveGateway_Check" name="Plan Succeeded?">
+      <bpmn:incoming>Flow_Extend_To_GW</bpmn:incoming>
+      <bpmn:outgoing>Flow_Check_OK</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Check_Fail</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_Check_OK" name="Success" sourceRef="ExclusiveGateway_Check" targetRef="UserTask_EditGraph">
+      <bpmn:conditionExpression>status == 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Check_Fail" name="Failed" sourceRef="ExclusiveGateway_Check" targetRef="UserTask_Retry">
+      <bpmn:conditionExpression>status != 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:userTask id="UserTask_Retry" name="Retry Goal">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="goal" label="Goal" type="textarea" />
+          <camunda:formField id="context" label="Context" type="textarea" />
+        </camunda:formData>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Check_Fail</bpmn:incoming>
+      <bpmn:outgoing>Flow_Retry_To_Extend</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="Flow_Retry_To_Extend" sourceRef="UserTask_Retry" targetRef="ServiceTask_Extend" />
+    <bpmn:userTask id="UserTask_EditGraph" name="Review Proposed Extension">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="approval" label="Approval Decision (apply/reject)" type="string" defaultValue="apply" />
+        </camunda:formData>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Check_OK</bpmn:incoming>
+      <bpmn:outgoing>Flow_Edit_To_GW</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="Flow_Edit_To_GW" sourceRef="UserTask_EditGraph" targetRef="ExclusiveGateway_Edit" />
+    <bpmn:exclusiveGateway id="ExclusiveGateway_Edit" name="Decision?">
+      <bpmn:incoming>Flow_Edit_To_GW</bpmn:incoming>
+      <bpmn:outgoing>Flow_Edit_Apply</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Reject_Prompt</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_Edit_Apply" name="Apply" sourceRef="ExclusiveGateway_Edit" targetRef="ServiceTask_Migrate">
+      <bpmn:conditionExpression>approval == 'apply'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Reject_Prompt" name="Reject" sourceRef="ExclusiveGateway_Edit" targetRef="UserTask_Prompt">
+      <bpmn:conditionExpression>approval != 'apply'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:serviceTask id="ServiceTask_Migrate" name="Apply Extension">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="graph_extend" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="extension_spec">${extension_spec}</camunda:inputParameter>
+          <camunda:outputParameter name="migrate_status">${status}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Edit_Apply</bpmn:incoming>
+      <bpmn:outgoing>Flow_Migrate_To_Loop</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_Migrate_To_Loop" sourceRef="ServiceTask_Migrate" targetRef="Gateway_Loop" />
+    <bpmn:exclusiveGateway id="Gateway_Loop" name="Loop Gateway">
+      <bpmn:incoming>Flow_Migrate_To_Loop</bpmn:incoming>
+      <bpmn:outgoing>Flow_Loop_Prompt</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_Loop_Prompt" sourceRef="Gateway_Loop" targetRef="UserTask_Prompt" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Process_Bootstrap" />
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
