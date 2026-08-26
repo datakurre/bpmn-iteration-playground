@@ -13,7 +13,7 @@ Run the full pytest suite inside the development shell:
 make test
 
 # Or directly with devenv
-devenv shell -- pytest
+nix develop -- pytest
 ```
 
 The test suite covers:
@@ -31,7 +31,7 @@ All documentation screenshots are generated automatically using Playwright in he
 
 ### Re-generating Screenshots
 
-Make sure the API server is running (`devenv up -d` or `make run`), then run:
+Make sure the API server is running (`make run` or `make run`), then run:
 
 ```bash
 make screenshots

@@ -25,7 +25,7 @@ else:
             pass
 
 
-class RunDetailScreen(Screen):  # type: ignore[misc]
+class RunDetailScreen(Screen):  # type: ignore
     """Detailed view of a single workflow run: timeline, live logs, variables, and savepoints."""
 
     BINDINGS: ClassVar[list[BindingType]] = [

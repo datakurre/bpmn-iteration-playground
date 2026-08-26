@@ -120,7 +120,7 @@ element_templates/   – bpmn-js element templates (JSON) for the editor's templ
 scripts/
   verify_*.py        – Playwright-based smoke tests for UI pages
 flake.nix            – Nix flake: pi-* variant apps with role-specific prompts
-devenv.nix           – devenv: Python 3.14 + Node 22 + uvicorn process + scripts
+flake.nix            – Nix flake: apps, packages, and devShell (Python 3.14, Node 22, tools)
 vendor/agent-sandbox – git submodule: Rust CLI + Podman sandbox, isolates Pi's fs/network/secrets
 vendor/operaton-element-templates{,-validator,-json-schema} – git submodules: Operaton/Camunda 7
                        fork of bpmn-js-element-templates + its validator + JSON schema, sibling-linked
@@ -157,7 +157,7 @@ process on `localhost:8000` and for `agent-sandbox`/container markers rather tha
   limited to what the `toml agent-sandbox` policy block below allows (§ Agent Sandbox); reaching
   anything else requires the sandbox's proxy and otherwise fails in a policy-shaped way (a bare
   `403 Forbidden`, "Could not resolve host") — see the `agent-sandbox` skill and § 4b.
-- **The app runs on the host**, started by the user with `devenv shell -- make watch`
+- **The app runs on the host**, started by the user with `make watch` inside a `nix develop` shell
   (auto-reloading uvicorn) — not by you, and not inside your container. Treat it as already
   running; if it isn't reachable, ask the user to start it rather than trying to launch it
   yourself from inside the sandbox.
@@ -183,22 +183,20 @@ process on `localhost:8000` and for `agent-sandbox`/container markers rather tha
   one only captures the app's own logger records (not uvicorn's reload/startup lines) and
   persists across restarts rather than resetting per session.
 
-## 1. Serving the Project (`devenv`)
+## 1. Serving the Project (`nix develop`)
 
-- **Start Process**: Use `devenv up -d` to launch background processes defined in `devenv.nix`.
-- **Wait for Readiness**: Run `devenv processes wait` to block until readiness probes pass (`http://127.0.0.1:8000/health`).
-- **Process Status**: Run `devenv processes list` to check process status (`api ready restarts: 0`).
-- **Process Cleanup**: Use `devenv processes down` to terminate running process compose instances.
-- **Tests**: `devenv shell -- test` runs `pytest --cov=app` (mypy --strict, `tsc --noEmit`, and `vitest` follow).
-- **Lint only**: `devenv shell -- lint` runs `mypy app/` (`--strict`) and `tsc --noEmit`.
-- **Offline demo**: `devenv shell -- demo` runs uvicorn with `PI_EXECUTABLE=graph_agent/data/pi-demo`.
+- **Start Process**: Use `nix develop --command make watch` or enter the dev shell with `nix develop` and run `make watch` (auto-reloading uvicorn).
+- **Wait for Readiness**: Check readiness probe `http://127.0.0.1:8000/health`.
+- **Tests**: `make test` runs `pytest --cov=graph_agent` (mypy --strict, `tsc --noEmit`, and `vitest` follow).
+- **Lint only**: `make lint` runs `ruff check`, `mypy graph_agent/`, and `tsc --noEmit`.
+- **Offline demo**: `make demo` runs uvicorn with `PI_EXECUTABLE=graph_agent/data/pi-demo`.
 
 ## 2. Local Pi Agent & Deterministic Demo
 
-- **Executable Fallback**: `PI_EXECUTABLE` defaults to `node_modules/.bin/pi` in devenv. Falls back to `graph_agent/data/pi-demo` when `PI_OFFLINE=1`, `.pi_offline` file exists, or no `OPENAI_API_KEY` is set.
+- **Executable Fallback**: `PI_EXECUTABLE` defaults to `node_modules/.bin/pi` in the flake.nix devShell. Falls back to `graph_agent/data/pi-demo` when `PI_OFFLINE=1`, `.pi_offline` file exists, or no `OPENAI_API_KEY` is set.
 - **Demo fallback is opt-in**: a *failed* real Pi run only retries against `graph_agent/data/pi-demo` when `PI_ALLOW_DEMO_FALLBACK=1`. Off by default — otherwise a misconfigured provider silently feeds fabricated agent output into BPMN gateway conditions.
 - **Deterministic Showcase**: `graph_agent/data/pi-demo` is a fast RPC-compatible mock that always emits the 5-key JSON result contract without model credentials.
-- **Pi Provider Config**: `PI_PROVIDER=opencode-go`, `PI_MODEL=gpt-5.6-luna`, `OPENAI_BASE_URL=https://opencode.ai/zen/v1` set by devenv; passed through the `ALLOWED_ENV_VARS` filter in `pi_client.py`.
+- **Pi Provider Config**: `PI_PROVIDER=opencode-go`, `PI_MODEL=gpt-5.6-luna`, `OPENAI_BASE_URL=https://opencode.ai/zen/v1` set by the flake.nix devShell; passed through the `ALLOWED_ENV_VARS` filter in `pi_client.py`.
 - **Timeout**: Default 1800 s (`PI_TIMEOUT_SECONDS`). Configurable per-deployment. On timeout or cancellation the whole process *group* is killed, since Pi runs with `start_new_session=True`.
 - **Workspace**: every instance runs in its own unpacked workspace. `PI_WORKDIR` is a *seed* copied into a fresh workspace (never the agent's cwd), so concurrent instances cannot collide and savepoints capture what the agent actually touched.
 - **Resource Limits**: Pi subprocess runs with `RLIMIT_AS=2GB` and optionally drops privileges to `PI_RUN_AS_USER`.

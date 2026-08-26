@@ -24,7 +24,7 @@ else:
             pass
 
 
-class LogScreen(Screen):  # type: ignore[misc]
+class LogScreen(Screen):  # type: ignore
     """Tails daemon and execution logs from the workspace."""
 
     BINDINGS: ClassVar[list[BindingType]] = [

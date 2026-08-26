@@ -27,7 +27,7 @@ else:
             pass
 
 
-class FormScreen(Screen):  # type: ignore[misc]
+class FormScreen(Screen):  # type: ignore
     """Renders FormJS form components natively, or falls back to browser deep link for complex forms."""
 
     BINDINGS: ClassVar[list[BindingType]] = [

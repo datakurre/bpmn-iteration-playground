@@ -29,7 +29,7 @@ logger = logging.getLogger("bpmn.sandbox_adapter")
 # whatever value the client sent -- see agent-sandbox's proxy/src/inject.rs), so without
 # a placeholder value here Pi fails "No API key found" locally before any request is
 # even attempted. Only providers this project actually drives (PI_PROVIDER=opencode-go
-# in devenv.nix) are listed; add a line here when a new one is wired up.
+# in flake.nix) are listed; add a line here when a new one is wired up.
 _PI_LOCAL_API_KEY_ENV_VAR = {
     "opencode-go": "OPENCODE_API_KEY",
     "opencode-zen": "OPENCODE_API_KEY",

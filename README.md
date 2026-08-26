@@ -131,7 +131,7 @@ To develop and test `graph-agent` itself:
 
 ```bash
 # Enter development shell with Python, Node, and toolchains
-devenv shell
+nix develop
 
 # Run full test suite (400+ tests)
 pytest tests/

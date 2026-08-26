@@ -24,7 +24,7 @@ else:
             pass
 
 
-class StartScreen(Screen):  # type: ignore[misc]
+class StartScreen(Screen):  # type: ignore
     """Screen for launching a new workflow run from a template."""
 
     BINDINGS: ClassVar[list[BindingType]] = [

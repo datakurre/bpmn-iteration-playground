@@ -26,7 +26,7 @@ else:
             pass
 
 
-class RunsScreen(Screen):  # type: ignore[misc]
+class RunsScreen(Screen):  # type: ignore
     """Screen listing all active and past workflow runs."""
 
     BINDINGS: ClassVar[list[BindingType]] = [

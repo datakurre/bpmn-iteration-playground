@@ -36,12 +36,21 @@ demo:
 	PI_EXECUTABLE="$(CURDIR)/graph_agent/data/pi-demo" $(UV) run uvicorn graph_agent.api.server:app --reload --host $(HOST) --port $(PORT)
 
 lint:
-	devenv shell -- lint
+	$(UV) run ruff check .
+	$(UV) run mypy graph_agent/
+	npm run typecheck
+
+lint-fix:
+	$(UV) run ruff check --fix .
 
 typecheck: lint
 
 test:
-	devenv shell -- test
+	$(UV) run ruff check .
+	$(UV) run pytest -q --cov=graph_agent --cov-report=term-missing --cov-report=html
+	$(UV) run mypy graph_agent/
+	npm run typecheck
+	npm test
 
 pack:
 	PORT=$(PORT) $(UV) run python scripts/pack_db.py

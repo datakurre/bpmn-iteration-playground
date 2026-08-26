@@ -6,7 +6,7 @@ This guide covers setting up your local development environment for contributing
 
 ## 1. Prerequisites & Environment Setup
 
-`graph-agent` uses [devenv](https://devenv.sh/) and [Nix](https://nixos.org/) for hermetic, reproducible development environments (Python 3.14, Node 22, and toolchains).
+`graph-agent` uses [nix](https://nix.sh/) and [Nix](https://nixos.org/) for hermetic, reproducible development environments (Python 3.14, Node 22, and toolchains).
 
 ### Clone & Launch Development Environment
 
@@ -15,7 +15,7 @@ git clone https://github.com/datakurre/graph-agent.git
 cd graph-agent
 
 # Enter hermetic development shell
-devenv shell
+nix develop
 ```
 
 ---
@@ -48,7 +48,7 @@ Open `http://127.0.0.1:8000/` (or the dynamically assigned port displayed in the
 
 ## 3. Running Tests and Checks
 
-Inside `devenv shell`:
+Inside `nix develop`:
 
 ```bash
 # Run full test suite (pytest with anyio)

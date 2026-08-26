@@ -74,7 +74,7 @@ Screen {
 """
 
 
-class GraphAgentApp(App):  # type: ignore[misc]
+class GraphAgentApp(App):  # type: ignore
     """Textual TUI for graph-agent orchestration platform."""
 
     CSS = TUI_CSS

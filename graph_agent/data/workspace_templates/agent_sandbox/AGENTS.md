@@ -9,7 +9,7 @@ its own `camunda:properties` (`sandbox_policy` / `network_policy` / `allowed_hos
 `sandbox_template` property naming another `workspace_templates/<name>/` directory.
 
 One route covers both providers this project drives (`opencode-go` and `opencode-zen`,
-matching `devenv.nix`'s default `PI_PROVIDER=opencode-go`), sharing one secret,
+matching `flake.nix`'s default `PI_PROVIDER=opencode-go`), sharing one secret,
 `OPENCODE_API_KEY` -- pi's own client resolves *both* providers' credentials from that
 same environment variable (see `_PI_LOCAL_API_KEY_ENV_VAR` in
 `graph_agent/adapters/sandbox_adapter.py`), so the proxy only ever needs to inject one value.
@@ -20,7 +20,7 @@ mean a key nobody configured for one provider breaks sandboxed turns for the oth
 The path is `/zen/**`, not `/go/**` -- pi's `opencode-go` provider client calls
 `opencode.ai/zen/go/v1/responses`, nested under `/zen/` regardless of the "go" tier
 (confirmed by the proxy's own L7-denied log entry, not guessed from
-`devenv.nix`'s unrelated `OPENAI_BASE_URL=.../go/v1`, which is a different string
+`flake.nix`'s unrelated `OPENAI_BASE_URL=.../go/v1`, which is a different string
 entirely) -- and `/zen/**` already matches that nested `/zen/go/**` path, so one route
 covers `opencode-zen`'s own `/zen/v1` calls too.
 

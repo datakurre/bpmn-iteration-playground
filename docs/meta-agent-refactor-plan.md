@@ -48,7 +48,7 @@ Concrete, verified points of coupling. Each is a work item later in the plan.
 
 | Coupling | Where | Notes |
 |---|---|---|
-| Fixed public bind | `app/main.py`, `devenv.nix` `processes.api`, `Makefile` `run`/`watch` | `0.0.0.0:8000`, hard-coded |
+| Fixed public bind | `app/main.py`, `flake.nix` `processes.api`, `Makefile` `run`/`watch` | `0.0.0.0:8000`, hard-coded |
 | App built at import time | `app/api/server.py:105` — `app = create_app()` | Binds CWD and env before any CLI can configure anything |
 | ZODB path is CWD-relative | `WorkflowStore.__init__(path="data/workflows.fs")` (`app/persistence.py:330`) | `data/` is gitignored at repo root; there is no per-workspace notion |
 | Remote/shared storage | `ZEO_ADDRESS` branch in `_create_storage` | Exists precisely because the store is meant to be shared |
@@ -314,7 +314,7 @@ already-running daemon. `bpmn serve --no-tui` = headless.
 - Retire the legacy `/admin/*` router in favour of `/api/history/*` + the CLI.
 - Rewrite `README.md`, `AGENTS.md` (§ Architecture & Module Map, § 1 Serving, § 6
   Persistence), `docs/architecture.md`, `docs/development/getting-started.md`, and add
-  `docs/meta-agent.md`. Keep `devenv.nix` for *developing this tool*, but it stops being how
+  `docs/meta-agent.md`. Keep `flake.nix` for *developing this tool*, but it stops being how
   anyone runs it.
 
 ---

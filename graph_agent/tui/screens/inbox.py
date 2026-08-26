@@ -24,7 +24,7 @@ else:
             pass
 
 
-class InboxScreen(Screen):  # type: ignore[misc]
+class InboxScreen(Screen):  # type: ignore
     """Aggregates actionable items across all graphs: human tasks and deferred merges."""
 
     BINDINGS: ClassVar[list[BindingType]] = [
