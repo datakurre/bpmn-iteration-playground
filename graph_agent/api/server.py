@@ -31,7 +31,29 @@ logger = logging.getLogger("bpmn.api")
 configure_logging()
 
 
+def _mount_static_files(app: FastAPI) -> None:
+    app_static = Path(__file__).resolve().parents[1] / "static"
+
+    # Specific static mounts must precede the general /static prefix mount.
+    # Check graph_agent/static/vendor first (self-contained package), fallback to node_modules (dev repo).
+    form_assets = app_static / "vendor" / "form-js"
+    if not form_assets.is_dir():
+        form_assets = Path(__file__).resolve().parents[2] / "node_modules" / "@bpmn-io" / "form-js" / "dist"
+
+    bpmn_assets = app_static / "vendor" / "bpmn-js"
+    if not bpmn_assets.is_dir():
+        bpmn_assets = Path(__file__).resolve().parents[2] / "node_modules" / "bpmn-js" / "dist"
+
+    if form_assets.is_dir():
+        app.mount("/static/form-js", StaticFiles(directory=form_assets), name="form-static")
+    if app_static.is_dir():
+        app.mount("/static/app", StaticFiles(directory=app_static), name="app-static")
+    if bpmn_assets.is_dir():
+        app.mount("/static", StaticFiles(directory=bpmn_assets), name="static")
+
+
 def create_app(service: WorkflowService | None = None, workspace: Workspace | None = None) -> FastAPI:
+
     """Build the FastAPI app.
 
     `workspace` only matters when `service` is omitted -- it decides where a *default*
@@ -109,15 +131,8 @@ def create_app(service: WorkflowService | None = None, workspace: Workspace | No
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(OriginHostGuardMiddleware)
 
-    bpmn_assets = Path(__file__).resolve().parents[2] / "node_modules" / "bpmn-js" / "dist"
-    form_assets = Path(__file__).resolve().parents[2] / "node_modules" / "@bpmn-io" / "form-js" / "dist"
-    app_static = Path(__file__).resolve().parents[1] / "static"
-    if app_static.is_dir():
-        app.mount("/static/app", StaticFiles(directory=app_static), name="app-static")
-    if form_assets.is_dir():
-        app.mount("/static/form-js", StaticFiles(directory=form_assets), name="form-static")
-    if bpmn_assets.is_dir():
-        app.mount("/static", StaticFiles(directory=bpmn_assets), name="static")
+    _mount_static_files(app)
+
 
     app.include_router(system.build_router(get_service))
     app.include_router(pages.build_router(get_service))

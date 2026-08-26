@@ -31,15 +31,7 @@ coverage/
 
 # Node
 node_modules/
-graph_agent/static/bpmn-modeler-bundle.js
-graph_agent/static/bpmn-viewer-bundle.js
-graph_agent/static/pages/
-graph_agent/static/tailwind.css
-graph_agent/static/diagram-js-minimap.css
-graph_agent/static/properties-panel.css
-graph_agent/static/bpmn-js-token-simulation.css
-graph_agent/static/bpmn-js-bpmnlint.css
-graph_agent/static/element-template-chooser.css
+
 
 # Temporary & Verification Outputs
 *.log

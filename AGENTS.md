@@ -430,9 +430,10 @@ See §4b for the `SandboxPiAdapter` as a worked example of a second agent adapte
 [network]
 allowed_hosts = [
     "*.nixos.org:443",
-    "*.github.com:443,22",
+    "*.github.com:443",
     "*.cachix.org:443",
     "files.pythonhosted.org:443",
+    "github.com:22",
     "pypi.org:443",
     "registry.npmjs.org:443",
 #

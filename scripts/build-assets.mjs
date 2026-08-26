@@ -1,5 +1,5 @@
 import { build } from "esbuild";
-import { readdirSync, copyFileSync } from "node:fs";
+import { readdirSync, copyFileSync, cpSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const common = { bundle: true, minify: true, format: "iife" };
@@ -79,3 +79,12 @@ copyFileSync(
   "node_modules/@bpmn-io/element-template-chooser/dist/element-template-chooser.css",
   "graph_agent/static/element-template-chooser.css",
 );
+
+// Copy standalone vendor distribution assets for self-contained packaging
+mkdirSync("graph_agent/static/vendor/bpmn-js", { recursive: true });
+cpSync("node_modules/bpmn-js/dist/assets", "graph_agent/static/vendor/bpmn-js/assets", { recursive: true });
+
+mkdirSync("graph_agent/static/vendor/form-js/assets", { recursive: true });
+cpSync("node_modules/@bpmn-io/form-js/dist/assets", "graph_agent/static/vendor/form-js/assets", { recursive: true });
+copyFileSync("node_modules/@bpmn-io/form-js/dist/form-viewer.umd.js", "graph_agent/static/vendor/form-js/form-viewer.umd.js");
+
