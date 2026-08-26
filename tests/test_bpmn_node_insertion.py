@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+from pathlib import Path
 
 import pytest
 from lxml import etree
@@ -148,9 +149,9 @@ def test_result_is_valid_spiffworkflow() -> None:
     )
     result = insert_nodes(base, spec)
 
-    with tempfile.NamedTemporaryFile(suffix=".bpmn", mode="w", delete=False) as f:
-        f.write(result)
-        f.flush()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        bpmn_path = Path(temp_dir) / "test.bpmn"
+        bpmn_path.write_text(result)
         runner = WorkflowRunner()
-        workflow, _ = runner.load_workflow(f.name)
+        workflow, _ = runner.load_workflow(str(bpmn_path))
         assert "Task_New" in workflow.spec.task_specs
