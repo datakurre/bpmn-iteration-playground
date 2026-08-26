@@ -2,7 +2,7 @@
 
 Used everywhere a relative path supplied by BPMN config or by agent output must be
 confined inside a workspace directory -- both a security boundary (preventing an agent
-or a hand-authored template from writing outside its sandbox) and a correctness one
+or a hand-authored template from writing outside its workspace) and a correctness one
 (malformed paths must not raise).
 """
 

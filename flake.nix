@@ -177,7 +177,6 @@
             LOG_LEVEL = "debug";
             PI_TIMEOUT_SECONDS = "1800";
             PI_OFFLINE = "0";
-            PI_SANDBOX_ENABLED = "1";
             PI_PROVIDER = "opencode-go";
             PI_MODEL = "gpt-5.6-luna";
             OPENAI_BASE_URL = "https://opencode.ai/go/v1";

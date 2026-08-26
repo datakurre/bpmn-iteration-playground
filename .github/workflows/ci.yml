@@ -41,8 +41,7 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
-      # Only the element-templates submodules, not vendor/agent-sandbox (which uses an
-      # SSH remote and isn't needed for the frontend build).
+      # Only checkout the element-templates submodules
       - name: Checkout vendored element-templates submodules
         run: |
           git submodule update --init \

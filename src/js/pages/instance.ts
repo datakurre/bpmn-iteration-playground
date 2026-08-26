@@ -235,7 +235,7 @@ function renderState(next: WorkflowState): void {
         // The BPMN task itself stays STARTED (it's parked for a Retry, not
         // transitioned) even though the job failed, so the state badge alone
         // never shows red -- the failure reason has to be rendered explicitly
-        // or a failed sandboxed turn looks identical to one still running.
+        // or a failed turn looks identical to one still running.
         const reason = job?.failure_reason || job?.stderr;
         const error = isFailed && reason
           ? `<div class="mt-1.5 p-1.5 rounded bg-[var(--color-danger-dim)] border border-[var(--color-danger-border)] text-[var(--color-danger)] text-[10.5px] font-mono whitespace-pre-wrap break-words">${escapeHtml(reason)}</div>`

@@ -16,7 +16,6 @@ from SpiffWorkflow.task import TaskState
 from graph_agent.adapters.base import AdapterCapabilities, AgentResult, BaseAdapter
 from graph_agent.adapters.pi_adapter import PiAdapter
 from graph_agent.adapters.registry import AdapterRegistry
-from graph_agent.adapters.sandbox_adapter import SandboxPiAdapter
 from graph_agent.agents_root import Workspace
 from graph_agent.engine import WorkflowRunner, resolve_output_mapping
 from graph_agent.events import EventBus
@@ -130,11 +129,6 @@ class WorkflowService:
             except (ValueError, TypeError):
                 default_timeout = 1800.0
             self.registry.register(PiAdapter(PiClient(timeout_seconds=default_timeout)))
-            # register() keys off adapter_type only, so re-registering the sandbox adapter
-            # here used to leave the `agent_sandbox` alias and the PI_SANDBOX_ENABLED
-            # binding pointing at the instance the registry built, with a different
-            # timeout. Rebind every name that referred to the old one.
-            self.registry.replace(SandboxPiAdapter(timeout_seconds=default_timeout))
 
         self.jobs: dict[str, asyncio.Task[None]] = {}
         self._locks: dict[str, asyncio.Lock] = {}

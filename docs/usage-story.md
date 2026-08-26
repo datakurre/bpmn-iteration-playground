@@ -1,6 +1,6 @@
 # End-to-End Usage Story: Iterative AI Document Generation & Human-in-the-Loop Review
 
-This walkthrough follows a real-world document drafting and editorial review process executed in **Pi Workflow Studio**, orchestrating multi-stage autonomous AI agents powered by **OpenCode Zen / Pi Agent (`opencode-go`)**, durable **ZODB persistence**, **savepoint timeline forking**, **sandboxed workspace artifact packaging**, and interactive **FormJS human checkpoints with revision iteration**.
+This walkthrough follows a real-world document drafting and editorial review process executed in **Pi Workflow Studio**, orchestrating multi-stage autonomous AI agents powered by **OpenCode Zen / Pi Agent (`opencode-go`)**, durable **ZODB persistence**, **savepoint timeline forking**, **isolationed workspace artifact packaging**, and interactive **FormJS human checkpoints with revision iteration**.
 
 ---
 
@@ -70,7 +70,7 @@ The **Studio Dashboard** serves as the operational hub where team members initia
 ### Step 2: Multi-Stage Autonomous AI Execution
 
 Upon clicking **Start Process**, SpiffWorkflow dispatches the sequential AI service tasks:
-1. **Writer Agent (`Task_Draft`)**: Generates the whitepaper draft and creates `document.md` in the sandboxed workspace.
+1. **Writer Agent (`Task_Draft`)**: Generates the whitepaper draft and creates `document.md` in the workspace.
 2. **Quality Agent (`Task_QA`)**: Reviews technical accuracy, terminology, and structure.
 3. **Workspace Packaging**: The workspace directory is compressed into an immutable `.tar.zst` blob in ZODB, and file metadata (`document.md`, file sizes, mtimes) is indexed for zero-overhead queries.
 

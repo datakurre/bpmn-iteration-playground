@@ -80,7 +80,7 @@ class BaseAdapter(ABC):
         """Optional hook: lay down harness-specific files before the turn runs.
 
         Called with the instance workspace the agent will execute in. The default is a
-        no-op; adapters that need configuration on disk (sandbox policy, tool config)
+        no-op; adapters that need configuration on disk (tool config)
         write it here instead of the orchestrator doing it on their behalf.
         """
         return None

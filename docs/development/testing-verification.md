@@ -27,7 +27,7 @@ The test suite covers:
 
 ## 2. Headless Screenshot Automation
 
-All documentation screenshots are generated automatically using Playwright in headless Chromium mode inside the sandbox environment.
+All documentation screenshots are generated automatically using Playwright in headless Chromium mode in headless Chromium.
 
 ### Re-generating Screenshots
 

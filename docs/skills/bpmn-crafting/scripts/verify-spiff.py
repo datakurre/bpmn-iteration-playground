@@ -12,7 +12,6 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -21,7 +20,7 @@ workspace_root = Path(__file__).resolve().parents[4]
 if str(workspace_root) not in sys.path:
     sys.path.insert(0, str(workspace_root))
 
-from graph_agent.engine import WorkflowRunner
+from graph_agent.engine import WorkflowRunner  # noqa: E402
 
 
 def verify_workflow(bpmn_file: str, process_id: str | None = None) -> bool:
@@ -44,7 +43,6 @@ def verify_workflow(bpmn_file: str, process_id: str | None = None) -> bool:
     task_specs = getattr(workflow.spec, "task_specs", {})
     print(f"   📋 Found {len(task_specs)} task specs:")
 
-    errors = 0
     for name, spec in task_specs.items():
         ext = getattr(spec, "extensions", {}) or {}
         props = ext.get("properties", {})

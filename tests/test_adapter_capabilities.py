@@ -80,15 +80,18 @@ def test_resolve_timeout_ignores_an_unparseable_env_value(monkeypatch: pytest.Mo
 
 def test_replace_rebinds_every_alias_of_the_previous_instance() -> None:
     registry = AdapterRegistry(auto_discover=False)
-    original = registry.get("sandbox_pi")
-    assert registry.get("agent_sandbox") is original
+    original = ShellAdapter()
+    registry.bind("shell", original)
+    registry.bind("shell_alias", original)
 
-    replacement = type(original)()  # type: ignore[misc]
+    assert registry.get("shell_alias") is original
+
+    replacement = ShellAdapter()
     registry.replace(replacement)
 
     # A plain register() would have left the alias on the old instance.
-    assert registry.get("sandbox_pi") is replacement
-    assert registry.get("agent_sandbox") is replacement
+    assert registry.get("shell") is replacement
+    assert registry.get("shell_alias") is replacement
 
 
 def test_plugin_importing_a_builtin_adapter_does_not_re_register_it(

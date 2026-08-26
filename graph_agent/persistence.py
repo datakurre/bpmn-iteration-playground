@@ -512,7 +512,7 @@ class WorkflowStore:
 
         A **side store, not an identity record** (plans/concepts.md "Project identity is
         convention, not a record"). It answers "what has been hung on this Project" -- repo
-        assignment, sandbox policy, issues, decision log -- and never "does this Project
+        assignment, issues, decision log -- and never "does this Project
         exist"; a Project is valid with no entry here at all, so a miss is an empty dict
         rather than a ``KeyError``.
 

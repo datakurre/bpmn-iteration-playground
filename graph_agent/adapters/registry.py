@@ -7,8 +7,6 @@ from pathlib import Path
 
 from graph_agent.adapters.base import BaseAdapter
 from graph_agent.adapters.pi_adapter import PiAdapter
-from graph_agent.adapters.sandbox_adapter import SandboxPiAdapter
-from graph_agent.adapters.sandbox_shell_adapter import SandboxShellAdapter
 from graph_agent.adapters.shell_adapter import ShellAdapter
 
 logger = logging.getLogger("bpmn.adapters")
@@ -16,7 +14,7 @@ logger = logging.getLogger("bpmn.adapters")
 # A plugin module that imports a built-in adapter must not thereby re-register it.
 # Previously only BaseAdapter and PiAdapter were excluded, so importing ShellAdapter in a
 # plugin silently replaced the registered instance.
-_BUILTIN_ADAPTER_CLASSES = (BaseAdapter, PiAdapter, SandboxPiAdapter, SandboxShellAdapter, ShellAdapter)
+_BUILTIN_ADAPTER_CLASSES = (BaseAdapter, PiAdapter, ShellAdapter)
 
 
 class AdapterRegistry:
@@ -24,18 +22,9 @@ class AdapterRegistry:
 
     def __init__(self, auto_discover: bool = True) -> None:
         self._adapters: dict[str, BaseAdapter] = {}
-        # Register default Pi adapter, Sandbox adapter and the deterministic Shell adapter
-        pi_adapter = PiAdapter()
-        sandbox_adapter = SandboxPiAdapter()
-        self.register(pi_adapter)
-        self.register(sandbox_adapter)
+        # Register default Pi adapter and the deterministic Shell adapter
+        self.register(PiAdapter())
         self.register(ShellAdapter())
-        self.register(SandboxShellAdapter())
-        # Register alias for agent_sandbox
-        self._adapters["agent_sandbox"] = sandbox_adapter
-
-        if os.getenv("PI_SANDBOX_ENABLED") == "1":
-            self._adapters["pi_agent"] = sandbox_adapter
 
         if auto_discover:
             self.discover_plugins()
@@ -46,8 +35,6 @@ class AdapterRegistry:
     def replace(self, adapter: BaseAdapter) -> None:
         """Register `adapter`, taking over every name the previous instance answered to.
 
-        `register()` writes one key. Aliases (`agent_sandbox`) and env-driven bindings
-        (`PI_SANDBOX_ENABLED` rebinding `pi_agent`) point at an *instance*, so a plain
         re-register silently leaves them on the old one.
         """
         previous = self._adapters.get(adapter.adapter_type)

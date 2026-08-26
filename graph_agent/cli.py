@@ -520,8 +520,6 @@ def _apply_env_options(args: argparse.Namespace) -> None:
         os.environ["PI_TIMEOUT_SECONDS"] = str(args.timeout)
     if getattr(args, "offline", False):
         os.environ["PI_OFFLINE"] = "1"
-    if getattr(args, "sandbox", None) is not None:
-        os.environ["PI_SANDBOX_ENABLED"] = "1" if args.sandbox else "0"
     if getattr(args, "max_parallel_turns", None) is not None:
         os.environ["MAX_PARALLEL_TURNS"] = str(args.max_parallel_turns)
     if getattr(args, "timer_interval", None) is not None:
@@ -544,7 +542,6 @@ def add_engine_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--executable", type=str, default=None, help="Path to Pi executable binary")
     p.add_argument("--timeout", type=int, default=None, help="Turn execution timeout in seconds")
     p.add_argument("--offline", action="store_true", default=False, help="Force offline mode using deterministic demo mock")
-    p.add_argument("--sandbox", action=argparse.BooleanOptionalAction, default=None, help="Enable/disable agent-sandbox Podman isolation")
     p.add_argument("--max-parallel-turns", type=int, default=None, help="Max concurrent active agent turns")
     p.add_argument("--timer-interval", type=int, default=None, help="Background timer tick interval in seconds (0 disables)")
     p.add_argument("--savepoint-retention", type=int, default=None, help="Number of turn attempts retained in savepoints")

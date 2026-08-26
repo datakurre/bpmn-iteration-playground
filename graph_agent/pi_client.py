@@ -31,7 +31,6 @@ ALLOWED_ENV_VARS = {
     "no_proxy",
     "NODE_USE_ENV_PROXY",
     "NODE_EXTRA_CA_CERTS",
-    "AGENT_SANDBOX_PROXY_CA_FILE",
     "SSL_CERT_FILE",
     "PATH",
     "HOME",
@@ -92,7 +91,7 @@ def _kill_process_group_popen(process: subprocess.Popen[bytes]) -> None:
 async def _kill_process_group(process: asyncio.subprocess.Process) -> None:
     """Kill the whole process group started for an asyncio subprocess.
 
-    Used by adapter subclasses (e.g. SandboxPiAdapter, ShellAdapter) that still manage
+    Used by adapter subclasses (e.g. ShellAdapter) that still manage
     asyncio.subprocess instances directly.
     """
     if process.returncode is not None:
@@ -107,7 +106,7 @@ async def _kill_process_group(process: asyncio.subprocess.Process) -> None:
 
 
 def _set_resource_limits() -> None:
-    """Set process resource limits for sandboxed Pi subprocess execution.
+    """Set process resource limits for Pi subprocess execution.
 
     Deliberately does not set RLIMIT_AS: Node/V8 reserves large virtual address space up
     front (pointer-compression cage, WASM linear memory arenas) independent of actual heap
@@ -115,7 +114,7 @@ def _set_resource_limits() -> None:
     this process tree -- reliably crashed every real (non-demo) Pi turn with
     "WebAssembly.instantiate(): Out of memory" inside undici's WASM llhttp parser as soon
     as it made a real HTTPS request. Memory containment for the Pi subprocess should come
-    from the outer sandbox (agent-sandbox/Podman), not an in-process ulimit.
+    from the outer container environment, not an in-process ulimit.
     """
 
 
@@ -340,8 +339,6 @@ class PiClient:
             env["OPENAI_API_KEY"] = os.getenv("OPENCODE_API_KEY") or "secret-injected-by-proxy"
         if not env.get("OPENCODE_API_KEY"):
             env["OPENCODE_API_KEY"] = "secret-injected-by-proxy"
-        if not env.get("NODE_EXTRA_CA_CERTS") and os.getenv("AGENT_SANDBOX_PROXY_CA_FILE"):
-            env["NODE_EXTRA_CA_CERTS"] = os.getenv("AGENT_SANDBOX_PROXY_CA_FILE", "")
         if "NODE_USE_ENV_PROXY" not in env:
             env["NODE_USE_ENV_PROXY"] = "1"
 

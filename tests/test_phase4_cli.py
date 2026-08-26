@@ -188,7 +188,6 @@ def test_cli_engine_flags_apply_to_environment(tmp_path: Path, monkeypatch: pyte
                 "--provider", "test-provider",
                 "--timeout", "120",
                 "--offline",
-                "--no-sandbox",
                 "--max-parallel-turns", "8",
                 "--timer-interval", "5",
                 "--savepoint-retention", "3",
@@ -201,7 +200,6 @@ def test_cli_engine_flags_apply_to_environment(tmp_path: Path, monkeypatch: pyte
             assert os.environ.get("PI_PROVIDER") == "test-provider"
             assert os.environ.get("PI_TIMEOUT_SECONDS") == "120"
             assert os.environ.get("PI_OFFLINE") == "1"
-            assert os.environ.get("PI_SANDBOX_ENABLED") == "0"
             assert os.environ.get("MAX_PARALLEL_TURNS") == "8"
             assert os.environ.get("TIMER_TICK_SECONDS") == "5"
             assert os.environ.get("SAVEPOINT_ATTEMPT_RETENTION") == "3"

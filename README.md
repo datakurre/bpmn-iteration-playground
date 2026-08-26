@@ -101,7 +101,6 @@ The following flags can be passed to `graph-agent`, `graph-agent serve`, and `gr
 | `--executable <path>`| `PI_EXECUTABLE` | `node_modules/.bin/pi` | Path to Pi CLI executable |
 | `--timeout <sec>` | `PI_TIMEOUT_SECONDS` | `1800` | Turn execution timeout in seconds |
 | `--offline` | `PI_OFFLINE` | `false` | Force deterministic demo mock runner without LLM credentials |
-| `--sandbox / --no-sandbox` | `PI_SANDBOX_ENABLED` | `true` | Toggle Podman container sandbox isolation |
 | `--max-parallel-turns <n>` | `MAX_PARALLEL_TURNS` | `4` | Maximum concurrent active agent turns |
 | `--workspace-mode <mode>` | `WORKSPACE_MODE` | `worktree` / `in_place` | Workspace strategy (`worktree`, `in_place`, `blob`) |
 | `--no-merge` | `MERGE_ON_COMPLETE` | `false` | Disable auto-merge on clean completion |
