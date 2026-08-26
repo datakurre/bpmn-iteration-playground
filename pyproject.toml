@@ -112,7 +112,7 @@ plugins = ["pydantic.mypy"]
 [tool.coverage.run]
 source = ["graph_agent"]
 branch = true
-omit = ["graph_agent/main.py", "graph_agent/handlers/base.py"]
+omit = []
 
 [tool.coverage.report]
 show_missing = true

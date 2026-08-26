@@ -35,6 +35,7 @@ class RunDetailScreen(Screen):  # type: ignore
         ("t", "retry_task", "Retry Task"),
         ("m", "merge_run", "Merge"),
         ("c", "cancel_run", "Cancel"),
+        ("w", "open_in_browser", "Web UI"),
     ]
 
     def __init__(
@@ -75,6 +76,7 @@ class RunDetailScreen(Screen):  # type: ignore
                     yield Button("Retry Failed [t]", id="btn-retry", variant="warning")
                     yield Button("Merge [m]", id="btn-merge")
                     yield Button("Cancel [c]", id="btn-cancel", variant="error")
+                    yield Button("Web UI [w]", id="btn-browser")
             yield Footer()
         except ImportError:
             pass
@@ -214,6 +216,18 @@ class RunDetailScreen(Screen):  # type: ignore
         except Exception as exc:
             self.notify(f"Cancel error: {exc}", severity="error")
 
+    def action_open_in_browser(self) -> None:
+        import webbrowser
+
+        client = getattr(self.app, "client", None)
+        base_url = getattr(client, "base_url", "http://127.0.0.1:8000") if client else "http://127.0.0.1:8000"
+        url = f"{base_url}/instance/{self.workflow_id}"
+        try:
+            webbrowser.open(url)
+            self.notify(f"Opened {url} in browser", severity="information")
+        except Exception as exc:
+            self.notify(f"Failed to open browser: {exc}", severity="error")
+
     async def on_button_pressed(self, event: Any) -> None:
         btn_id = getattr(event.button, "id", "")
         if btn_id == "btn-back":
@@ -226,3 +240,5 @@ class RunDetailScreen(Screen):  # type: ignore
             await self.action_merge_run()
         elif btn_id == "btn-cancel":
             await self.action_cancel_run()
+        elif btn_id == "btn-browser":
+            self.action_open_in_browser()

@@ -78,6 +78,7 @@ def _cmd_init(workspace_root: Path | None) -> None:
 
 
 def _cmd_serve(workspace_root: Path | None, host: str, port: int, reload: bool) -> None:
+    """Run the daemon in the foreground (blocking).  Used by --no-tui and --reload."""
     if reload:
         uvicorn.run("graph_agent.api.server:app", host=host, port=port or 8000, reload=True)
         return
@@ -129,6 +130,68 @@ def _cmd_serve(workspace_root: Path | None, host: str, port: int, reload: bool) 
         remove_runtime_file(workspace)
 
 
+def _cmd_serve_with_tui(workspace_root: Path | None, host: str, port: int) -> None:
+    """Start the daemon in a background process, then attach the TUI in the foreground.
+
+    This is the default behaviour of bare ``bpmn serve`` (without ``--no-tui``).
+    The daemon process writes ``.agents/runtime.json`` before the parent reads it,
+    coordinated by a short poll loop (up to 10 s) so the TUI can connect immediately.
+    """
+    import signal
+    import time
+
+    workspace = Workspace.discover(workspace_root)
+    workspace.ensure()
+
+    existing = read_runtime_file(workspace)
+    if existing is not None and is_daemon_alive(existing):
+        # Daemon already running — just attach TUI.
+        print(f"graph-agent · {workspace.root.name} · {existing.url}")
+        from graph_agent.tui.app import launch_tui
+        from graph_agent.tui.client import DaemonClient
+
+        client = DaemonClient(base_url=existing.url, token=existing.token, workspace=workspace)
+        launch_tui(client, workspace=workspace)
+        return
+
+    # Fork the daemon into the background.
+    child_pid = os.fork()
+    if child_pid == 0:
+        # ── child: run daemon in foreground (blocking) ──────────────────────
+        # Detach from the parent's terminal so signals don't propagate.
+        os.setsid()
+        _cmd_serve(workspace_root, host, port, reload=False)
+        os._exit(0)
+
+    # ── parent: wait for runtime.json to appear, then launch TUI ────────────
+    deadline = time.monotonic() + 15.0
+    info = None
+    while time.monotonic() < deadline:
+        info = read_runtime_file(workspace)
+        if info is not None and is_daemon_alive(info):
+            break
+        time.sleep(0.2)
+
+    if info is None or not is_daemon_alive(info):
+        print("Error: daemon did not start within 15 s — check logs in .agents/logs/", file=__import__("sys").stderr)
+        os.kill(child_pid, signal.SIGTERM)
+        return
+
+    print(f"graph-agent · {workspace.root.name} · {info.url}  (daemon pid {child_pid})")
+
+    from graph_agent.tui.app import launch_tui
+    from graph_agent.tui.client import DaemonClient
+
+    client = DaemonClient(base_url=info.url, token=info.token, workspace=workspace)
+    try:
+        launch_tui(client, workspace=workspace)
+    finally:
+        # When the TUI exits, leave the daemon running so other CLI commands
+        # (bpmn ls, bpmn show …) can still reach it.  Use `bpmn stop` to shut
+        # it down explicitly.
+        pass
+
+
 def _cmd_attach(workspace_root: Path | None) -> None:
     workspace = Workspace.discover(workspace_root)
     info = read_runtime_file(workspace)
@@ -154,14 +217,20 @@ def _cmd_status(workspace_root: Path | None) -> None:
     print(f"graph-agent · {workspace.root.name} · {info.url}")
 
 
-def _cmd_open(workspace_root: Path | None) -> None:
+def _cmd_open(workspace_root: Path | None, editor: str | None = None) -> None:
     workspace = Workspace.discover(workspace_root)
     info = read_runtime_file(workspace)
     if info is None or not is_daemon_alive(info):
         print(f"No daemon running for {workspace.root}. Run `graph-agent serve` first.")
         return
-    webbrowser.open(info.url)
-    print(f"Opened {info.url}")
+    if editor is not None:
+        # editor="" → /editor (no specific template); editor="foo" → /editor/foo
+        path = f"/editor/{editor}" if editor else "/editor"
+        url = f"{info.url}{path}"
+    else:
+        url = info.url
+    webbrowser.open(url)
+    print(f"Opened {url}")
 
 
 def _cmd_stop(workspace_root: Path | None) -> None:
@@ -257,7 +326,7 @@ def _cmd_ls(workspace_root: Path | None, show_all: bool) -> None:
         print(f"No daemon running for {workspace.root}. Run `graph-agent serve` first.")
         return
     import httpx
-    endpoint = f"{info.url}/api/history/instances" if show_all else f"{info.url}/workflow/instances"
+    endpoint = f"{info.url}/api/history/instances" if show_all else f"{info.url}/api/history/instances?status=active"
     try:
         resp = httpx.get(endpoint, headers={"X-Admin-Token": info.token}, timeout=30.0)
         resp.raise_for_status()
@@ -505,13 +574,24 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
     p_serve.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     p_serve.add_argument("--port", type=int, default=0, help="Bind port (default: 0, a free port)")
     p_serve.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
-    p_serve.add_argument("--no-tui", action="store_true", help="Run daemon headlessly without TUI")
+    p_serve.add_argument("--no-tui", action="store_true", help="Run daemon headlessly without TUI (foreground, blocking)")
 
     p_status = sub.add_parser("status", help="Show the running daemon's URL, if any")
     add_workspace_flag(p_status)
 
     p_open = sub.add_parser("open", help="Open the running daemon in a browser")
     add_workspace_flag(p_open)
+    p_open.add_argument(
+        "--editor",
+        nargs="?",
+        const="",
+        metavar="TEMPLATE",
+        help="Open the BPMN editor page instead of the dashboard (optionally with a specific template)",
+    )
+
+    p_edit = sub.add_parser("edit", help="Open the BPMN editor in a browser (shortcut for `open --editor`)")
+    add_workspace_flag(p_edit)
+    p_edit.add_argument("template", nargs="?", default=None, help="BPMN template name to open directly in the editor")
 
     p_stop = sub.add_parser("stop", help="Stop the running daemon")
     add_workspace_flag(p_stop)
@@ -525,7 +605,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
 
     p_ls = sub.add_parser("ls", help="List workflow runs")
     add_workspace_flag(p_ls)
-    p_ls.add_argument("--all", "-a", action="store_true", help="List all runs from history")
+    p_ls.add_argument("--all", "-a", action="store_true", help="List all runs from history (default: active only)")
 
     p_show = sub.add_parser("show", help="Show details of a workflow run")
     add_workspace_flag(p_show)
@@ -554,7 +634,9 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
     elif args.command == "status":
         _cmd_status(args.workspace)
     elif args.command == "open":
-        _cmd_open(args.workspace)
+        _cmd_open(args.workspace, editor=getattr(args, "editor", None))
+    elif args.command == "edit":
+        _cmd_open(args.workspace, editor=getattr(args, "template", None) or "")
     elif args.command == "stop":
         _cmd_stop(args.workspace)
     elif args.command == "run":
@@ -582,20 +664,18 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
         port = getattr(args, "port", 0)
         reload = getattr(args, "reload", False)
         no_tui = getattr(args, "no_tui", False)
-        if no_tui:
+        if no_tui or reload:
+            # --no-tui: foreground, blocking.  --reload: also foreground (dev loop).
             _cmd_serve(workspace_root, host, port, reload)
         else:
-            _cmd_serve(workspace_root, host, port, reload)
+            # Default: daemon in background, TUI in foreground.
+            _cmd_serve_with_tui(workspace_root, host, port)
     elif args.command is None:
+        # Bare `bpmn`: if daemon already up attach TUI, otherwise start daemon + TUI.
         workspace_root = getattr(args, "workspace", None)
-        ws = Workspace.discover(workspace_root)
-        info = read_runtime_file(ws)
-        if info is not None and is_daemon_alive(info):
-            _cmd_attach(workspace_root)
-        else:
-            host = getattr(args, "host", "127.0.0.1")
-            port = getattr(args, "port", 0)
-            _cmd_serve(workspace_root, host, port, False)
+        host = getattr(args, "host", "127.0.0.1")
+        port = getattr(args, "port", 0)
+        _cmd_serve_with_tui(workspace_root, host, port)
 
 
 if __name__ == "__main__":

@@ -158,7 +158,7 @@ class FormScreen(Screen):  # type: ignore
             if not f.key or f.type in ("text", "markdown", "button"):
                 continue
             try:
-                from textual.widgets import Checkbox, Input, Select, TextArea
+                from textual.widgets import Checkbox, Input, RadioSet, Select, TextArea
 
                 if f.type == "checkbox":
                     cb = self.query_one(f"#field-{f.key}", Checkbox)
@@ -169,6 +169,14 @@ class FormScreen(Screen):  # type: ignore
                 elif f.type == "select":
                     sel = self.query_one(f"#field-{f.key}", Select)
                     data[f.key] = sel.value
+                elif f.type == "radio" and f.options:
+                    rset = self.query_one(f"#field-{f.key}", RadioSet)
+                    # RadioSet.pressed_index gives the 0-based index of the pressed button.
+                    idx = rset.pressed_index
+                    if idx is not None and 0 <= idx < len(f.options):
+                        data[f.key] = f.options[idx].value
+                    elif f.default_value is not None:
+                        data[f.key] = f.default_value
                 elif f.type == "number":
                     inp = self.query_one(f"#field-{f.key}", Input)
                     try:
@@ -183,6 +191,7 @@ class FormScreen(Screen):  # type: ignore
                     data[f.key] = f.default_value
 
         return data
+
 
     async def action_submit(self) -> None:
         client = getattr(self.app, "client", None)

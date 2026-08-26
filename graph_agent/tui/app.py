@@ -102,27 +102,33 @@ class GraphAgentApp(App):  # type: ignore
     def on_mount(self) -> None:
         from graph_agent.tui.screens.runs import RunsScreen
 
-        self.push_screen(RunsScreen())
+        self.install_screen(RunsScreen(), name="runs")
+        self.push_screen("runs")
 
     def action_goto_runs(self) -> None:
         from graph_agent.tui.screens.runs import RunsScreen
 
-        self.push_screen(RunsScreen())
+        # Install fresh instance so the screen is re-mounted and data is refreshed.
+        self.install_screen(RunsScreen(), name="runs")
+        self.switch_screen("runs")
 
     def action_goto_inbox(self) -> None:
         from graph_agent.tui.screens.inbox import InboxScreen
 
-        self.push_screen(InboxScreen())
+        self.install_screen(InboxScreen(), name="inbox")
+        self.switch_screen("inbox")
 
     def action_goto_start(self) -> None:
         from graph_agent.tui.screens.start import StartScreen
 
-        self.push_screen(StartScreen())
+        self.install_screen(StartScreen(), name="start")
+        self.switch_screen("start")
 
     def action_goto_logs(self) -> None:
         from graph_agent.tui.screens.log import LogScreen
 
-        self.push_screen(LogScreen())
+        self.install_screen(LogScreen(), name="logs")
+        self.switch_screen("logs")
 
 
 def launch_tui(client: DaemonClient, workspace: Workspace | None = None) -> int:

@@ -34,6 +34,7 @@ class RunsScreen(Screen):  # type: ignore
         ("d", "select_run", "Detail"),
         ("i", "goto_inbox", "Inbox"),
         ("s", "start_run", "Start"),
+        ("e", "open_editor", "Editor"),
         ("l", "goto_logs", "Logs"),
         ("r", "refresh_runs", "Refresh"),
         ("c", "cancel_run", "Cancel"),
@@ -52,12 +53,13 @@ class RunsScreen(Screen):  # type: ignore
 
             yield Header(show_clock=True)
             with Container(id="runs-container"):
-                yield Static("[b]Workflow Runs[/b]  (Enter/d: Detail, i: Inbox, s: Start, r: Refresh, m: Merge, c: Cancel)", id="runs-title")
+                yield Static("[b]Workflow Runs[/b]  (Enter/d: Detail, i: Inbox, s: Start, e: Editor, r: Refresh, m: Merge, c: Cancel)", id="runs-title")
                 yield DataTable(id="runs-table", cursor_type="row")
                 with Horizontal(id="runs-actions"):
                     yield Button("View Detail [d]", id="btn-detail", variant="primary")
                     yield Button("Inbox [i]", id="btn-inbox")
                     yield Button("Start New [s]", id="btn-start", variant="success")
+                    yield Button("Editor [e]", id="btn-editor")
                     yield Button("Refresh [r]", id="btn-refresh")
                     yield Button("Merge [m]", id="btn-merge")
                     yield Button("Cancel [c]", id="btn-cancel", variant="error")
@@ -176,6 +178,18 @@ class RunsScreen(Screen):  # type: ignore
             except Exception as exc:
                 self.notify(f"Failed to merge: {exc}", severity="error")
 
+    def action_open_editor(self) -> None:
+        import webbrowser
+
+        client = getattr(self.app, "client", None)
+        base_url = getattr(client, "base_url", "http://127.0.0.1:8000") if client else "http://127.0.0.1:8000"
+        url = f"{base_url}/editor"
+        try:
+            webbrowser.open(url)
+            self.notify(f"Opened BPMN editor at {url}", severity="information")
+        except Exception as exc:
+            self.notify(f"Failed to open browser: {exc}", severity="error")
+
     async def on_button_pressed(self, event: Any) -> None:
         btn_id = getattr(event.button, "id", "")
         if btn_id == "btn-detail":
@@ -184,6 +198,8 @@ class RunsScreen(Screen):  # type: ignore
             self.action_goto_inbox()
         elif btn_id == "btn-start":
             self.action_start_run()
+        elif btn_id == "btn-editor":
+            self.action_open_editor()
         elif btn_id == "btn-refresh":
             await self.action_refresh_runs()
         elif btn_id == "btn-merge":

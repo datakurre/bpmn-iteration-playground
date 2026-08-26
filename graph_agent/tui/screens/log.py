@@ -49,18 +49,20 @@ class LogScreen(Screen):  # type: ignore
         except ImportError:
             pass
 
-    def on_mount(self) -> None:
-        self.action_refresh_logs()
+    async def on_mount(self) -> None:
+        await self.action_refresh_logs()
         self.set_interval(2.0, self.action_refresh_logs)
 
-    def action_refresh_logs(self) -> None:
+    async def action_refresh_logs(self) -> None:
+        import asyncio
+
         client = getattr(self.app, "client", None)
         if not client:
             return
         try:
             from textual.widgets import RichLog
 
-            logs_text = client.tail_logs(max_lines=200)
+            logs_text = await asyncio.to_thread(client.tail_logs, 200)
             log_widget = self.query_one("#tail-rich-log", RichLog)
             log_widget.clear()
             log_widget.write(logs_text)
@@ -70,9 +72,9 @@ class LogScreen(Screen):  # type: ignore
     def action_go_back(self) -> None:
         self.app.pop_screen()
 
-    def on_button_pressed(self, event: Any) -> None:
+    async def on_button_pressed(self, event: Any) -> None:
         btn_id = getattr(event.button, "id", "")
         if btn_id == "btn-back":
             self.action_go_back()
         elif btn_id == "btn-refresh":
-            self.action_refresh_logs()
+            await self.action_refresh_logs()

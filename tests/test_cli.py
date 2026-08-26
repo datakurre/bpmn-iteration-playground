@@ -131,7 +131,7 @@ def test_cli_serve_binds_free_port_writes_runtime_and_cleans_up(
 
     with patch("graph_agent.cli.uvicorn.Server") as mock_server_cls:
         mock_server_cls.return_value.run.side_effect = fake_run
-        main(["serve", "--workspace", str(tmp_path)])
+        main(["serve", "--no-tui", "--workspace", str(tmp_path)])
 
     info = captured["info"]
     assert isinstance(info, RuntimeInfo)
@@ -155,7 +155,7 @@ def test_cli_serve_defaults_log_file_under_agents_logs(
 
     with patch("graph_agent.cli.uvicorn.Server") as mock_server_cls:
         mock_server_cls.return_value.run = MagicMock()
-        main(["serve", "--workspace", str(tmp_path)])
+        main(["serve", "--no-tui", "--workspace", str(tmp_path)])
 
     assert os.environ["LOG_FILE"] == str(workspace.logs_dir / "graph-agent.log")
 
@@ -167,7 +167,7 @@ def test_cli_serve_respects_an_operator_set_log_file(
 
     with patch("graph_agent.cli.uvicorn.Server") as mock_server_cls:
         mock_server_cls.return_value.run = MagicMock()
-        main(["serve", "--workspace", str(tmp_path)])
+        main(["serve", "--no-tui", "--workspace", str(tmp_path)])
 
     assert os.environ["LOG_FILE"] == "/tmp/operator-chosen.log"
 
@@ -181,7 +181,7 @@ def test_cli_serve_skips_binding_when_daemon_already_running(tmp_path: Path, cap
         patch("graph_agent.cli.is_daemon_alive", return_value=True),
         patch("graph_agent.cli.bind_free_port") as mock_bind,
     ):
-        main(["serve", "--workspace", str(tmp_path)])
+        main(["serve", "--no-tui", "--workspace", str(tmp_path)])
 
     mock_bind.assert_not_called()
     assert "Already running at http://127.0.0.1:55555" in capsys.readouterr().out
@@ -197,7 +197,7 @@ def test_cli_serve_replaces_stale_runtime_file(tmp_path: Path, _restore_admin_to
         patch("graph_agent.cli.uvicorn.Server") as mock_server_cls,
     ):
         mock_server_cls.return_value.run = MagicMock()
-        main(["serve", "--workspace", str(tmp_path)])
+        main(["serve", "--no-tui", "--workspace", str(tmp_path)])
 
     mock_server_cls.return_value.run.assert_called_once()
 
@@ -289,6 +289,6 @@ def test_cli_help_displays_graph_agent_prog(capsys) -> None:
 def test_cli_serve_prints_graph_agent_banner(tmp_path: Path, capsys, _restore_admin_token_env: None) -> None:
     with patch("graph_agent.cli.uvicorn.Server") as mock_server_cls:
         mock_server_cls.return_value.run = MagicMock()
-        main(["serve", "--workspace", str(tmp_path)])
+        main(["serve", "--no-tui", "--workspace", str(tmp_path)])
     out = capsys.readouterr().out
     assert f"graph-agent · {tmp_path.name} · http://127.0.0.1:" in out
