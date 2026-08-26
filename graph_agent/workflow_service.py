@@ -461,6 +461,17 @@ class WorkflowService:
             self.events.emit("workflow_cancelled", workflow_id)
             return self.state(workflow_id)
 
+    def get_spec_xml(self, workflow_id: str) -> str:
+        """Return the BPMN XML of a workflow instance's current spec."""
+        record = self._record(workflow_id)
+        workflow = record.get("workflow")
+        if workflow is None:
+            bpmn_path = record.get("bpmn_path")
+            if bpmn_path and Path(bpmn_path).exists():
+                return Path(bpmn_path).read_text(encoding="utf-8")
+            raise ValueError("No BPMN XML available for this workflow instance")
+        return self.runner.extract_bpmn_xml(workflow)
+
     async def diagram(self, workflow_id: str) -> str:
         record = self._record(workflow_id)
         path = Path(record["bpmn_path"]).resolve()

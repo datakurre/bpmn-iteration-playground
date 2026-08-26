@@ -90,6 +90,19 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
         except FileNotFoundError as exc:
             raise HTTPException(404, "BPMN diagram not found") from exc
 
+    @router.get("/instance/{workflow_id}/spec", response_class=Response, tags=["Instance"], summary="Get instance BPMN spec XML")
+    async def instance_spec(
+        workflow_id: str,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
+    ) -> Response:
+        try:
+            xml = get_service().get_spec_xml(workflow_id)
+            return Response(content=xml, media_type="application/xml")
+        except WorkflowNotFoundError as exc:
+            raise HTTPException(404, "workflow not found") from exc
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
     @router.get("/instance/{workflow_id}/workspace", tags=["Instance"], summary="Download instance workspace")
     async def download_workspace(
         workflow_id: str,

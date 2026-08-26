@@ -182,12 +182,24 @@ class WorkflowRunner:
             parser.get_spec(process_id),
             parser.get_subprocess_specs(process_id),
         )
+        workflow._bpmn_xml = Path(bpmn_path).read_text(encoding="utf-8")
+        workflow._bpmn_path = str(bpmn_path)
 
         # Load extensions for the top-level spec and every called subprocess spec
         for f in bpmn_dir.glob("*.bpmn"):
             self._load_extensions(str(f), workflow)
 
         return workflow, process_id
+
+    def extract_bpmn_xml(self, workflow: BpmnWorkflow) -> str:
+        """Return the BPMN XML of the workflow's current spec."""
+        xml = getattr(workflow, "_bpmn_xml", None)
+        if xml is not None:
+            return str(xml)
+        bpmn_path = getattr(workflow, "_bpmn_path", None)
+        if bpmn_path and Path(bpmn_path).exists():
+            return Path(bpmn_path).read_text(encoding="utf-8")
+        raise ValueError("No BPMN XML available for this workflow instance")
 
     @staticmethod
     def _specs_defined_by(
