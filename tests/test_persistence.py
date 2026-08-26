@@ -344,4 +344,73 @@ async def test_workspace_blob_round_trips_real_archive(tmp_path: Path) -> None:
     store.close()
 
 
+def test_session_crud_operations() -> None:
+    store = WorkflowStore(":memory:")
+    # Initial save
+    saved = store.save_session(
+        "sess-123",
+        {
+            "workflow_id": "wf-1",
+            "task_id": "task-A",
+            "harness_type": "pi_agent",
+            "data": {"foo": "bar"},
+        },
+    )
+    assert saved["session_id"] == "sess-123"
+    assert saved["workflow_id"] == "wf-1"
+    assert saved["task_id"] == "task-A"
+    assert saved["harness_type"] == "pi_agent"
+    assert saved["data"] == {"foo": "bar"}
+
+    # Get session
+    retrieved = store.get_session("sess-123")
+    assert retrieved is not None
+    assert retrieved["session_id"] == "sess-123"
+    assert retrieved["data"]["foo"] == "bar"
+
+    # Update session
+    updated = store.save_session(
+        "sess-123",
+        {
+            "workflow_id": "wf-1",
+            "data": {"baz": 42},
+        },
+    )
+    assert updated["data"]["foo"] == "bar"
+    assert updated["data"]["baz"] == 42
+
+    # Save another session
+    store.save_session(
+        "sess-456",
+        {
+            "workflow_id": "wf-2",
+            "task_id": "task-B",
+            "harness_type": "pi_agent",
+        },
+    )
+
+    # List all sessions
+    all_sessions = store.list_sessions()
+    assert len(all_sessions) == 2
+
+    # Filter by workflow_id
+    wf1_sessions = store.list_sessions(workflow_id="wf-1")
+    assert len(wf1_sessions) == 1
+    assert wf1_sessions[0]["session_id"] == "sess-123"
+
+    # Storage stats include sessions_count
+    stats = store.storage_stats()
+    assert stats["sessions_count"] == 2
+
+    # Delete session
+    assert store.delete_session("sess-123") is True
+    assert store.get_session("sess-123") is None
+    assert store.delete_session("sess-123") is False
+
+    # Clear cleans sessions
+    store.clear()
+    assert len(store.list_sessions()) == 0
+    store.close()
+
+
 

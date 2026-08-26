@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_parallel_eval" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="parallel_eval" name="Parallel Code Evaluation" isExecutable="true">
+    <bpmn:documentation>Fan-out to parallel evaluators and join before completion.</bpmn:documentation>
+    <bpmn:startEvent id="Start_Eval" name="Evaluation Started">
+      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:parallelGateway id="GW_Split" name="Parallel Split">
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+      <bpmn:outgoing>Flow_3</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:serviceTask id="Task_Security" name="Security Audit">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="reviewer" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="scope">${code}</camunda:inputParameter>
+          <camunda:outputParameter name="sec_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="sec_findings">${findings}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_4</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_Performance" name="Performance Analysis">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="reviewer" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="scope">${code}</camunda:inputParameter>
+          <camunda:outputParameter name="perf_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="perf_findings">${findings}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_3</bpmn:incoming>
+      <bpmn:outgoing>Flow_5</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:parallelGateway id="GW_Join" name="Parallel Join">
+      <bpmn:incoming>Flow_4</bpmn:incoming>
+      <bpmn:incoming>Flow_5</bpmn:incoming>
+      <bpmn:outgoing>Flow_6</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:endEvent id="End_Eval" name="Evaluation Complete">
+      <bpmn:incoming>Flow_6</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="Start_Eval" targetRef="GW_Split" />
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="GW_Split" targetRef="Task_Security" />
+    <bpmn:sequenceFlow id="Flow_3" sourceRef="GW_Split" targetRef="Task_Performance" />
+    <bpmn:sequenceFlow id="Flow_4" sourceRef="Task_Security" targetRef="GW_Join" />
+    <bpmn:sequenceFlow id="Flow_5" sourceRef="Task_Performance" targetRef="GW_Join" />
+    <bpmn:sequenceFlow id="Flow_6" sourceRef="GW_Join" targetRef="End_Eval" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_parallel_eval">
+    <bpmndi:BPMNPlane id="BPMNPlane_parallel_eval" bpmnElement="parallel_eval">
+      <bpmndi:BPMNShape id="Start_Eval_di" bpmnElement="Start_Eval">
+        <dc:Bounds x="57" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_Split_di" bpmnElement="GW_Split">
+        <dc:Bounds x="200" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Security_di" bpmnElement="Task_Security">
+        <dc:Bounds x="325" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_Join_di" bpmnElement="GW_Join">
+        <dc:Bounds x="500" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Eval_di" bpmnElement="End_Eval">
+        <dc:Bounds x="657" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Performance_di" bpmnElement="Task_Performance">
+        <dc:Bounds x="325" y="170" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_1_di" bpmnElement="Flow_1">
+        <di:waypoint x="93" y="70" />
+        <di:waypoint x="200" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_2_di" bpmnElement="Flow_2">
+        <di:waypoint x="250" y="70" />
+        <di:waypoint x="325" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_3_di" bpmnElement="Flow_3">
+        <di:waypoint x="225" y="95" />
+        <di:waypoint x="225" y="210" />
+        <di:waypoint x="325" y="210" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_4_di" bpmnElement="Flow_4">
+        <di:waypoint x="425" y="70" />
+        <di:waypoint x="500" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_6_di" bpmnElement="Flow_6">
+        <di:waypoint x="550" y="70" />
+        <di:waypoint x="657" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_5_di" bpmnElement="Flow_5">
+        <di:waypoint x="425" y="210" />
+        <di:waypoint x="525" y="210" />
+        <di:waypoint x="525" y="95" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

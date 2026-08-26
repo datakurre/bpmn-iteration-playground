@@ -272,15 +272,44 @@ class WorkflowService:
     def _top_workflow(workflow: Any, task: Any) -> Any:
         return getattr(getattr(task, "workflow", None), "top_workflow", None) or workflow
 
-    def _record_session(self, workflow: Any, task: Any, session_id: str) -> None:
-        """Record the agent session this task produced, on the instance-wide lineage map.
+    def _record_session(
+        self,
+        workflow: Any,
+        task: Any,
+        session_id: str,
+        harness_type: str | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        """Record the agent session this task produced, on the instance-wide lineage map and in ZODB.
 
         Lives in workflow.data so that a savepoint fork inherits the lineage along with
-        the workflow state. `__`-prefixed like `__children`: internal, never routable.
+        the workflow state. Also persisted into ZODB root['sessions'] for persistent session tracking.
         """
         top = self._top_workflow(workflow, task)
         sessions = top.data.setdefault("__sessions", {})
         sessions[str(task.id)] = session_id
+        workflow_id = getattr(top, "workflow_id", None) or getattr(workflow, "workflow_id", "")
+        inherited = self._inherited_session(workflow, task)
+        try:
+            self.store.save_session(
+                session_id=session_id,
+                data_or_record={
+                    "session_id": session_id,
+                    "workflow_id": workflow_id,
+                    "task_id": str(task.id),
+                    "harness_type": harness_type or getattr(task, "harness_type", None) or "pi_agent",
+                    "parent_session_id": inherited if inherited != session_id else None,
+                    "data": data or {},
+                },
+            )
+        except Exception as exc:
+            logger.warning("Failed to persist session %s in ZODB: %s", session_id, exc)
+
+    def get_session(self, session_id: str) -> dict[str, Any] | None:
+        return self.store.get_session(session_id)
+
+    def list_sessions(self, workflow_id: str | None = None) -> list[dict[str, Any]]:
+        return self.store.list_sessions(workflow_id)
 
     def _inherited_session(self, workflow: Any, task: Any) -> str | None:
         """The session of the nearest ancestor on this task's own execution path.

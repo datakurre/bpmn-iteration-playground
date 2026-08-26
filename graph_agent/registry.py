@@ -30,19 +30,26 @@ class WorkflowTemplate:
         }
 
 
-# The bundled templates ship as package data (graph_agent/data/workflows/) so a
-# `WorkflowRegistry()` default still finds real templates when this package is installed,
-# with no source checkout in sight. Once a `.agents/` workspace exists, callers pass its
-# own workflows_dir explicitly (see graph_agent/api/server.py) -- this default only serves
-# bare construction, e.g. tests exercising "the real bundled templates".
+# The bundled templates ship as package data (graph_agent/data/workflows/) and in models/
+# so a `WorkflowRegistry()` default finds real templates when this package is installed or run locally.
 BUNDLED_WORKFLOWS_DIR = Path(__file__).resolve().parent / "data" / "workflows"
+BUNDLED_MODELS_DIR = (
+    BUNDLED_WORKFLOWS_DIR
+    if BUNDLED_WORKFLOWS_DIR.exists()
+    else (Path(__file__).resolve().parents[1] / "models")
+)
 
 
 class WorkflowRegistry:
-    """Registry discovering and inspecting executable BPMN workflow templates."""
+    """Registry discovering and inspecting executable BPMN workflow models / templates."""
 
-    def __init__(self, workflows_dir: str | None = None) -> None:
-        self.dir = Path(workflows_dir) if workflows_dir is not None else BUNDLED_WORKFLOWS_DIR
+    def __init__(
+        self,
+        models_dir: str | Path | None = None,
+        workflows_dir: str | Path | None = None,
+    ) -> None:
+        chosen = models_dir or workflows_dir
+        self.dir = Path(chosen) if chosen is not None else BUNDLED_MODELS_DIR
         self._cache: dict[str, tuple[float, WorkflowTemplate | None]] = {}
 
     def list_templates(self) -> list[WorkflowTemplate]:

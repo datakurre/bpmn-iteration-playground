@@ -1,0 +1,19 @@
+{
+  "extends": "bpmnlint:recommended",
+  "rules": {
+    "label-required": "warn",
+    "no-overlapping-elements": "off",
+    "no-disconnected": "error",
+    "no-implicit-split": "error",
+    "no-implicit-end": "error",
+    "no-implicit-start": "error",
+    "no-gateway-join-fork": "error",
+    "no-duplicate-sequence-flows": "error",
+    "start-event-required": "error",
+    "end-event-required": "error",
+    "conditional-flows": "error",
+    "fake-join": "info",
+    "no-inclusive-gateway": "warn",
+    "superfluous-gateway": "warn"
+  }
+}

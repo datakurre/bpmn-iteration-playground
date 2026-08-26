@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_PlanAndExecute" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="plan_and_execute" name="Interactive Plan &amp; Execute" isExecutable="true">
+    <bpmn:documentation>AI formulates an implementation plan and identifies questions, human reviews the plan and answers questions via FormJS, then AI resumes the session to execute the implementation.</bpmn:documentation>
+    <bpmn:startEvent id="Start_Plan" name="Feature Requested">
+      <bpmn:outgoing>Flow_To_Plan</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_To_Plan" sourceRef="Start_Plan" targetRef="Task_Plan" />
+    <bpmn:serviceTask id="Task_Plan" name="Formulate Plan &amp; Questions">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="planner" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="feature_request">${feature_request}</camunda:inputParameter>
+          <camunda:inputParameter name="human_answers">${human_answers}</camunda:inputParameter>
+          <camunda:inputParameter name="instructions">${instructions}</camunda:inputParameter>
+          <camunda:outputParameter name="plan_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="plan_summary">${summary}</camunda:outputParameter>
+          <camunda:outputParameter name="plan_findings">${findings}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_To_Plan</bpmn:incoming>
+      <bpmn:incoming>Flow_Revise_Plan</bpmn:incoming>
+      <bpmn:outgoing>Flow_Plan_To_GW</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_Plan_To_GW" sourceRef="Task_Plan" targetRef="GW_Plan_Check" />
+    <bpmn:exclusiveGateway id="GW_Plan_Check" name="Plan Succeeded?">
+      <bpmn:incoming>Flow_Plan_To_GW</bpmn:incoming>
+      <bpmn:outgoing>Flow_Plan_OK</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Plan_Fail</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_Plan_OK" name="Success" sourceRef="GW_Plan_Check" targetRef="Task_Review_Plan">
+      <bpmn:conditionExpression>plan_status == 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Plan_Fail" name="Failed" sourceRef="GW_Plan_Check" targetRef="End_Plan_Fail">
+      <bpmn:conditionExpression>plan_status != 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:userTask id="Task_Review_Plan" name="Review Plan &amp; Answer Questions">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="plan_preview" label="### Proposed Plan &amp; Questions&#10;Review the proposed execution strategy below." type="markdown" />
+          <camunda:formField id="plan_approval" label="Approval Decision" type="string" defaultValue="approved" />
+          <camunda:formField id="human_answers" label="Clarifications &amp; Answers to Questions" type="textarea" />
+          <camunda:formField id="instructions" label="Additional Guidance for Execution" type="textarea" />
+        </camunda:formData>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Plan_OK</bpmn:incoming>
+      <bpmn:outgoing>Flow_Review_To_GW</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="Flow_Review_To_GW" sourceRef="Task_Review_Plan" targetRef="GW_Approval" />
+    <bpmn:exclusiveGateway id="GW_Approval" name="Decision?">
+      <bpmn:incoming>Flow_Review_To_GW</bpmn:incoming>
+      <bpmn:outgoing>Flow_Approve_Exec</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Revise_Plan</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Reject_Plan</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_Approve_Exec" name="Approved" sourceRef="GW_Approval" targetRef="Task_Execute">
+      <bpmn:conditionExpression>plan_approval == 'approved'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Revise_Plan" name="Revise Plan" sourceRef="GW_Approval" targetRef="Task_Plan">
+      <bpmn:conditionExpression>plan_approval == 'revise'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Reject_Plan" name="Rejected" sourceRef="GW_Approval" targetRef="End_Plan_Rejected">
+      <bpmn:conditionExpression>plan_approval == 'reject'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:serviceTask id="Task_Execute" name="Execute Implementation">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="implementer" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="plan_summary">${plan_summary}</camunda:inputParameter>
+          <camunda:inputParameter name="human_answers">${human_answers}</camunda:inputParameter>
+          <camunda:inputParameter name="instructions">${instructions}</camunda:inputParameter>
+          <camunda:outputParameter name="exec_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="exec_summary">${summary}</camunda:outputParameter>
+          <camunda:outputParameter name="exec_artifacts">${artifacts}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Approve_Exec</bpmn:incoming>
+      <bpmn:outgoing>Flow_Exec_To_GW</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_Exec_To_GW" sourceRef="Task_Execute" targetRef="GW_Exec_Check" />
+    <bpmn:exclusiveGateway id="GW_Exec_Check" name="Execution Succeeded?">
+      <bpmn:incoming>Flow_Exec_To_GW</bpmn:incoming>
+      <bpmn:outgoing>Flow_Exec_OK</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Exec_Fail</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_Exec_OK" name="Success" sourceRef="GW_Exec_Check" targetRef="Task_Verify_Results">
+      <bpmn:conditionExpression>exec_status == 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Exec_Fail" name="Failed" sourceRef="GW_Exec_Check" targetRef="End_Exec_Fail">
+      <bpmn:conditionExpression>exec_status != 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:userTask id="Task_Verify_Results" name="Verify Implementation">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="doc_preview" label="### Implementation Summary&#10;Review the execution findings and generated artifacts." type="markdown" />
+          <camunda:formField id="signoff_decision" label="Sign-off Verdict" type="string" defaultValue="accepted" />
+          <camunda:formField id="notes" label="Verification Notes" type="string" />
+        </camunda:formData>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Exec_OK</bpmn:incoming>
+      <bpmn:outgoing>Flow_Verify_To_End</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="Flow_Verify_To_End" sourceRef="Task_Verify_Results" targetRef="End_Completed" />
+    <bpmn:endEvent id="End_Completed" name="Feature Implemented">
+      <bpmn:incoming>Flow_Verify_To_End</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="End_Plan_Fail" name="Planning Failed">
+      <bpmn:incoming>Flow_Plan_Fail</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="End_Plan_Rejected" name="Plan Rejected">
+      <bpmn:incoming>Flow_Reject_Plan</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="End_Exec_Fail" name="Execution Failed">
+      <bpmn:incoming>Flow_Exec_Fail</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_PlanAndExecute">
+    <bpmndi:BPMNPlane id="BPMNPlane_PlanAndExecute" bpmnElement="plan_and_execute">
+      <bpmndi:BPMNShape id="Start_Plan_di" bpmnElement="Start_Plan">
+        <dc:Bounds x="50" y="140" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Plan_di" bpmnElement="Task_Plan">
+        <dc:Bounds x="140" y="118" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_Plan_Check_di" bpmnElement="GW_Plan_Check" isMarkerVisible="true">
+        <dc:Bounds x="320" y="133" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Review_Plan_di" bpmnElement="Task_Review_Plan">
+        <dc:Bounds x="420" y="118" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_Approval_di" bpmnElement="GW_Approval" isMarkerVisible="true">
+        <dc:Bounds x="620" y="133" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Execute_di" bpmnElement="Task_Execute">
+        <dc:Bounds x="720" y="118" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_Exec_Check_di" bpmnElement="GW_Exec_Check" isMarkerVisible="true">
+        <dc:Bounds x="920" y="133" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Verify_Results_di" bpmnElement="Task_Verify_Results">
+        <dc:Bounds x="1020" y="118" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Completed_di" bpmnElement="End_Completed">
+        <dc:Bounds x="1220" y="140" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Plan_Fail_di" bpmnElement="End_Plan_Fail">
+        <dc:Bounds x="327" y="250" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Plan_Rejected_di" bpmnElement="End_Plan_Rejected">
+        <dc:Bounds x="627" y="250" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Exec_Fail_di" bpmnElement="End_Exec_Fail">
+        <dc:Bounds x="927" y="250" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_To_Plan_di" bpmnElement="Flow_To_Plan">
+        <di:waypoint x="86" y="158" />
+        <di:waypoint x="140" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Plan_To_GW_di" bpmnElement="Flow_Plan_To_GW">
+        <di:waypoint x="280" y="158" />
+        <di:waypoint x="320" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Plan_OK_di" bpmnElement="Flow_Plan_OK">
+        <di:waypoint x="370" y="158" />
+        <di:waypoint x="420" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Plan_Fail_di" bpmnElement="Flow_Plan_Fail">
+        <di:waypoint x="345" y="183" />
+        <di:waypoint x="345" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Review_To_GW_di" bpmnElement="Flow_Review_To_GW">
+        <di:waypoint x="570" y="158" />
+        <di:waypoint x="620" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Approve_Exec_di" bpmnElement="Flow_Approve_Exec">
+        <di:waypoint x="670" y="158" />
+        <di:waypoint x="720" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Revise_Plan_di" bpmnElement="Flow_Revise_Plan">
+        <di:waypoint x="645" y="133" />
+        <di:waypoint x="645" y="50" />
+        <di:waypoint x="210" y="50" />
+        <di:waypoint x="210" y="118" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Reject_Plan_di" bpmnElement="Flow_Reject_Plan">
+        <di:waypoint x="645" y="183" />
+        <di:waypoint x="645" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Exec_To_GW_di" bpmnElement="Flow_Exec_To_GW">
+        <di:waypoint x="870" y="158" />
+        <di:waypoint x="920" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Exec_OK_di" bpmnElement="Flow_Exec_OK">
+        <di:waypoint x="970" y="158" />
+        <di:waypoint x="1020" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Exec_Fail_di" bpmnElement="Flow_Exec_Fail">
+        <di:waypoint x="945" y="183" />
+        <di:waypoint x="945" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Verify_To_End_di" bpmnElement="Flow_Verify_To_End">
+        <di:waypoint x="1170" y="158" />
+        <di:waypoint x="1220" y="158" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

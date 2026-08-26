@@ -35,21 +35,23 @@ from graph_agent.daemon import (
     stop_daemon,
     write_runtime_file,
 )
-from graph_agent.registry import BUNDLED_WORKFLOWS_DIR
+from graph_agent.registry import BUNDLED_MODELS_DIR, BUNDLED_WORKFLOWS_DIR
 
 
 def _materialize_bundled_workflows(workspace: Workspace) -> tuple[int, int]:
-    """Copy this package's bundled `*.bpmn` templates into `workspace.workflows_dir`.
+    """Copy this package's bundled `*.bpmn` templates into `workspace.models_dir`.
 
     Never overwrites a file already there, the same convention `ShellAdapter`'s own
-    `template=` scaffolding uses: a workspace's templates are meant to be edited, and a
+    `template=` scaffolding uses: a workspace's models are meant to be edited, and a
     second `bpmn init` (a version upgrade, say) must not silently discard those edits.
     Returns (copied, skipped).
     """
     copied = 0
     skipped = 0
-    for src in sorted(BUNDLED_WORKFLOWS_DIR.glob("*.bpmn")):
-        dst = workspace.workflows_dir / src.name
+    workspace.models_dir.mkdir(parents=True, exist_ok=True)
+    source_dir = BUNDLED_MODELS_DIR if BUNDLED_MODELS_DIR.exists() else BUNDLED_WORKFLOWS_DIR
+    for src in sorted(source_dir.glob("*.bpmn")):
+        dst = workspace.models_dir / src.name
         if dst.exists():
             skipped += 1
             continue
@@ -64,7 +66,8 @@ def _cmd_init(workspace_root: Path | None) -> None:
     copied, skipped = _materialize_bundled_workflows(workspace)
 
     print(f"Initialized workspace at {workspace.root}")
-    print(f"  .agents/workflows/: {copied} template(s) added, {skipped} already present")
+    print(f"  models/: {copied} template(s) added, {skipped} already present")
+    print(f"  state:   {workspace.state_dir}")
     if not workspace.is_git:
         print(
             "  Note: this directory isn't a git repository, so agent turns will run "
@@ -248,7 +251,7 @@ def _resolve_template_path(workspace: Workspace, template: str) -> Path | None:
     p = Path(template)
     if p.is_file():
         return p
-    for candidate_dir in (workspace.workflows_dir, BUNDLED_WORKFLOWS_DIR):
+    for candidate_dir in (workspace.models_dir, workspace.workflows_dir, BUNDLED_MODELS_DIR, BUNDLED_WORKFLOWS_DIR):
         c = candidate_dir / template
         if c.is_file():
             return c

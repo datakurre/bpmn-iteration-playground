@@ -544,7 +544,8 @@ async def complete_pi(  # noqa: C901, PLR0912, PLR0915 -- reconciles one agent-t
 
         if result.status == "success" and getattr(result, "session_id", None):
             record["pi_session_id"] = result.session_id
-            service._record_session(workflow, task, str(result.session_id))
+            harness_type = service.runner.pi_config(task).get("harness_type", DEFAULT_HARNESS_TYPE)
+            service._record_session(workflow, task, str(result.session_id), harness_type=harness_type)
 
         attempt = job.get("attempts", 1)
         generation = job.get("generation", 0)

@@ -62,4 +62,21 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:
             raise HTTPException(400, "confirm=DELETE_ALL is required")
         return {"deleted": await get_service().clear_instances()}
 
+    @router.get("/api/history/sessions", response_model=list[dict[str, Any]], tags=["History"], summary="List historical agent sessions from ZODB")
+    async def api_history_sessions(
+        workflow_id: str | None = None,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
+    ) -> list[dict[str, Any]]:
+        return get_service().list_sessions(workflow_id=workflow_id)
+
+    @router.get("/api/history/sessions/{session_id}", response_model=dict[str, Any], tags=["History"], summary="Get historical agent session from ZODB")
+    async def api_history_session_detail(
+        session_id: str,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
+    ) -> dict[str, Any]:
+        session = get_service().get_session(session_id)
+        if session is None:
+            raise HTTPException(404, "session not found")
+        return session
+
     return router

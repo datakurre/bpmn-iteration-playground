@@ -15,22 +15,32 @@ of it rather than duplicating path logic.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 AGENTS_DIRNAME = ".agents"
 
-# Everything under .agents/ is machine state except config.toml and workflows/, which are
-# meant to be committed -- a workspace's graphs and settings are part of the project, the
-# ZODB store and the live daemon's runtime.json are not.
+
+def get_state_dir() -> Path:
+    """Return user local state directory according to XDG Base Directory specification.
+
+    Uses $XDG_CONFIG_HOME/graph-agent if set, otherwise ~/.config/graph-agent.
+    """
+    xdg_config = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg_config).expanduser() if xdg_config and xdg_config.strip() else Path.home() / ".config"
+    return (base / "graph-agent").resolve()
+
+
+# Everything under .agents/ is machine state except config.toml, which is meant to be committed.
+# models/ directory in the workspace root holds shared re-usable BPMN models.
 _AGENTS_GITIGNORE = """\
-# Machine state, regenerated locally. config.toml and workflows/ are committed -- see
-# docs/meta-agent-refactor-plan.md.
-state/
+# Machine state, regenerated locally. config.toml and models/ are committed.
 runtime.json
 worktrees/
 runs/
 logs/
+state/
 """
 
 
@@ -71,11 +81,16 @@ class Workspace:
 
     @property
     def state_dir(self) -> Path:
-        return self.agents_dir / "state"
+        return get_state_dir()
+
+    @property
+    def models_dir(self) -> Path:
+        return self.root / "models"
 
     @property
     def workflows_dir(self) -> Path:
-        return self.agents_dir / "workflows"
+        """Alias for models_dir (shared re-usable BPMN models in models/)."""
+        return self.models_dir
 
     @property
     def worktrees_dir(self) -> Path:
@@ -98,13 +113,13 @@ class Workspace:
         return self.agents_dir / "config.toml"
 
     def ensure(self) -> None:
-        """Create the `.agents/` layout this workspace needs to run. Idempotent.
+        """Create the directory layout this workspace needs to run. Idempotent.
 
-        `worktrees/` and `runs/` are created on demand per run (phases 3-4), not here --
+        `worktrees/` and `runs/` are created on demand per run, not here --
         a freshly initialised workspace with no runs yet shouldn't have empty directories
         for work that hasn't happened.
         """
-        for directory in (self.agents_dir, self.state_dir, self.workflows_dir, self.logs_dir):
+        for directory in (self.agents_dir, self.state_dir, self.models_dir, self.logs_dir):
             directory.mkdir(parents=True, exist_ok=True)
         gitignore = self.agents_dir / ".gitignore"
         if not gitignore.is_file():

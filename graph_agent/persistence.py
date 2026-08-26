@@ -20,6 +20,7 @@ from ZODB.FileStorage import FileStorage
 from ZODB.MappingStorage import MappingStorage
 from ZODB.POSException import ConflictError
 
+from graph_agent.agents_root import get_state_dir
 from graph_agent.migrations import migrate_workflow_object
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -202,6 +203,43 @@ class Scope(Persistent):  # type: ignore[misc]  # persistent ships no type stubs
         }
 
 
+class SessionRecord(Persistent):  # type: ignore[misc]  # persistent ships no type stubs
+    """Persistent record for agent sessions in ZODB."""
+
+    def __init__(
+        self,
+        session_id: str,
+        workflow_id: str | None = None,
+        task_id: str | None = None,
+        harness_type: str | None = None,
+        parent_session_id: str | None = None,
+        created_at: str | None = None,
+        updated_at: str | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        self.session_id = session_id
+        self.workflow_id = workflow_id
+        self.task_id = task_id
+        self.harness_type = harness_type
+        self.parent_session_id = parent_session_id
+        now = datetime.now(UTC).isoformat()
+        self.created_at = created_at or now
+        self.updated_at = updated_at or now
+        self.data = PersistentMapping(data or {})
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "workflow_id": self.workflow_id,
+            "task_id": self.task_id,
+            "harness_type": self.harness_type,
+            "parent_session_id": self.parent_session_id,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "data": dict(self.data),
+        }
+
+
 class SavePointSnapshot(Persistent):  # type: ignore[misc]  # persistent ships no type stubs
     """Independent persistent snapshot holding a deepcopied SpiffWorkflow object graph."""
 
@@ -367,9 +405,13 @@ _INSTANCE_FIELDS = frozenset({
 class WorkflowStore:
     """Idiomatic ZODB repository using OOBTree collections, Persistent entities, and compaction."""
 
-    def __init__(self, path: str = "data/workflows.fs") -> None:
-        self.path = path
-        storage, self._temp_blob_dir = _create_storage(path)
+    def __init__(self, path: str | Path | None = None) -> None:
+        if path is None:
+            state_dir = get_state_dir()
+            state_dir.mkdir(parents=True, exist_ok=True)
+            path = str(state_dir / "Data.fs")
+        self.path = str(path)
+        storage, self._temp_blob_dir = _create_storage(self.path)
         self.db = DB(storage)
         with self.db.transaction() as connection:
             root = connection.root()
@@ -383,6 +425,86 @@ class WorkflowStore:
                 root["webhooks"] = OOBTree()
             if "projects" not in root:
                 root["projects"] = OOBTree()
+            if "sessions" not in root:
+                root["sessions"] = OOBTree()
+
+    @_retry_on_conflict()
+    def save_session(
+        self,
+        session_id: str,
+        data_or_record: dict[str, Any] | SessionRecord,
+    ) -> dict[str, Any]:
+        """Save or update an agent session record in ZODB."""
+        with self.db.transaction() as connection:
+            root = connection.root()
+            if "sessions" not in root:
+                root["sessions"] = OOBTree()
+            sessions = root["sessions"]
+            if isinstance(data_or_record, SessionRecord):
+                record = data_or_record
+            else:
+                d = dict(data_or_record)
+                existing = sessions.get(session_id)
+                if existing is not None and isinstance(existing, SessionRecord):
+                    existing.workflow_id = d.get("workflow_id", existing.workflow_id)
+                    existing.task_id = d.get("task_id", existing.task_id)
+                    existing.harness_type = d.get("harness_type", existing.harness_type)
+                    existing.parent_session_id = d.get("parent_session_id", existing.parent_session_id)
+                    existing.updated_at = d.get("updated_at", datetime.now(UTC).isoformat())
+                    if "data" in d and isinstance(d["data"], dict):
+                        existing.data.update(d["data"])
+                    existing._p_changed = True
+                    return existing.to_dict()
+                else:
+                    record = SessionRecord(
+                        session_id=session_id,
+                        workflow_id=d.get("workflow_id"),
+                        task_id=d.get("task_id"),
+                        harness_type=d.get("harness_type"),
+                        parent_session_id=d.get("parent_session_id"),
+                        created_at=d.get("created_at"),
+                        updated_at=d.get("updated_at"),
+                        data=d.get("data", {}),
+                    )
+            sessions[session_id] = record
+            return record.to_dict()
+
+    def get_session(self, session_id: str) -> dict[str, Any] | None:
+        """Get an agent session record by ID from ZODB."""
+        with self.db.transaction() as connection:
+            root = connection.root()
+            if "sessions" not in root:
+                return None
+            record = root["sessions"].get(session_id)
+            if record is None:
+                return None
+            return record.to_dict() if hasattr(record, "to_dict") else dict(record)
+
+    def list_sessions(self, workflow_id: str | None = None) -> list[dict[str, Any]]:
+        """List agent sessions from ZODB, optionally filtered by workflow_id."""
+        with self.db.transaction() as connection:
+            root = connection.root()
+            if "sessions" not in root:
+                return []
+            sessions = root["sessions"]
+            results = []
+            for s in sessions.values():
+                d = s.to_dict() if hasattr(s, "to_dict") else dict(s)
+                if workflow_id is None or d.get("workflow_id") == workflow_id:
+                    results.append(d)
+            return sorted(results, key=lambda x: str(x.get("created_at", "")), reverse=True)
+
+    @_retry_on_conflict()
+    def delete_session(self, session_id: str) -> bool:
+        """Delete a session from ZODB."""
+        with self.db.transaction() as connection:
+            root = connection.root()
+            if "sessions" not in root:
+                return False
+            if session_id in root["sessions"]:
+                del root["sessions"][session_id]
+                return True
+            return False
 
     @_retry_on_conflict()
     def get_project_state(self, workflow_id: str) -> dict[str, Any]:
@@ -975,6 +1097,8 @@ class WorkflowStore:
             root["save_points"].clear()
             root["metadata"].clear()
             root["projects"].clear()
+            if "sessions" in root:
+                root["sessions"].clear()
             return count
 
     @_retry_on_conflict()
@@ -1046,6 +1170,7 @@ class WorkflowStore:
             root = connection.root()
             instances_count = len(root.get("workflows", {}))
             save_points_count = len(root.get("save_points", {}))
+            sessions_count = len(root.get("sessions", {}))
         return {
             "storage_type": "memory" if self.path == ":memory:" else "file",
             "path": self.path,
@@ -1053,6 +1178,7 @@ class WorkflowStore:
             "size_human": self._format_bytes(size_bytes),
             "instances_count": instances_count,
             "save_points_count": save_points_count,
+            "sessions_count": sessions_count,
         }
 
     def get_workspace(self, workflow_id: str) -> Any | None:

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_single_agent" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="single_agent" name="Single Agent Task" isExecutable="true">
+    <bpmn:documentation>Single autonomous agent execution turn.</bpmn:documentation>
+    <bpmn:startEvent id="Start_Turn" name="Task Started">
+      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Task_Agent" name="Execute Agent Turn">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="implementer" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="instructions">${instructions}</camunda:inputParameter>
+          <camunda:outputParameter name="agent_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="agent_summary">${summary}</camunda:outputParameter>
+          <camunda:outputParameter name="agent_findings">${findings}</camunda:outputParameter>
+          <camunda:outputParameter name="agent_artifacts">${artifacts}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="End_Done" name="Task Completed">
+      <bpmn:incoming>Flow_2</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="Start_Turn" targetRef="Task_Agent" />
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_Agent" targetRef="End_Done" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_single_agent">
+    <bpmndi:BPMNPlane id="BPMNPlane_single_agent" bpmnElement="single_agent">
+      <bpmndi:BPMNShape id="Start_Turn_di" bpmnElement="Start_Turn">
+        <dc:Bounds x="57" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Agent_di" bpmnElement="Task_Agent">
+        <dc:Bounds x="175" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Done_di" bpmnElement="End_Done">
+        <dc:Bounds x="357" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_1_di" bpmnElement="Flow_1">
+        <di:waypoint x="93" y="70" />
+        <di:waypoint x="175" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_2_di" bpmnElement="Flow_2">
+        <di:waypoint x="275" y="70" />
+        <di:waypoint x="357" y="70" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

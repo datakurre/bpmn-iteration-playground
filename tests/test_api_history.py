@@ -88,3 +88,28 @@ def test_history_instances_pagination_and_date_filtering(client: TestClient) -> 
     assert len(past_res) == 5
 
 
+def test_history_sessions_endpoints(client: TestClient) -> None:
+    # Initially empty
+    assert client.get("/api/history/sessions").json() == []
+
+    # Start a workflow that records a session
+    resp = client.post(
+        "/workflow/start",
+        json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "Session Test"}},
+    )
+    assert resp.status_code == 200
+
+    sessions = client.get("/api/history/sessions").json()
+    # If any session was recorded, inspect it
+    if sessions:
+        sess_id = sessions[0]["session_id"]
+        detail_resp = client.get(f"/api/history/sessions/{sess_id}")
+        assert detail_resp.status_code == 200
+        assert detail_resp.json()["session_id"] == sess_id
+
+    # 404 for non-existent session
+    missing = client.get("/api/history/sessions/non-existent-sess-id")
+    assert missing.status_code == 404
+
+
+

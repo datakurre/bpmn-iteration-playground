@@ -20,7 +20,7 @@ current status per track.
 It:
 
 - Parses and executes **BPMN 2.0 diagrams** using [SpiffWorkflow](https://spiffworkflow.org/).
-- Persists every workflow instance and savepoint in **ZODB**, local to the workspace (`.agents/state/`).
+- Persists every workflow instance, session, and savepoint in **ZODB**, stored in user local `$XDG_CONFIG_HOME/graph-agent` (`~/.config/graph-agent`).
 - Delegates `pi_agent` service tasks to a local **Pi CLI** subprocess using non-interactive JSON print mode (`--mode json -p <prompt>`).
 - Exposes a **FastAPI** REST + WebSocket API and a browser-based **Workflow Studio** UI (dashboard, instance viewer, history, BPMN editor).
 - Supports **FormJS** for human task forms (Camunda extension elements → FormJS JSON schema).
@@ -403,7 +403,8 @@ reading code.
 
 ## 6. Persistence (ZODB)
 
-- **Storage modes**: In-memory (`:memory:`) or file, local to the workspace (`.agents/state/Data.fs` + `.agents/state/blobs/`). No remote/shared mode -- state is local to the workspace it runs against, not a service other processes share.
+- **Storage modes**: In-memory (`:memory:`) or file, stored in user local state directory (`$XDG_CONFIG_HOME/graph-agent/Data.fs` or `~/.config/graph-agent/Data.fs` + `blobs/`).
+- **Sessions**: Agent sessions are tracked as first-class `SessionRecord` entries in ZODB `root["sessions"]` with full CRUD support (`save_session`, `get_session`, `list_sessions`, `delete_session`) and exposed via `/api/history/sessions`.
 - **BlobStorage**: Workspace archives stored as ZODB `Blob` objects. `duplicate_blob` copies committed blobs for fork operations.
 - **Packing**: `POST /admin/pack` or `/api/history/pack` compacts freed ZODB space. Check stats at `GET /api/history/storage`.
 - **Thread safety & Concurrency**: `WorkflowStore` relies on ZODB native multi-version concurrency control (MVCC) and transactions with automatic retry on `ConflictError`. In-place persistent object mutations prevent database bloat.

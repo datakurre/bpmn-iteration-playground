@@ -57,21 +57,19 @@ def create_app(service: WorkflowService | None = None, workspace: Workspace | No
     """Build the FastAPI app.
 
     `workspace` only matters when `service` is omitted -- it decides where a *default*
-    WorkflowService's ZODB store lives: `<workspace>/.agents/state/Data.fs` rather than
-    the bare `data/workflows.fs` this used to hard-code. It defaults to `Workspace.discover()`
-    (CWD, walking up for an existing `.agents/` or `.git/`) so `create_app()` still works
-    with zero setup, the same as before. Passing an explicit `service` (as every test does)
-    bypasses this entirely -- state was still injected outside this function.
+    WorkflowService's ZODB store lives: `<workspace.state_dir>/Data.fs` (user local
+    XDG_CONFIG_HOME/graph-agent, ~/.config/graph-agent). Passing an explicit `service`
+    (as every test does) bypasses this entirely -- state was still injected outside this function.
 
-    The template registry stays on `WorkflowRegistry()`'s own default (this package's
-    bundled templates, see registry.py) rather than `workspace.workflows_dir` -- wiring the
-    live registry to the workspace's *editable* copy `bpmn init` materialises is deliberately
-    not done yet, so that a plain `bpmn serve` with no `bpmn init` step still has templates
-    to list.
+    The template registry defaults to `workspace.models_dir` (if present) or this package's
+    bundled models (see registry.py).
     """
     _service = service
     _workspace = workspace or Workspace.discover()
-    template_registry = WorkflowRegistry()
+    models_dir = _workspace.models_dir
+    template_registry = WorkflowRegistry(
+        models_dir=models_dir if (models_dir.exists() and any(models_dir.glob("*.bpmn"))) else None
+    )
     element_templates_registry = ElementTemplatesRegistry()
     _project_service: ProjectService | None = None
 

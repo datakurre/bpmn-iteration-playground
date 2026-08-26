@@ -7,6 +7,12 @@ from graph_agent.pi_client import PiResult
 from graph_agent.workflow_service import WorkflowService
 
 
+@pytest.fixture(autouse=True)
+def _isolate_xdg_config(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    test_xdg = tmp_path_factory.mktemp("xdg_config")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(test_xdg))
+
+
 class FakePi:
     calls = 0
 

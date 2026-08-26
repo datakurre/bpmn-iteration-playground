@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_agent_shell_verify" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="agent_shell_verify" name="Agent with Shell Verification" isExecutable="true">
+    <bpmn:documentation>Agent generates code, shell harness compiles/tests, human signs off on result.</bpmn:documentation>
+    <bpmn:startEvent id="Start_Build" name="Build Requested">
+      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Task_Code" name="Generate Code">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="implementer" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="prompt">${prompt}</camunda:inputParameter>
+          <camunda:outputParameter name="code_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="code_summary">${summary}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_Verify" name="Verify Shell Build">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="shell" />
+          <camunda:property name="command" value="make test" />
+          <camunda:property name="fail_on_error" value="false" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:outputParameter name="verify_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="verify_log">${log}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="GW_Verify_Check" name="Build Passed?">
+      <bpmn:incoming>Flow_3</bpmn:incoming>
+      <bpmn:outgoing>Flow_4</bpmn:outgoing>
+      <bpmn:outgoing>Flow_5</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:userTask id="Task_Review" name="Review Build">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="decision" label="Decision" type="enum" defaultValue="accepted">
+            <camunda:value id="accepted" name="Accept" />
+            <camunda:value id="rejected" name="Reject" />
+          </camunda:formField>
+          <camunda:formField id="notes" label="Notes" type="textarea" />
+        </camunda:formData>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_4</bpmn:incoming>
+      <bpmn:outgoing>Flow_6</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:endEvent id="End_Passed" name="Build Verified">
+      <bpmn:incoming>Flow_6</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="End_Failed" name="Build Broke">
+      <bpmn:incoming>Flow_5</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="Start_Build" targetRef="Task_Code" />
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_Code" targetRef="Task_Verify" />
+    <bpmn:sequenceFlow id="Flow_3" sourceRef="Task_Verify" targetRef="GW_Verify_Check" />
+    <bpmn:sequenceFlow id="Flow_4" name="Passed" sourceRef="GW_Verify_Check" targetRef="Task_Review">
+      <bpmn:conditionExpression>verify_status == 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_5" name="Failed" sourceRef="GW_Verify_Check" targetRef="End_Failed">
+      <bpmn:conditionExpression>verify_status != 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_6" sourceRef="Task_Review" targetRef="End_Passed" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_agent_shell_verify">
+    <bpmndi:BPMNPlane id="BPMNPlane_agent_shell_verify" bpmnElement="agent_shell_verify">
+      <bpmndi:BPMNShape id="Start_Build_di" bpmnElement="Start_Build">
+        <dc:Bounds x="57" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Code_di" bpmnElement="Task_Code">
+        <dc:Bounds x="175" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Verify_di" bpmnElement="Task_Verify">
+        <dc:Bounds x="325" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_Verify_Check_di" bpmnElement="GW_Verify_Check" isMarkerVisible="true">
+        <dc:Bounds x="500" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Review_di" bpmnElement="Task_Review">
+        <dc:Bounds x="625" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Passed_di" bpmnElement="End_Passed">
+        <dc:Bounds x="807" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Failed_di" bpmnElement="End_Failed">
+        <dc:Bounds x="657" y="192" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_1_di" bpmnElement="Flow_1">
+        <di:waypoint x="93" y="70" />
+        <di:waypoint x="175" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_2_di" bpmnElement="Flow_2">
+        <di:waypoint x="275" y="70" />
+        <di:waypoint x="325" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_3_di" bpmnElement="Flow_3">
+        <di:waypoint x="425" y="70" />
+        <di:waypoint x="500" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_4_di" bpmnElement="Flow_4">
+        <di:waypoint x="550" y="70" />
+        <di:waypoint x="625" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_5_di" bpmnElement="Flow_5">
+        <di:waypoint x="525" y="95" />
+        <di:waypoint x="525" y="210" />
+        <di:waypoint x="657" y="210" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_6_di" bpmnElement="Flow_6">
+        <di:waypoint x="725" y="70" />
+        <di:waypoint x="807" y="70" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

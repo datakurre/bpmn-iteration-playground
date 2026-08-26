@@ -77,12 +77,27 @@ def test_ensure_is_idempotent_and_does_not_clobber_existing_gitignore(tmp_path: 
     assert (ws.agents_dir / ".gitignore").read_text() == custom
 
 
-def test_path_properties_are_derived_from_agents_dir(tmp_path: Path) -> None:
+def test_get_state_dir_respects_xdg_config_home(tmp_path: Path, monkeypatch) -> None:
+    from graph_agent.agents_root import get_state_dir
+
+    custom_xdg = tmp_path / "custom_xdg"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(custom_xdg))
+    assert get_state_dir() == custom_xdg / "graph-agent"
+
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    assert get_state_dir() == Path.home() / ".config" / "graph-agent"
+
+
+def test_path_properties_are_derived_from_agents_dir(tmp_path: Path, monkeypatch) -> None:
+    custom_xdg = tmp_path / "xdg"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(custom_xdg))
+
     ws = Workspace(root=tmp_path, is_git=False)
 
     assert ws.agents_dir == tmp_path / ".agents"
-    assert ws.state_dir == tmp_path / ".agents" / "state"
-    assert ws.workflows_dir == tmp_path / ".agents" / "workflows"
+    assert ws.state_dir == custom_xdg / "graph-agent"
+    assert ws.models_dir == tmp_path / "models"
+    assert ws.workflows_dir == tmp_path / "models"
     assert ws.worktrees_dir == tmp_path / ".agents" / "worktrees"
     assert ws.runs_dir == tmp_path / ".agents" / "runs"
     assert ws.logs_dir == tmp_path / ".agents" / "logs"
@@ -90,11 +105,12 @@ def test_path_properties_are_derived_from_agents_dir(tmp_path: Path) -> None:
     assert ws.config_file == tmp_path / ".agents" / "config.toml"
 
 
-def test_create_app_default_service_uses_workspace_state_dir(tmp_path: Path) -> None:
+def test_create_app_default_service_uses_workspace_state_dir(tmp_path: Path, monkeypatch) -> None:
     from fastapi.testclient import TestClient
 
     from graph_agent.api.server import create_app
 
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     workspace = Workspace.discover(tmp_path)
     app = create_app(workspace=workspace)
     with TestClient(app) as client:

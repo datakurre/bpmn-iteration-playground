@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_ComposedDelivery" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="composed_delivery" name="Composed Delivery" isExecutable="true">
+    <bpmn:documentation>Composes the reusable agent_review_cycle subprocess as a CallActivity, then hands the signed-off review to a second agent turn that produces the deliverable. Demonstrates reusing a whole agent-plus-human cycle as one node in a larger graph.</bpmn:documentation>
+    <bpmn:startEvent id="Start_Delivery" name="Work Requested">
+      <bpmn:outgoing>Flow_Delivery_To_Cycle</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_Delivery_To_Cycle" sourceRef="Start_Delivery" targetRef="CallActivity_Review" />
+    <bpmn:callActivity id="CallActivity_Review" name="Agent Review Cycle" calledElement="agent_review_cycle">
+      <bpmn:extensionElements>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="subject">${subject}</camunda:inputParameter>
+          <camunda:outputParameter name="cycle_decision">${cycle_decision}</camunda:outputParameter>
+          <camunda:outputParameter name="cycle_summary">${cycle_summary}</camunda:outputParameter>
+          <camunda:outputParameter name="cycle_notes">${cycle_notes}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Delivery_To_Cycle</bpmn:incoming>
+      <bpmn:outgoing>Flow_Cycle_To_GW_Decision</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:sequenceFlow id="Flow_Cycle_To_GW_Decision" sourceRef="CallActivity_Review" targetRef="GW_Decision" />
+    <bpmn:exclusiveGateway id="GW_Decision" name="Review Accepted?">
+      <bpmn:incoming>Flow_Cycle_To_GW_Decision</bpmn:incoming>
+      <bpmn:outgoing>Flow_Decision_Accept</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Decision_Reject</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_Decision_Accept" name="Accepted" sourceRef="GW_Decision" targetRef="Task_Deliver">
+      <bpmn:conditionExpression>cycle_decision == 'accepted'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Decision_Reject" name="Rejected" sourceRef="GW_Decision" targetRef="End_Delivery_Rejected">
+      <bpmn:conditionExpression>cycle_decision != 'accepted'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:serviceTask id="Task_Deliver" name="Produce Deliverable">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="implementer" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="subject">${subject}</camunda:inputParameter>
+          <camunda:inputParameter name="review_summary">${cycle_summary}</camunda:inputParameter>
+          <camunda:inputParameter name="reviewer_notes">${cycle_notes}</camunda:inputParameter>
+          <camunda:outputParameter name="delivery_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="delivery_summary">${summary}</camunda:outputParameter>
+          <camunda:outputParameter name="delivery_artifacts">${artifacts}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Decision_Accept</bpmn:incoming>
+      <bpmn:outgoing>Flow_Deliver_To_End</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_Deliver_To_End" sourceRef="Task_Deliver" targetRef="End_Delivery_Done" />
+    <bpmn:endEvent id="End_Delivery_Done" name="Delivered">
+      <bpmn:incoming>Flow_Deliver_To_End</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="End_Delivery_Rejected" name="Review Rejected">
+      <bpmn:incoming>Flow_Decision_Reject</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_ComposedDelivery">
+    <bpmndi:BPMNPlane id="BPMNPlane_ComposedDelivery" bpmnElement="composed_delivery">
+      <bpmndi:BPMNShape id="Start_Delivery_di" bpmnElement="Start_Delivery">
+        <dc:Bounds x="50" y="140" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="CallActivity_Review_di" bpmnElement="CallActivity_Review">
+        <dc:Bounds x="140" y="118" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_Decision_di" bpmnElement="GW_Decision" isMarkerVisible="true">
+        <dc:Bounds x="340" y="133" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Deliver_di" bpmnElement="Task_Deliver">
+        <dc:Bounds x="440" y="118" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Delivery_Done_di" bpmnElement="End_Delivery_Done">
+        <dc:Bounds x="640" y="140" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Delivery_Rejected_di" bpmnElement="End_Delivery_Rejected">
+        <dc:Bounds x="347" y="270" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_Delivery_To_Cycle_di" bpmnElement="Flow_Delivery_To_Cycle">
+        <di:waypoint x="86" y="158" />
+        <di:waypoint x="140" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Cycle_To_GW_Decision_di" bpmnElement="Flow_Cycle_To_GW_Decision">
+        <di:waypoint x="290" y="158" />
+        <di:waypoint x="340" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Decision_Accept_di" bpmnElement="Flow_Decision_Accept">
+        <di:waypoint x="390" y="158" />
+        <di:waypoint x="440" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Decision_Reject_di" bpmnElement="Flow_Decision_Reject">
+        <di:waypoint x="365" y="183" />
+        <di:waypoint x="365" y="270" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Deliver_To_End_di" bpmnElement="Flow_Deliver_To_End">
+        <di:waypoint x="590" y="158" />
+        <di:waypoint x="640" y="158" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
