@@ -1119,3 +1119,26 @@ class WorkflowService:
                             await strategy.discard(run_id)
 
         return recovered
+
+    async def resume_pending_workflows(self) -> int:
+        """Re-dispatch instances with READY or STARTED agent/script tasks after daemon restart."""
+        resumed = 0
+        for wf_id in self.store.list_active():
+            record = self.store.load(wf_id)
+            if not record or record.get("status") in ("completed", "cancelled", "failed"):
+                continue
+            workflow = record.get("workflow")
+            if workflow is None:
+                continue
+            pending_tasks = [
+                t
+                for t in workflow.get_tasks()
+                if t.state in (TaskState.READY, TaskState.STARTED)
+                and t.task_spec.__class__.__name__ in ("ServiceTask", "ScriptTask")
+            ]
+            if pending_tasks:
+                logger.info("Resuming pending workflow %s on startup", wf_id)
+                await self._dispatch(wf_id)
+                resumed += 1
+        return resumed
+

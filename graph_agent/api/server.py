@@ -94,6 +94,9 @@ def create_app(service: WorkflowService | None = None, workspace: Workspace | No
             recovered = await svc.recover_orphaned_workflows()
             if recovered:
                 logger.info(f"Startup recovery cleaned up {recovered} orphaned workflows")
+            resumed = await svc.resume_pending_workflows()
+            if resumed:
+                logger.info(f"Startup resumed {resumed} workflows with pending tasks")
         except Exception as exc:
             logger.warning(f"Startup recovery check failed: {exc}")
         try:

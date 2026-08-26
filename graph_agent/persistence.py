@@ -1045,8 +1045,12 @@ class WorkflowStore:
             results = []
             for meta in metadata_tree.values():
                 item = meta.to_dict() if hasattr(meta, "to_dict") else dict(meta)
-                if status_filter and status_filter != "all" and item.get("status") != status_filter:
-                    continue
+                if status_filter and status_filter != "all":
+                    if status_filter == "active":
+                        if item.get("status") in ("completed", "cancelled"):
+                            continue
+                    elif item.get("status") != status_filter:
+                        continue
                 created_at = item.get("created_at") or ""
                 if since and created_at < since:
                     continue
@@ -1059,6 +1063,37 @@ class WorkflowStore:
             if limit is not None and limit >= 0:
                 results = results[:limit]
             return results
+
+    def list_active(self) -> list[str]:
+        """Return workflow IDs of non-terminal instances."""
+        result: list[str] = []
+        with self.db.transaction() as connection:
+            root = connection.root()
+            metadata_tree = root.get("metadata", {})
+            workflows_tree = root.get("workflows", {})
+            if len(metadata_tree) == 0 and len(workflows_tree) > 0:
+                for wf_id, wf in workflows_tree.items():
+                    status = (
+                        wf.status
+                        if hasattr(wf, "status")
+                        else wf.get("status")
+                        if isinstance(wf, dict)
+                        else "unknown"
+                    )
+                    if status not in ("completed", "cancelled"):
+                        result.append(wf_id)
+            else:
+                for wf_id, meta in metadata_tree.items():
+                    status = (
+                        meta.status
+                        if hasattr(meta, "status")
+                        else meta.get("status")
+                        if isinstance(meta, dict)
+                        else "unknown"
+                    )
+                    if status not in ("completed", "cancelled"):
+                        result.append(wf_id)
+        return result
 
     def list(self) -> list[tuple[str, dict[str, Any]]]:
         with self.db.transaction() as connection:

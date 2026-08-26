@@ -321,6 +321,20 @@ def _cmd_run(
         print(f"Error: {exc}")
 
 
+def _format_status(status: str) -> str:
+    if status in ("waiting_human", "waiting_event"):
+        return "⏸ resumable"
+    if status in ("running", "waiting_pi", "retry_requested"):
+        return "▶ running"
+    if status == "failed":
+        return "❌ failed"
+    if status == "completed":
+        return "✓ completed"
+    if status == "cancelled":
+        return "⏹ cancelled"
+    return status
+
+
 def _cmd_ls(workspace_root: Path | None, show_all: bool) -> None:
     workspace = Workspace.discover(workspace_root)
     info = read_runtime_file(workspace)
@@ -341,7 +355,7 @@ def _cmd_ls(workspace_root: Path | None, show_all: bool) -> None:
         print("-" * len(header))
         for inst in instances:
             wid = inst.get("workflow_id", "")[:8]
-            st = inst.get("status", "")
+            st = _format_status(inst.get("status", ""))
             bpmn = inst.get("bpmn_path")
             tmpl = Path(bpmn).stem if bpmn else inst.get("process_id", "")
             tasks = str(inst.get("task_count", len(inst.get("tasks", []))))
