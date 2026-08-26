@@ -46,15 +46,15 @@ It:
 
 ```
 graph_agent/
-  cli.py             – `graph-agent` / `bpmn` entry point: init/attach/run/ls/show/logs/merge/cancel/serve/status/open/stop
+  cli.py             – `graph-agent` / `bpmn` entry point: init/attach/run/ls/show/logs/merge/cancel/serve/status/open/edit/stop
   agents_root.py     – Workspace: `.agents/` root discovery and directory layout
   daemon.py          – `graph-agent serve` free-port bind, runtime.json handshake, is_daemon_alive
   workspace_strategy.py – WorkspaceStrategy: BlobStrategy / WorktreeStrategy / InPlaceStrategy
                         and select_strategy() -- see AGENTS.md §4d
-  tui/               – Textual Terminal User Interface
+  tui/               – Textual Terminal User Interface (API-first client over HTTP/WebSockets)
     client.py        – DaemonClient: async HTTP/WebSocket API client
     forms.py         – FormJS schema parser & data extractor
-    app.py           – GraphAgentApp main application
+    app.py           – GraphAgentApp main application (screen management: install_screen + switch_screen)
     screens/         – RunsScreen, RunDetailScreen, InboxScreen, FormScreen, StartScreen, LogScreen
   api/
     server.py        – FastAPI app factory: lifespan, static mounts, includes routers/ below
@@ -429,16 +429,15 @@ See §4b for the `SandboxPiAdapter` as a worked example of a second agent adapte
 ```toml agent-sandbox
 [network]
 allowed_hosts = [
-    "cache.nixos.org:443",
-    "channels.nixos.org:443",
-    "codeload.github.com:443",
-    "devenv.cachix.org:443",
+    "*.nixos.org:443",
+    "*.github.com:443,22",
+    "*.cachix.org:443",
     "files.pythonhosted.org:443",
-    "github.com:443,22",
-    "opencode.ai:443",
     "pypi.org:443",
     "registry.npmjs.org:443",
-    "releases.nixos.org:443",
+#
+    "models.opencode.ai:443",
+    "opencode.ai:443",
 ]
 
 [[network.allowed_routes]]

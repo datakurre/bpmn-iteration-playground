@@ -1,15 +1,18 @@
 # graph-agent
 
-**graph-agent** is a durable BPMN 2.0 orchestration engine and agent runtime. It replaces bespoke, fragile agentic loops with structured, durable BPMN workflows without reinventing the agent atoms.
+**graph-agent** (`bpmn`) is a durable BPMN 2.0 orchestration engine and agent runtime. It replaces bespoke, fragile agentic loops with structured, durable BPMN workflows without reinventing the agent atoms.
 
-- **Durable Orchestration**: Built on [SpiffWorkflow](https://spiffworkflow.org/) with per-workspace local **ZODB** persistence.
+- **API-First Architecture**: Canonical **FastAPI** REST and WebSocket API backing the CLI, the interactive Terminal UI (TUI), and the browser-based Workflow Studio.
+- **Durable Orchestration**: Built on [SpiffWorkflow](https://spiffworkflow.org/) with per-workspace local **ZODB** ACID persistence.
 - **Agent Turns as Tasks**: Service tasks dispatch to local AI agent harnesses (such as [Pi](https://github.com/badlogic/pi-mono)) or deterministic tools ([ShellAdapter](graph_agent/adapters/shell_adapter.py)).
 - **Isolated Workspace Strategies**:
   - `worktree`: Runs each graph on an isolated Git worktree branch (`bpmn/run/<id>`) with auto-merge on clean completion.
   - `in_place`: Serialized in-place execution with concurrency mutex for non-Git repositories.
   - `blob`: Ephemeral workspace snapshots stored directly in ZODB.
-- **Interactive TUI & Web Studio**: Terminal user interface ([Textual](https://textual.textualize.io/)) and web dashboard with visual BPMN viewer, FormJS human checkpoints, and SavePoint branch/forking.
-- **CLI Suite**: Full set of verbs to run, inspect, follow, cancel, merge, and manage workflows.
+- **Interactive TUI & Web Studio**:
+  - Terminal User Interface ([Textual](https://textual.textualize.io/)) with full screen navigation, live output logs, FormJS form handling, and web shortcuts.
+  - Web dashboard with interactive BPMN diagram viewer, visual modeler, FormJS human checkpoints, and SavePoint branch/forking.
+- **CLI Suite**: Complete set of verbs to run, inspect, follow, cancel, merge, edit, and manage workflows.
 
 ---
 
@@ -20,6 +23,8 @@ Initialize `.agents/` in any project folder:
 
 ```bash
 graph-agent init
+# or
+bpmn init
 ```
 
 This creates the workspace structure:
@@ -29,20 +34,20 @@ This creates the workspace structure:
 - `.agents/logs/`: Daemon and activity logs.
 
 ### 2. Launch the TUI
-Run `graph-agent` with no arguments to start or attach to the local daemon and open the interactive TUI:
+Run `graph-agent` (or `bpmn`) with no arguments to start the local daemon in the background and open the interactive TUI:
 
 ```bash
 graph-agent
 ```
 
-Or attach to an already-running daemon:
+Or explicitly attach to an already-running daemon:
 
 ```bash
 graph-agent attach
 ```
 
 ### 3. Headless Daemon Mode
-To run the daemon in the background or headlessly:
+To run the daemon in the foreground headlessly (without TUI):
 
 ```bash
 graph-agent serve --no-tui
@@ -56,28 +61,33 @@ graph-agent serve --no-tui
 
 ```bash
 # Start a new workflow run with flags
-graph-agent run plan_and_execute.bpmn --var goal="Implement user authentication" --model gpt-5.6-luna --workspace-mode worktree
+bpmn run plan_and_execute.bpmn --var goal="Implement user authentication" --model gpt-5.6-luna --workspace-mode worktree
 
-# List all active and historical runs
-graph-agent ls
-graph-agent ls --all
+# List active workflow runs (default) or all historical runs (-a / --all)
+bpmn ls
+bpmn ls --all
 
 # View details of a specific workflow run
-graph-agent show <run-id>
+bpmn show <run-id>
 
 # View or follow streaming logs of a run
-graph-agent logs <run-id> -f
+bpmn logs <run-id> -f
 
 # Merge a completed run branch into the base branch
-graph-agent merge <run-id>
+bpmn merge <run-id>
 
 # Cancel a running workflow
-graph-agent cancel <run-id>
+bpmn cancel <run-id>
+
+# Open the BPMN Modeler in your default browser
+bpmn edit                     # opens editor dashboard
+bpmn edit contract_review     # opens specific template
 
 # Check daemon status or open web UI
-graph-agent status
-graph-agent open
-graph-agent stop
+bpmn status
+bpmn open                     # opens dashboard
+bpmn open --editor [template] # opens editor
+bpmn stop
 ```
 
 ### CLI Engine & Model Flags
@@ -102,14 +112,39 @@ The following flags can be passed to `graph-agent`, `graph-agent serve`, and `gr
 
 ## Interactive Terminal UI (TUI)
 
-The TUI provides 6 purpose-built screens:
+The TUI is an API-first Textual application communicating over HTTP and WebSockets with the daemon:
 
-1. **Runs Screen**: Overview of active, completed, and waiting workflows with status, current task, elapsed time, and merge state.
-2. **Run Detail Screen**: Task timeline, streaming agent/shell output logs, workflow data inspector, and savepoint checkpoints.
-3. **Inbox Screen**: Cross-graph aggregator for pending human tasks (`waiting_human`) and deferred merges (`merge_deferred`).
-4. **Form Screen**: Native interactive rendering of FormJS schemas (`textfield`, `textarea`, `number`, `checkbox`, `select`, `radio`) with a fallback deep-link to the browser.
-5. **Start Screen**: Template chooser listing `.agents/workflows/` with variable prompt fields.
-6. **Log Screen**: Live auto-scrolling tail of workspace activity logs.
+### Global Navigation
+- `1`: **Runs Screen**
+- `2`: **Inbox Screen**
+- `3`: **Start Screen**
+- `4`: **Logs Screen**
+- `q`: **Quit TUI**
+
+### Purpose-Built Screens
+1. **Runs Screen (`1`)**: Overview of active and completed workflows.
+   - `Enter` / `d`: View Run Details
+   - `i`: Jump to Inbox
+   - `s`: Start New Workflow
+   - `e`: Open BPMN Modeler in Browser
+   - `r`: Refresh List
+   - `m`: Merge Completed Branch
+   - `c`: Cancel Run
+2. **Run Detail Screen**: Tabbed inspection with Timeline, Live Logs, Workflow Data JSON, and SavePoints.
+   - `t`: Retry Failed Task
+   - `w`: Open Instance in Web UI
+   - `m`: Merge Branch
+   - `c`: Cancel Run
+   - `b` / `Esc`: Back to Runs
+3. **Inbox Screen (`2`)**: Cross-graph aggregator for pending human review tasks (`waiting_human`) and deferred merges (`merge_deferred`).
+   - `Enter`: Open Action / Form
+   - `r`: Refresh
+4. **Form Screen**: Native interactive FormJS schema rendering (`textfield`, `textarea`, `number`, `checkbox`, `select`, `radio`) with value capture.
+   - `Submit Form`: Submit review decision and data to workflow
+   - `o`: Open in Browser
+   - `b` / `Esc`: Cancel / Back
+5. **Start Screen (`3`)**: Template picker from `.agents/workflows/` with custom goal and variable prompt inputs.
+6. **Log Screen (`4`)**: Non-blocking asynchronous live tailing of daemon and activity logs.
 
 ---
 
@@ -137,8 +172,12 @@ nix develop
 pytest tests/
 
 # Strict type checking
-mypy --strict graph_agent/
+mypy graph_agent/
 
 # Linter and formatter
 ruff check graph_agent/ tests/
+
+# Verify web UI headlessly
+playwright-python scripts/verify_instance_ui.py
 ```
+
