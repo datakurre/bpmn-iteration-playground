@@ -57,6 +57,79 @@ def minimal_bpmn(
 """
 
 
+def linear_bpmn(
+    process_id: str = "Process_1",
+    tasks: list[tuple[str, str, dict[str, str]]] | None = None,
+) -> str:
+    """Build Start -> task1 -> task2 -> ... -> End BPMN.
+
+    Each task: (bpmn_id, element_type, camunda_properties).
+    element_type: 'userTask', 'serviceTask', etc.
+    """
+    if tasks is None:
+        tasks = [("Task_1", "serviceTask", {"harness_type": "pi_agent", "agent_role": "reviewer"})]
+
+    task_xml_parts: list[str] = []
+    flow_xml_parts: list[str] = []
+
+    prev_node = "StartEvent_1"
+    flow_counter = 1
+
+    for task_id, task_type, properties in tasks:
+        tag = task_type if ":" in task_type else f"bpmn:{task_type}"
+        flow_id = f"Flow_{flow_counter}"
+        flow_counter += 1
+        flow_xml_parts.append(
+            f'<bpmn:sequenceFlow id="{flow_id}" sourceRef="{prev_node}" targetRef="{task_id}" />'
+        )
+
+        props_xml = [
+            f'<camunda:property name="{k}" value="{v}" />'
+            for k, v in properties.items()
+        ]
+        ext_str = (
+            f"<bpmn:extensionElements><camunda:properties>{''.join(props_xml)}</camunda:properties></bpmn:extensionElements>"
+            if props_xml
+            else ""
+        )
+
+        next_flow_id = f"Flow_{flow_counter}"
+        task_xml_parts.append(
+            f'<{tag} id="{task_id}" name="{task_id}">'
+            f"{ext_str}"
+            f"<bpmn:incoming>{flow_id}</bpmn:incoming>"
+            f"<bpmn:outgoing>{next_flow_id}</bpmn:outgoing>"
+            f"</{tag}>"
+        )
+        prev_node = task_id
+
+    final_flow_id = f"Flow_{flow_counter}"
+    flow_xml_parts.append(
+        f'<bpmn:sequenceFlow id="{final_flow_id}" sourceRef="{prev_node}" targetRef="EndEvent_1" />'
+    )
+
+    tasks_str = "\n    ".join(task_xml_parts)
+    flows_str = "\n    ".join(flow_xml_parts)
+
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                  id="Definitions_1"
+                  targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="{process_id}" isExecutable="true">
+    <bpmn:startEvent id="StartEvent_1">
+      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    {tasks_str}
+    <bpmn:endEvent id="EndEvent_1">
+      <bpmn:incoming>{final_flow_id}</bpmn:incoming>
+    </bpmn:endEvent>
+    {flows_str}
+  </bpmn:process>
+</bpmn:definitions>
+"""
+
+
 def bpmn_with_orphan_task(process_id: str = "Process_1") -> str:
     """Build a BPMN XML string with an orphan (disconnected) task."""
     return f"""<?xml version="1.0" encoding="UTF-8"?>

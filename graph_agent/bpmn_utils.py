@@ -3,12 +3,17 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from lxml import etree
 from SpiffWorkflow.bpmn.parser.BpmnParser import BpmnParser
+from SpiffWorkflow.bpmn.workflow import BpmnWorkflow
+from SpiffWorkflow.task import TaskState
 
 from graph_agent.xml_utils import safe_fromstring_xml
+
+if TYPE_CHECKING:
+    from graph_agent.engine import WorkflowRunner
 
 BPMN_NS = "http://www.omg.org/spec/BPMN/20100524/MODEL"
 CAMUNDA_NS = "http://camunda.org/schema/1.0/bpmn"
@@ -357,3 +362,144 @@ def validate_bpmn(xml: str) -> ValidationResult:
         errors=errors,
         warnings=ext_warnings,
     )
+
+
+def _attach_extensions_to_specs(root: ET.Element[Any], specs: list[Any]) -> None:
+    """Attach Camunda extension elements from root XML onto loaded TaskSpec objects."""
+    ns = {"bpmn": BPMN_NS, "camunda": CAMUNDA_NS}
+    for element in root.findall(".//bpmn:*", ns):
+        bpmn_id = element.get("id")
+        if not bpmn_id:
+            continue
+        target_specs = [spec for spec in specs if bpmn_id in spec.task_specs]
+        if not target_specs:
+            continue
+
+        properties = {
+            prop.get("name"): prop.get("value", "")
+            for prop in element.findall("./bpmn:extensionElements/camunda:properties/camunda:property", ns)
+            if prop.get("name")
+        }
+
+        fields: list[dict[str, Any]] = []
+        for field_elem in element.findall("./bpmn:extensionElements/camunda:formData/camunda:formField", ns):
+            field_data: dict[str, Any] = {
+                "id": field_elem.get("id"),
+                "label": field_elem.get("label"),
+                "type": field_elem.get("type", "string"),
+            }
+            values = [
+                {"id": v.get("id"), "name": v.get("name", v.get("id"))}
+                for v in field_elem.findall("camunda:value", ns)
+            ]
+            if values:
+                field_data["values"] = values
+            fields.append(field_data)
+
+        input_params = {
+            param.get("name"): (param.text or param.get("value") or "").strip()
+            for param in element.findall("./bpmn:extensionElements/camunda:inputOutput/camunda:inputParameter", ns)
+            if param.get("name")
+        }
+        output_params = {
+            param.get("name"): (param.text or param.get("value") or "").strip()
+            for param in element.findall("./bpmn:extensionElements/camunda:inputOutput/camunda:outputParameter", ns)
+            if param.get("name")
+        }
+
+        for spec in target_specs:
+            spec.task_specs[bpmn_id].extensions = {
+                "properties": properties,
+                "form": {"fields": fields},
+                "inputParameters": input_params,
+                "outputParameters": output_params,
+            }
+
+
+def _repoint_tasks(
+    workflow: BpmnWorkflow,
+    new_task_specs: dict[str, Any],
+    warnings: list[str],
+) -> None:
+    """Walk the runtime task tree and repoint each task to the new spec."""
+    for task in list(workflow.get_tasks()):
+        if task.state in (TaskState.FUTURE, TaskState.MAYBE, TaskState.LIKELY):
+            continue
+
+        bpmn_id = getattr(task.task_spec, "bpmn_id", None) or task.task_spec.name
+        new_spec = new_task_specs.get(bpmn_id)
+        if new_spec is None and task.task_spec.name in new_task_specs:
+            new_spec = new_task_specs[task.task_spec.name]
+
+        if new_spec is not None:
+            task.task_spec = new_spec
+        elif task.state in (TaskState.COMPLETED, TaskState.CANCELLED):
+            warnings.append(f"Completed task '{bpmn_id}' not in new spec (history only)")
+        else:
+            raise ValueError(
+                f"Active task '{bpmn_id}' (state={TaskState.get_name(task.state)}) "
+                f"not found in new BPMN spec. Cannot migrate."
+            )
+
+        # Drop predicted children so SpiffWorkflow re-predicts from new outputs
+        for child in list(task.children):
+            if (
+                child.state in (TaskState.FUTURE, TaskState.MAYBE, TaskState.LIKELY)
+                and not child.triggered
+                and child.id in workflow.tasks
+            ):
+                workflow._remove_task(child.id)
+
+
+def replace_spec(
+    workflow: BpmnWorkflow,
+    new_xml: str,
+    runner: WorkflowRunner | None = None,
+) -> tuple[BpmnWorkflow, list[str]]:
+    """Replace a workflow's BPMN spec, preserving execution state.
+
+    Returns (workflow, warnings) where warnings lists any non-fatal issues.
+    """
+    # 1. Validate new_xml
+    val_result = validate_bpmn(new_xml)
+    if not val_result.valid:
+        raise ValueError(f"Invalid BPMN XML: {'; '.join(val_result.errors)}")
+
+    # 2. Parse new spec
+    root = safe_fromstring_xml(new_xml)
+    parser = BpmnParser()
+    xml_bytes = new_xml.encode("utf-8") if isinstance(new_xml, str) else new_xml
+    parser.add_bpmn_xml(etree.fromstring(xml_bytes))
+
+    # 3. Identify process ID
+    process_id = getattr(workflow.spec, "name", None)
+    all_pids = parser.get_process_ids()
+    if not process_id or process_id not in all_pids:
+        process_id = all_pids[0]
+
+    new_spec = parser.get_spec(process_id)
+    new_subprocess_specs = parser.get_subprocess_specs(process_id) or {}
+
+    # 4. Attach Camunda extensions
+    all_specs = [new_spec, *new_subprocess_specs.values()]
+    _attach_extensions_to_specs(root, all_specs)
+
+    # 5. Build task spec lookup
+    new_task_specs: dict[str, Any] = dict(new_spec.task_specs)
+    for sub in new_subprocess_specs.values():
+        new_task_specs.update(sub.task_specs)
+
+    # 6. Repoint runtime tasks and drop predicted children
+    warnings: list[str] = []
+    _repoint_tasks(workflow, new_task_specs, warnings)
+
+    # 7. Update workflow references
+    workflow.spec = new_spec
+    workflow.subprocess_specs = new_subprocess_specs
+    workflow._bpmn_xml = new_xml
+
+    # 8. Re-predict future tasks from active tasks
+    workflow._predict()
+
+    return workflow, warnings
+
