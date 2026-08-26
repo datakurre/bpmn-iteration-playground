@@ -217,11 +217,23 @@ class RunDetailScreen(Screen):  # type: ignore
             self.notify(f"Cancel error: {exc}", severity="error")
 
     def action_open_in_browser(self) -> None:
+        import os
         import webbrowser
 
+        from graph_agent.agents_root import Workspace
+        from graph_agent.daemon import read_runtime_file
+
         client = getattr(self.app, "client", None)
-        base_url = getattr(client, "base_url", "http://127.0.0.1:8000") if client else "http://127.0.0.1:8000"
-        token = getattr(client, "token", None) if client else None
+        base_url = getattr(client, "base_url", None)
+        token = getattr(client, "token", None)
+        if not base_url or not token:
+            ws = getattr(self.app, "workspace", None) or Workspace.discover()
+            runtime = read_runtime_file(ws)
+            if runtime:
+                base_url = base_url or runtime.url
+                token = token or runtime.token
+        base_url = base_url or "http://127.0.0.1:8000"
+        token = token or os.environ.get("ADMIN_TOKEN")
         query = f"?token={token}" if token else ""
         url = f"{base_url}/instance/{self.workflow_id}{query}"
         try:
@@ -229,6 +241,7 @@ class RunDetailScreen(Screen):  # type: ignore
             self.notify(f"Opened {url} in browser", severity="information")
         except Exception as exc:
             self.notify(f"Failed to open browser: {exc}", severity="error")
+
 
 
     async def on_button_pressed(self, event: Any) -> None:
