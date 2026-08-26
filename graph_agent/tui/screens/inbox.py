@@ -137,6 +137,9 @@ class InboxScreen(Screen):  # type: ignore
     def action_go_back(self) -> None:
         self.app.pop_screen()
 
+    async def on_data_table_row_selected(self, event: Any) -> None:
+        await self.action_action_item()
+
     async def on_button_pressed(self, event: Any) -> None:
         btn_id = getattr(event.button, "id", "")
         if btn_id == "btn-action":

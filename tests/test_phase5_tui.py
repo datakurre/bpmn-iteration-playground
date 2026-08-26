@@ -238,3 +238,35 @@ def test_cli_attach_not_running(tmp_path: Path, capsys: pytest.CaptureFixture[st
     main(["attach", "--workspace", str(tmp_path)])
     out = capsys.readouterr().out
     assert "No daemon running" in out
+
+
+@pytest.mark.anyio
+async def test_data_table_out_of_bounds_click_safe(tmp_path: Path) -> None:
+    """Verify that clicking outside header bounds on DataTable does not raise IndexError."""
+    from rich.style import Style
+    from textual.events import Click
+    from textual.widgets import DataTable
+
+    ws = Workspace.discover(tmp_path)
+    client = DaemonClient(base_url="http://test", workspace=ws)
+    app = GraphAgentApp(client=client, workspace=ws)
+
+    async with app.run_test() as pilot:
+        # Get DataTable on active RunsScreen
+        table = pilot.app.screen.query_one(DataTable)
+        # Out-of-bounds column click on header (row = -1)
+        event = Click(
+            widget=table,
+            x=999,
+            y=0,
+            delta_x=0,
+            delta_y=0,
+            button=1,
+            shift=False,
+            meta=False,
+            ctrl=False,
+            style=Style(meta={"row": -1, "column": 999, "out_of_bounds": True}),
+        )
+        # Must not raise IndexError
+        await table._on_click(event)
+

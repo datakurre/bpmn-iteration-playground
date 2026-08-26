@@ -131,6 +131,29 @@ class GraphAgentApp(App):  # type: ignore
         self.switch_screen("logs")
 
 
+def _patch_data_table() -> None:
+    """Patch Textual DataTable._on_click to safely handle out-of-bounds header/row clicks."""
+    try:
+        import contextlib
+
+        from textual.widgets import DataTable
+        original_on_click = DataTable._on_click
+
+        async def _safe_on_click(self: DataTable[Any], event: Any) -> None:
+            with contextlib.suppress(IndexError):
+                # Textual's _on_click can attempt to index ordered_columns[column_index]
+                # when clicking out-of-bounds header areas with cursor_type="row".
+                await original_on_click(self, event)
+
+        DataTable._on_click = _safe_on_click  # type: ignore[method-assign]
+    except (ImportError, AttributeError):
+        pass
+
+
+_patch_data_table()
+
+
+
 def launch_tui(client: DaemonClient, workspace: Workspace | None = None) -> int:
     """Launch Textual TUI with error handling for environments lacking textual."""
     try:
@@ -143,6 +166,8 @@ def launch_tui(client: DaemonClient, workspace: Workspace | None = None) -> int:
         )
         return 1
 
+    _patch_data_table()
     app = GraphAgentApp(client=client, workspace=workspace)
     app.run()
     return 0
+

@@ -135,6 +135,9 @@ class RunsScreen(Screen):  # type: ignore
 
             self.app.push_screen(RunDetailScreen(workflow_id=wid))
 
+    def on_data_table_row_selected(self, event: Any) -> None:
+        self.action_select_run()
+
     def action_goto_inbox(self) -> None:
         from graph_agent.tui.screens.inbox import InboxScreen
 
