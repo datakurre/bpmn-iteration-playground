@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_InteractiveSession" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="interactive_session" name="Interactive Agent Session" isExecutable="true">
+    <bpmn:documentation>Interactive coding session: Prompt User -&gt; Planner Loop with bpmnlint checks -&gt; In-Flight Migration -&gt; Spliced Execution Steps -&gt; Review Checkpoint Gate.</bpmn:documentation>
+    <bpmn:startEvent id="Start_IS" name="Start Session">
+      <bpmn:outgoing>Flow_IS_Start_To_Prompt</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_IS_Start_To_Prompt" sourceRef="Start_IS" targetRef="UserTask_IS_Prompt" />
+    <bpmn:userTask id="UserTask_IS_Prompt" name="Prompt User">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="user_prompt" label="What would you like to do?" type="textarea" />
+          <camunda:formField id="context" label="Additional context or constraints" type="textarea" />
+        </camunda:formData>
+        <camunda:inputOutput>
+          <camunda:outputParameter name="user_prompt">${user_prompt}</camunda:outputParameter>
+          <camunda:outputParameter name="context">${context}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_IS_Start_To_Prompt</bpmn:incoming>
+      <bpmn:incoming>Flow_IS_Review_Revise</bpmn:incoming>
+      <bpmn:incoming>Flow_IS_Review_Continue</bpmn:incoming>
+      <bpmn:outgoing>Flow_IS_Prompt_To_Plan</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="Flow_IS_Prompt_To_Plan" sourceRef="UserTask_IS_Prompt" targetRef="Task_IS_PlanGraph" />
+    <bpmn:serviceTask id="Task_IS_PlanGraph" name="Formulate Execution Plan &#38; Graph">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="graph_architect" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="user_prompt">${user_prompt}</camunda:inputParameter>
+          <camunda:inputParameter name="context">${context}</camunda:inputParameter>
+          <camunda:inputParameter name="lint_feedback">${lint_feedback}</camunda:inputParameter>
+          <camunda:outputParameter name="plan_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="plan_summary">${summary}</camunda:outputParameter>
+          <camunda:outputParameter name="extension_spec">${findings.0}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_IS_Prompt_To_Plan</bpmn:incoming>
+      <bpmn:incoming>Flow_IS_Lint_Failed</bpmn:incoming>
+      <bpmn:outgoing>Flow_IS_Plan_To_Lint</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_IS_Plan_To_Lint" sourceRef="Task_IS_PlanGraph" targetRef="Task_IS_LintBPMN" />
+    <bpmn:serviceTask id="Task_IS_LintBPMN" name="Validate BPMN &#38; Invariants">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+          <camunda:property name="agent_role" value="bpmn_validator" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="extension_spec">${extension_spec}</camunda:inputParameter>
+          <camunda:outputParameter name="lint_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="lint_feedback">${summary}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_IS_Plan_To_Lint</bpmn:incoming>
+      <bpmn:outgoing>Flow_IS_Lint_To_GW</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_IS_Lint_To_GW" sourceRef="Task_IS_LintBPMN" targetRef="GW_IS_LintCheck" />
+    <bpmn:exclusiveGateway id="GW_IS_LintCheck" name="Plan &#38; Lint Passed?">
+      <bpmn:incoming>Flow_IS_Lint_To_GW</bpmn:incoming>
+      <bpmn:outgoing>Flow_IS_Lint_Passed</bpmn:outgoing>
+      <bpmn:outgoing>Flow_IS_Lint_Failed</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_IS_Lint_Passed" name="Passed" sourceRef="GW_IS_LintCheck" targetRef="ServiceTask_IS_ApplyExtension">
+      <bpmn:conditionExpression>lint_status == 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_IS_Lint_Failed" name="Retry Plan" sourceRef="GW_IS_LintCheck" targetRef="Task_IS_PlanGraph">
+      <bpmn:conditionExpression>lint_status != 'success'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:serviceTask id="ServiceTask_IS_ApplyExtension" name="Apply Graph Extension">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="graph_extend" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="extension_spec">${extension_spec}</camunda:inputParameter>
+          <camunda:outputParameter name="migrate_status">${status}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_IS_Lint_Passed</bpmn:incoming>
+      <bpmn:outgoing>Flow_IS_Migrate_To_Review</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_IS_Migrate_To_Review" sourceRef="ServiceTask_IS_ApplyExtension" targetRef="UserTask_IS_Review" />
+    <bpmn:userTask id="UserTask_IS_Review" name="Review Plan &#38; Execution">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="review_summary" label="Summary of Work &#38; Findings" type="markdown" />
+          <camunda:formField id="review_decision" label="Decision" type="enum" defaultValue="approve">
+            <camunda:value id="approve" name="Approve &#38; Done" />
+            <camunda:value id="revise" name="Request Revisions" />
+            <camunda:value id="continue" name="Continue with Next Goal" />
+          </camunda:formField>
+          <camunda:formField id="review_feedback" label="Follow-up Instructions / Feedback" type="textarea" />
+        </camunda:formData>
+        <camunda:inputOutput>
+          <camunda:outputParameter name="review_decision">${review_decision}</camunda:outputParameter>
+          <camunda:outputParameter name="review_feedback">${review_feedback}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_IS_Migrate_To_Review</bpmn:incoming>
+      <bpmn:outgoing>Flow_IS_Review_To_GW</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="Flow_IS_Review_To_GW" sourceRef="UserTask_IS_Review" targetRef="GW_IS_ReviewDecision" />
+    <bpmn:exclusiveGateway id="GW_IS_ReviewDecision" name="Review Decision">
+      <bpmn:incoming>Flow_IS_Review_To_GW</bpmn:incoming>
+      <bpmn:outgoing>Flow_IS_Review_Approve</bpmn:outgoing>
+      <bpmn:outgoing>Flow_IS_Review_Revise</bpmn:outgoing>
+      <bpmn:outgoing>Flow_IS_Review_Continue</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_IS_Review_Approve" name="Approve &#38; Complete" sourceRef="GW_IS_ReviewDecision" targetRef="End_IS_Session">
+      <bpmn:conditionExpression>review_decision == 'approve'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_IS_Review_Revise" name="Revise" sourceRef="GW_IS_ReviewDecision" targetRef="UserTask_IS_Prompt">
+      <bpmn:conditionExpression>review_decision == 'revise'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_IS_Review_Continue" name="Continue" sourceRef="GW_IS_ReviewDecision" targetRef="UserTask_IS_Prompt">
+      <bpmn:conditionExpression>review_decision == 'continue'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:endEvent id="End_IS_Session" name="Session Completed">
+      <bpmn:incoming>Flow_IS_Review_Approve</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_interactive_session">
+    <bpmndi:BPMNPlane id="BPMNPlane_interactive_session" bpmnElement="interactive_session">
+      <bpmndi:BPMNShape id="Start_IS_di" bpmnElement="Start_IS">
+        <dc:Bounds x="57" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="UserTask_IS_Prompt_di" bpmnElement="UserTask_IS_Prompt">
+        <dc:Bounds x="175" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_IS_PlanGraph_di" bpmnElement="Task_IS_PlanGraph">
+        <dc:Bounds x="325" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_IS_LintBPMN_di" bpmnElement="Task_IS_LintBPMN">
+        <dc:Bounds x="475" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_IS_LintCheck_di" bpmnElement="GW_IS_LintCheck" isMarkerVisible="true">
+        <dc:Bounds x="650" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceTask_IS_ApplyExtension_di" bpmnElement="ServiceTask_IS_ApplyExtension">
+        <dc:Bounds x="775" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="UserTask_IS_Review_di" bpmnElement="UserTask_IS_Review">
+        <dc:Bounds x="925" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_IS_ReviewDecision_di" bpmnElement="GW_IS_ReviewDecision" isMarkerVisible="true">
+        <dc:Bounds x="1100" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_IS_Session_di" bpmnElement="End_IS_Session">
+        <dc:Bounds x="1257" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_IS_Start_To_Prompt_di" bpmnElement="Flow_IS_Start_To_Prompt">
+        <di:waypoint x="93" y="70" />
+        <di:waypoint x="175" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_IS_Prompt_To_Plan_di" bpmnElement="Flow_IS_Prompt_To_Plan">
+        <di:waypoint x="275" y="70" />
+        <di:waypoint x="325" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_IS_Plan_To_Lint_di" bpmnElement="Flow_IS_Plan_To_Lint">
+        <di:waypoint x="425" y="70" />
+        <di:waypoint x="475" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_IS_Lint_To_GW_di" bpmnElement="Flow_IS_Lint_To_GW">
+        <di:waypoint x="575" y="70" />
+        <di:waypoint x="650" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_IS_Lint_Passed_di" bpmnElement="Flow_IS_Lint_Passed">
+        <di:waypoint x="700" y="70" />
+        <di:waypoint x="775" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_IS_Lint_Failed_di" bpmnElement="Flow_IS_Lint_Failed">
+        <di:waypoint x="675" y="95" />
+        <di:waypoint x="675" y="140" />
+        <di:waypoint x="375" y="140" />
+        <di:waypoint x="375" y="110" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_IS_Migrate_To_Review_di" bpmnElement="Flow_IS_Migrate_To_Review">
+        <di:waypoint x="875" y="70" />
+        <di:waypoint x="925" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_IS_Review_To_GW_di" bpmnElement="Flow_IS_Review_To_GW">
+        <di:waypoint x="1025" y="70" />
+        <di:waypoint x="1100" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_IS_Review_Approve_di" bpmnElement="Flow_IS_Review_Approve">
+        <di:waypoint x="1150" y="70" />
+        <di:waypoint x="1257" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_IS_Review_Revise_di" bpmnElement="Flow_IS_Review_Revise">
+        <di:waypoint x="1125" y="95" />
+        <di:waypoint x="1125" y="140" />
+        <di:waypoint x="225" y="140" />
+        <di:waypoint x="225" y="110" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_IS_Review_Continue_di" bpmnElement="Flow_IS_Review_Continue">
+        <di:waypoint x="1125" y="95" />
+        <di:waypoint x="1125" y="140" />
+        <di:waypoint x="225" y="140" />
+        <di:waypoint x="225" y="110" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

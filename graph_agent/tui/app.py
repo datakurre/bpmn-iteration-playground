@@ -78,14 +78,16 @@ class GraphAgentApp(App):  # type: ignore
     """Textual TUI for graph-agent orchestration platform."""
 
     CSS = TUI_CSS
-    TITLE = "graph-agent"
-    SUB_TITLE = "BPMN Agent Orchestration"
+    TITLE = "bpmn"
+    SUB_TITLE = "Durable Agent Sessions · SpiffWorkflow"
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        ("1", "goto_runs", "Runs"),
+        ("1", "goto_sessions", "Sessions"),
         ("2", "goto_inbox", "Inbox"),
-        ("3", "goto_start", "Start"),
+        ("3", "goto_runs", "Runs"),
         ("4", "goto_logs", "Logs"),
+        ("ctrl+p", "open_palette", "Commands"),
+        ("ctrl+n", "new_session", "New Session"),
         ("q", "quit", "Quit"),
     ]
 
@@ -100,10 +102,29 @@ class GraphAgentApp(App):  # type: ignore
         self.workspace = workspace
 
     def on_mount(self) -> None:
-        from graph_agent.tui.screens.runs import RunsScreen
+        from graph_agent.tui.screens.session_picker import SessionPickerScreen
 
-        self.install_screen(RunsScreen(), name="runs")
-        self.push_screen("runs")
+        self.install_screen(SessionPickerScreen(), name="sessions")
+        self.push_screen("sessions")
+
+    def action_goto_sessions(self) -> None:
+        from graph_agent.tui.screens.session_picker import SessionPickerScreen
+
+        self.install_screen(SessionPickerScreen(), name="sessions")
+        self.switch_screen("sessions")
+
+    def action_new_session(self) -> None:
+        from graph_agent.tui.screens.session_picker import SessionPickerScreen
+
+        picker = SessionPickerScreen()
+        self.install_screen(picker, name="sessions")
+        self.switch_screen("sessions")
+        self.run_worker(picker.action_new_session())
+
+    def action_open_palette(self) -> None:
+        from graph_agent.tui.screens.command_palette import CommandPaletteModal
+
+        self.push_screen(CommandPaletteModal())
 
     def action_goto_runs(self) -> None:
         from graph_agent.tui.screens.runs import RunsScreen

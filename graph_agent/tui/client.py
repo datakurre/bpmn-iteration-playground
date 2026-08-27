@@ -154,6 +154,11 @@ class DaemonClient:
         resp.raise_for_status()
         return cast(dict[str, Any], resp.json())
 
+    async def get_diff(self, workflow_id: str) -> dict[str, Any]:
+        resp = await self._client.get(f"/instance/{workflow_id}/diff")
+        resp.raise_for_status()
+        return cast(dict[str, Any], resp.json())
+
     def tail_logs(self, max_lines: int = 150) -> str:
         """Read recent daemon logs from disk."""
         if not self.workspace:

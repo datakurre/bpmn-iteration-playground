@@ -244,6 +244,17 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
             headers={"Content-Disposition": f'inline; filename="{Path(path).name}"'},
         )
 
+    @router.get("/instance/{workflow_id}/diff", tags=["Instance"], summary="Get git worktree diff for instance")
+    async def instance_diff(
+        workflow_id: str,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
+    ) -> dict[str, Any]:
+        try:
+            get_service().state(workflow_id)
+        except WorkflowNotFoundError as exc:
+            raise HTTPException(404, "workflow not found") from exc
+        return await get_service().get_diff(workflow_id)
+
     @router.get("/instance/{workflow_id}/form/{task_id}", tags=["Instance"], summary="Get FormJS schema for task")
     async def instance_form(
         workflow_id: str,

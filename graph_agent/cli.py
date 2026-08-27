@@ -458,6 +458,32 @@ def _cmd_merge(workspace_root: Path | None, run_id: str) -> None:
         print(f"Error: {exc}")
 
 
+def _cmd_diff(workspace_root: Path | None, run_id: str) -> None:
+    workspace = Workspace.discover(workspace_root)
+    info = read_runtime_file(workspace)
+    if info is None or not is_daemon_alive(info):
+        print(f"No daemon running for {workspace.root}. Run `graph-agent serve` first.")
+        return
+    import httpx
+    try:
+        resp = httpx.get(
+            f"{info.url}/instance/{run_id}/diff",
+            headers={"X-Admin-Token": info.token},
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        diff_text = data.get("diff", "")
+        if not diff_text.strip():
+            print(f"No uncommitted changes in worktree for run {run_id}.")
+            return
+        print(diff_text)
+    except httpx.HTTPStatusError as exc:
+        print(f"Error getting diff: {exc.response.text}")
+    except Exception as exc:
+        print(f"Error: {exc}")
+
+
 def _stream_logs(info_url: str, info_token: str, run_id: str) -> None:
     import json
 
@@ -632,6 +658,10 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
     add_workspace_flag(p_merge)
     p_merge.add_argument("run_id", help="Workflow run ID")
 
+    p_diff = sub.add_parser("diff", help="View git worktree diff of a workflow run")
+    add_workspace_flag(p_diff)
+    p_diff.add_argument("run_id", help="Workflow run ID")
+
     p_logs = sub.add_parser("logs", help="View or follow logs of a workflow run")
     add_workspace_flag(p_logs)
     p_logs.add_argument("run_id", help="Workflow run ID")
@@ -669,6 +699,8 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
         _cmd_cancel(args.workspace, args.run_id)
     elif args.command == "merge":
         _cmd_merge(args.workspace, args.run_id)
+    elif args.command == "diff":
+        _cmd_diff(args.workspace, args.run_id)
     elif args.command == "logs":
         _cmd_logs(args.workspace, args.run_id, getattr(args, "follow", False))
     elif args.command == "serve":

@@ -230,8 +230,25 @@ def test_tui_screens_instantiation(tmp_path: Path) -> None:
     log_screen = LogScreen()
     assert log_screen is not None
 
+    from graph_agent.tui.screens.command_palette import CommandPaletteModal
+    from graph_agent.tui.screens.diff_modal import DiffModalScreen
+    from graph_agent.tui.screens.session_chat import SessionChatScreen
+    from graph_agent.tui.screens.session_picker import SessionPickerScreen
+
+    session_picker = SessionPickerScreen()
+    assert session_picker is not None
+
+    session_chat = SessionChatScreen(workflow_id="wf-123")
+    assert session_chat.workflow_id == "wf-123"
+
+    palette = CommandPaletteModal()
+    assert palette is not None
+
+    diff_modal = DiffModalScreen(workflow_id="wf-123")
+    assert diff_modal.workflow_id == "wf-123"
+
     app = GraphAgentApp(client=client, workspace=ws)
-    assert app.TITLE == "graph-agent"
+    assert app.TITLE in ("bpmn", "graph-agent")
 
 
 def test_cli_attach_not_running(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

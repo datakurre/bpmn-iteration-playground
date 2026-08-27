@@ -59,7 +59,7 @@ function validateCamundaRules(rootElement, options = {}) {
             'service-task-harness'
           );
         } else {
-          const validHarnesses = ['pi_agent', 'shell', 'sandbox_pi', 'sandbox_shell', 'mock_agent'];
+          const validHarnesses = ['pi_agent', 'shell', 'sandbox_pi', 'sandbox_shell', 'mock_agent', 'graph_extend', 'mock'];
           if (!validHarnesses.includes(harnessType)) {
             addIssue(
               el.id,

@@ -1166,3 +1166,56 @@ class WorkflowService:
                 resumed += 1
         return resumed
 
+    async def get_diff(self, workflow_id: str) -> dict[str, Any]:
+        """Retrieve git diff of changes made in the instance worktree."""
+        workflow_id = self._get_root_workflow_id(workflow_id)
+        if not self.workspace or not self.workspace.is_git:
+            return {"diff": "", "stat": "", "files_changed": [], "status": "no_git"}
+
+        worktree_path = self.workspace.worktrees_dir / workflow_id
+        if not worktree_path.is_dir():
+            return {"diff": "", "stat": "", "files_changed": [], "status": "no_worktree"}
+
+        import subprocess
+        res = await asyncio.to_thread(
+            subprocess.run,
+            ["git", "diff", "HEAD"],
+            cwd=str(worktree_path),
+            capture_output=True,
+            text=True,
+        )
+        diff_text = res.stdout or ""
+
+        stat_res = await asyncio.to_thread(
+            subprocess.run,
+            ["git", "diff", "--stat", "HEAD"],
+            cwd=str(worktree_path),
+            capture_output=True,
+            text=True,
+        )
+        stat_text = stat_res.stdout or ""
+
+        names_res = await asyncio.to_thread(
+            subprocess.run,
+            ["git", "diff", "--name-status", "HEAD"],
+            cwd=str(worktree_path),
+            capture_output=True,
+            text=True,
+        )
+        files = []
+        for line in (names_res.stdout or "").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(maxsplit=1)
+            if len(parts) == 2:
+                status_code, filename = parts
+                files.append({"status": status_code, "path": filename})
+
+        return {
+            "diff": diff_text,
+            "stat": stat_text,
+            "files_changed": files,
+            "status": "ok",
+        }
+
