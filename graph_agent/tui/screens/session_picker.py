@@ -33,6 +33,9 @@ class SessionPickerScreen(Screen):  # type: ignore
         ("n", "new_session", "New Session"),
         ("d", "view_detail", "Run Detail"),
         ("m", "merge_session", "Merge"),
+        ("w", "open_browser", "Web UI (Dev)"),
+        ("c", "cancel_session", "Cancel"),
+        ("x", "delete_session", "Purge"),
         ("r", "refresh_sessions", "Refresh"),
         ("q", "quit", "Quit"),
     ]
@@ -49,7 +52,7 @@ class SessionPickerScreen(Screen):  # type: ignore
             yield Header(show_clock=True)
             with Container(id="picker-container"):
                 yield Static(
-                    "[bold cyan]BPMN Agent Session Hub[/bold cyan]  (Enter: Open/Resume, n: New Session, d: Detail, m: Merge)",
+                    "[bold cyan]BPMN Agent Session Hub[/bold cyan]  (Enter: Open, n: New, d: Detail, w: Web UI, m: Merge, c: Cancel, x: Purge)",
                     id="picker-title",
                 )
                 yield DataTable(id="sessions-table", cursor_type="row")
@@ -223,6 +226,55 @@ class SessionPickerScreen(Screen):  # type: ignore
             await self.action_refresh_sessions()
         except Exception as exc:
             self.notify(f"Failed to merge session: {exc}", severity="error")
+
+    async def action_cancel_session(self) -> None:
+        sid = self.get_selected_session_id()
+        if not sid or sid == "__NEW_SESSION__":
+            return
+        client = getattr(self.app, "client", None)
+        if not client:
+            return
+        try:
+            res = await client.cancel_run(sid)
+            self.notify(f"Cancelled session {sid[:8]} (status: {res.get('status')})", severity="information")
+            await self.action_refresh_sessions()
+        except Exception as exc:
+            self.notify(f"Failed to cancel session: {exc}", severity="error")
+
+    async def action_delete_session(self) -> None:
+        sid = self.get_selected_session_id()
+        if not sid or sid == "__NEW_SESSION__":
+            return
+        client = getattr(self.app, "client", None)
+        if not client:
+            return
+        try:
+            await client.delete_run(sid)
+            self.notify(f"Purged session {sid[:8]}", severity="information")
+            await self.action_refresh_sessions()
+        except Exception as exc:
+            self.notify(f"Failed to purge session: {exc}", severity="error")
+
+    def action_open_browser(self) -> None:
+        import os
+        import webbrowser
+
+        client = getattr(self.app, "client", None)
+        base_url = getattr(client, "base_url", None) or "http://127.0.0.1:8080"
+        token = getattr(client, "token", None) or os.environ.get("ADMIN_TOKEN")
+        query = "?dev=1" + (f"&token={token}" if token else "")
+
+        sid = self.get_selected_session_id()
+        url = (
+            f"{base_url}/instance/{sid}{query}"
+            if sid and sid != "__NEW_SESSION__"
+            else f"{base_url}/{query}"
+        )
+        try:
+            webbrowser.open(url)
+            self.notify(f"Opened Web Studio in browser ({url})", severity="information")
+        except Exception as exc:
+            self.notify(f"Failed to open browser: {exc}", severity="error")
 
     async def on_button_pressed(self, event: Any) -> None:
         btn_id = getattr(event.button, "id", "")

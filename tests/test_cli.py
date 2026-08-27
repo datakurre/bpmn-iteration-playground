@@ -254,8 +254,8 @@ def test_cli_open_launches_browser_when_running(tmp_path: Path, capsys) -> None:
     ):
         main(["open", "--workspace", str(tmp_path)])
 
-    mock_open.assert_called_once_with("http://127.0.0.1:55555?token=test-token")
-    assert "Opened http://127.0.0.1:55555?token=test-token" in capsys.readouterr().out
+    mock_open.assert_called_once_with("http://127.0.0.1:55555?dev=1&token=test-token")
+    assert "Opened http://127.0.0.1:55555?dev=1&token=test-token" in capsys.readouterr().out
 
 
 def test_cli_edit_launches_editor_with_token(tmp_path: Path, capsys) -> None:
@@ -269,8 +269,8 @@ def test_cli_edit_launches_editor_with_token(tmp_path: Path, capsys) -> None:
     ):
         main(["edit", "interactive_session", "--workspace", str(tmp_path)])
 
-    mock_open.assert_called_once_with("http://127.0.0.1:55555/editor/interactive_session?token=test-token")
-    assert "Opened http://127.0.0.1:55555/editor/interactive_session?token=test-token" in capsys.readouterr().out
+    mock_open.assert_called_once_with("http://127.0.0.1:55555/editor/interactive_session?dev=1&token=test-token")
+    assert "Opened http://127.0.0.1:55555/editor/interactive_session?dev=1&token=test-token" in capsys.readouterr().out
 
 
 def test_cli_open_reports_nothing_running(tmp_path: Path, capsys) -> None:
@@ -321,3 +321,27 @@ def test_cli_serve_prints_graph_agent_banner(tmp_path: Path, capsys, _restore_ad
         main(["serve", "--no-tui", "--workspace", str(tmp_path)])
     out = capsys.readouterr().out
     assert f"graph-agent · {tmp_path.name} · http://127.0.0.1:" in out
+
+
+def test_cli_cancel_and_purge(tmp_path: Path, capsys) -> None:
+    workspace = Workspace.discover(tmp_path)
+    workspace.ensure()
+    write_runtime_file(workspace, _fake_runtime_info())
+
+    with (
+        patch("graph_agent.cli.is_daemon_alive", return_value=True),
+        patch("httpx.post") as mock_post,
+        patch("httpx.delete") as mock_delete,
+    ):
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = {"status": "cancelled"}
+        main(["cancel", "wf-123", "--workspace", str(tmp_path)])
+        assert "Cancelled run wf-123 (status: cancelled)" in capsys.readouterr().out
+
+        mock_delete.return_value.status_code = 200
+        mock_delete.return_value.json.return_value = {"deleted": "wf-123"}
+        main(["purge", "wf-123", "--workspace", str(tmp_path)])
+        assert "Purged run wf-123" in capsys.readouterr().out
+
+        main(["delete", "wf-123", "--workspace", str(tmp_path)])
+        assert "Purged run wf-123" in capsys.readouterr().out

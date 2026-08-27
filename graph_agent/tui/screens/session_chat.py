@@ -36,6 +36,8 @@ class SessionChatScreen(Screen):  # type: ignore
         ("ctrl+e", "open_editor", "Modeler"),
         ("w", "open_browser", "Web UI"),
         ("m", "merge_session", "Merge"),
+        ("c", "cancel_session", "Cancel"),
+        ("x", "delete_session", "Purge"),
         ("t", "retry_failed", "Retry"),
         ("r", "refresh_session", "Refresh"),
     ]
@@ -261,6 +263,10 @@ class SessionChatScreen(Screen):  # type: ignore
             self.action_open_browser()
         elif cmd in ("retry", "t"):
             self.run_worker(self.action_retry_failed())
+        elif cmd in ("cancel", "stop", "c"):
+            self.run_worker(self.action_cancel_session())
+        elif cmd in ("purge", "delete", "x"):
+            self.run_worker(self.action_delete_session())
         elif cmd in ("merge", "m"):
             if hasattr(self, "run_worker"):
                 self.run_worker(self.action_merge_session())
@@ -270,7 +276,7 @@ class SessionChatScreen(Screen):  # type: ignore
                 self._bg_task = asyncio.create_task(self.action_merge_session())
         elif cmd in ("help", "?"):
             self.notify(
-                "Slash commands: /diff, /retry, /merge, /web, /editor, /palette, /status",
+                "Slash commands: /diff, /retry, /cancel, /purge, /merge, /web, /editor, /palette, /status",
                 severity="information",
             )
         elif cmd == "status":
@@ -278,7 +284,7 @@ class SessionChatScreen(Screen):  # type: ignore
             self.notify(f"Session {self.workflow_id[:8]}: {st}", severity="information")
         else:
             self.notify(
-                f"Unknown command: /{cmd}. Valid: /diff, /retry, /merge, /web, /editor, /palette, /help",
+                f"Unknown command: /{cmd}. Valid: /diff, /retry, /cancel, /purge, /merge, /web, /editor, /palette, /help",
                 severity="warning",
             )
 
@@ -301,12 +307,19 @@ class SessionChatScreen(Screen):  # type: ignore
         self.notify(f"Opened {url} in browser", severity="information")
 
     def action_open_browser(self) -> None:
+        import os
         import webbrowser
 
         client = getattr(self.app, "client", None)
-        url = f"{client.base_url}/instance/{self.workflow_id}" if client else f"http://127.0.0.1:8080/instance/{self.workflow_id}"
-        webbrowser.open(url)
-        self.notify("Opened Web Studio in browser", severity="information")
+        base_url = getattr(client, "base_url", None) or "http://127.0.0.1:8080"
+        token = getattr(client, "token", None) or os.environ.get("ADMIN_TOKEN")
+        query = "?dev=1" + (f"&token={token}" if token else "")
+        url = f"{base_url}/instance/{self.workflow_id}{query}"
+        try:
+            webbrowser.open(url)
+            self.notify(f"Opened Web Studio in browser ({url})", severity="information")
+        except Exception as exc:
+            self.notify(f"Failed to open browser: {exc}", severity="error")
 
     async def action_merge_session(self) -> None:
         client = getattr(self.app, "client", None)
@@ -339,6 +352,28 @@ class SessionChatScreen(Screen):  # type: ignore
             await self.action_refresh_session()
         except Exception as exc:
             self.notify(f"Retry error: {exc}", severity="error")
+
+    async def action_cancel_session(self) -> None:
+        client = getattr(self.app, "client", None)
+        if not client:
+            return
+        try:
+            res = await client.cancel_run(self.workflow_id)
+            self.notify(f"Cancelled session {self.workflow_id[:8]} (status: {res.get('status')})", severity="information")
+            await self.action_refresh_session()
+        except Exception as exc:
+            self.notify(f"Cancel error: {exc}", severity="error")
+
+    async def action_delete_session(self) -> None:
+        client = getattr(self.app, "client", None)
+        if not client:
+            return
+        try:
+            await client.delete_run(self.workflow_id)
+            self.notify(f"Purged session {self.workflow_id[:8]}", severity="information")
+            self.app.pop_screen()
+        except Exception as exc:
+            self.notify(f"Purge error: {exc}", severity="error")
 
     def action_go_back(self) -> None:
         self.app.pop_screen()

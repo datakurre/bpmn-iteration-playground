@@ -35,9 +35,11 @@ class RunsScreen(Screen):  # type: ignore
         ("i", "goto_inbox", "Inbox"),
         ("s", "start_run", "Start"),
         ("e", "open_editor", "Editor"),
+        ("w", "open_browser", "Web UI (Dev)"),
         ("l", "goto_logs", "Logs"),
         ("r", "refresh_runs", "Refresh"),
         ("c", "cancel_run", "Cancel"),
+        ("x", "delete_run", "Purge"),
         ("m", "merge_run", "Merge"),
         ("q", "quit", "Quit"),
     ]
@@ -54,7 +56,7 @@ class RunsScreen(Screen):  # type: ignore
             yield Header(show_clock=True)
             with Container(id="runs-container"):
                 yield Static(
-                    "[b]Workflow Runs[/b]  (Enter/d: Detail, s: Start, i: Inbox, m: Merge, c: Cancel)",
+                    "[b]Workflow Runs[/b]  (Enter/d: Detail, s: Start, w: Web UI, i: Inbox, m: Merge, c: Cancel, x: Purge)",
                     id="runs-title",
                 )
                 yield DataTable(id="runs-table", cursor_type="row")
@@ -156,11 +158,26 @@ class RunsScreen(Screen):  # type: ignore
         client = getattr(self.app, "client", None)
         if client:
             try:
-                await client.cancel_run(wid)
-                self.notify(f"Cancelled run {wid[:8]}", severity="information")
+                res = await client.cancel_run(wid)
+                self.notify(f"Cancelled run {wid[:8]} (status: {res.get('status')})", severity="information")
                 await self.action_refresh_runs()
             except Exception as exc:
-                self.notify(f"Failed to cancel: {exc}", severity="error")
+                self.notify(f"Failed to cancel run: {exc}", severity="error")
+
+    async def action_delete_run(self) -> None:
+        wid = self.get_selected_run_id()
+        if not wid:
+            self.notify("No run selected", severity="warning")
+            return
+        client = getattr(self.app, "client", None)
+        if not client:
+            return
+        try:
+            await client.delete_run(wid)
+            self.notify(f"Purged run {wid[:8]}", severity="information")
+            await self.action_refresh_runs()
+        except Exception as exc:
+            self.notify(f"Failed to purge run: {exc}", severity="error")
 
     async def action_merge_run(self) -> None:
         wid = self.get_selected_run_id()
@@ -199,6 +216,23 @@ class RunsScreen(Screen):  # type: ignore
         try:
             webbrowser.open(url)
             self.notify(f"Opened BPMN editor at {url}", severity="information")
+        except Exception as exc:
+            self.notify(f"Failed to open browser: {exc}", severity="error")
+
+    def action_open_browser(self) -> None:
+        import os
+        import webbrowser
+
+        client = getattr(self.app, "client", None)
+        base_url = getattr(client, "base_url", None) or "http://127.0.0.1:8080"
+        token = getattr(client, "token", None) or os.environ.get("ADMIN_TOKEN")
+        query = "?dev=1" + (f"&token={token}" if token else "")
+
+        wid = self.get_selected_run_id()
+        url = f"{base_url}/instance/{wid}{query}" if wid else f"{base_url}/{query}"
+        try:
+            webbrowser.open(url)
+            self.notify(f"Opened Web Studio in browser ({url})", severity="information")
         except Exception as exc:
             self.notify(f"Failed to open browser: {exc}", severity="error")
 

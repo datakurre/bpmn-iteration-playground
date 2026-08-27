@@ -36,6 +36,7 @@ class RunDetailScreen(Screen):  # type: ignore
         ("t", "retry_task", "Retry Task"),
         ("m", "merge_run", "Merge"),
         ("c", "cancel_run", "Cancel"),
+        ("x", "delete_run", "Purge"),
         ("w", "open_in_browser", "Web UI"),
     ]
 
@@ -209,6 +210,17 @@ class RunDetailScreen(Screen):  # type: ignore
         except Exception as exc:
             self.notify(f"Cancel error: {exc}", severity="error")
 
+    async def action_delete_run(self) -> None:
+        client = getattr(self.app, "client", None)
+        if not client:
+            return
+        try:
+            await client.delete_run(self.workflow_id)
+            self.notify(f"Purged run {self.workflow_id[:8]}", severity="information")
+            self.app.pop_screen()
+        except Exception as exc:
+            self.notify(f"Purge error: {exc}", severity="error")
+
     def action_open_in_browser(self) -> None:
         import os
         import webbrowser
@@ -225,7 +237,7 @@ class RunDetailScreen(Screen):  # type: ignore
             if runtime:
                 base_url = base_url or runtime.url
                 token = token or runtime.token
-        base_url = base_url or "http://127.0.0.1:8000"
+        base_url = base_url or "http://127.0.0.1:8080"
         token = token or os.environ.get("ADMIN_TOKEN")
         query = f"?token={token}" if token else ""
         url = f"{base_url}/instance/{self.workflow_id}{query}"

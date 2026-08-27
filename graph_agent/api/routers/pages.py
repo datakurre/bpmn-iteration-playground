@@ -20,6 +20,13 @@ def _with_auth_cookie(request: Request, response: Response) -> Response:
     )
     if token:
         response.set_cookie(key="admin_token", value=token, httponly=True, samesite="lax", path="/")
+
+    dev = request.query_params.get("dev")
+    if dev is not None:
+        if dev.lower() in ("1", "true", "yes", "on"):
+            response.set_cookie(key="dev_mode", value="1", httponly=False, samesite="lax", path="/")
+        elif dev.lower() in ("0", "false", "no", "off"):
+            response.delete_cookie(key="dev_mode", path="/")
     return response
 
 

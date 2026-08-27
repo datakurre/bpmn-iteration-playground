@@ -150,6 +150,11 @@ class DaemonClient:
         resp.raise_for_status()
         return cast(dict[str, Any], resp.json())
 
+    async def delete_run(self, workflow_id: str) -> dict[str, Any]:
+        resp = await self._client.delete(f"/instance/{workflow_id}")
+        resp.raise_for_status()
+        return cast(dict[str, Any], resp.json())
+
     async def retry_task(self, workflow_id: str, task_id: str) -> dict[str, Any]:
         resp = await self._client.post(f"/instance/{workflow_id}/retry/{task_id}")
         resp.raise_for_status()

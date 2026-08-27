@@ -87,7 +87,7 @@ class PromptBar(Container):
 
         with Horizontal(id="prompt-meta"):
             yield Static(f"[{self.mode}]", id="prompt-mode-badge")
-            yield Static("Enter: Send · Shift+Enter: Newline · /diff · /retry · /merge · /web · /help", id="prompt-hints")
+            yield Static("Enter: Send · Shift+Enter: Newline · /diff · /retry · /cancel · /purge · /help", id="prompt-hints")
         yield TextArea(id="prompt-textarea", show_line_numbers=False)
 
     def set_mode(self, mode: str, placeholder: str = "") -> None:

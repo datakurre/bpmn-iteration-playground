@@ -16,6 +16,19 @@
   {% block extra_head %}{% endblock %}
 </head>
 <body class="bg-bg text-ink font-sans antialiased min-h-screen overflow-x-hidden">
+  {% if dev_mode %}
+  <div id="dev-mode-bar" class="bg-gradient-to-r from-amber-600 via-orange-600 to-rose-600 text-white text-xs font-mono py-1 px-3 flex items-center justify-between shadow-md select-none sticky top-0 z-50">
+    <div class="flex items-center gap-2">
+      <span class="font-bold tracking-wider uppercase px-1.5 py-0.5 bg-black/40 rounded border border-white/20">🛠️ DEV MODE</span>
+      <span class="opacity-90">Live Telemetry · SSE Stream · Raw Spiff JSON · Auto-Savepoints</span>
+    </div>
+    <div class="flex items-center gap-3">
+      <span class="text-amber-200 opacity-80">{{ request.url.netloc }}</span>
+      <a href="?dev=0" class="underline hover:text-white text-[11px] opacity-80 hover:opacity-100">Exit Dev</a>
+    </div>
+  </div>
+  <script>window.__DEV_MODE__ = true;</script>
+  {% endif %}
   {% block content %}{% endblock %}
   <script src="/static/app/pages/base.js" defer></script>
   {% block scripts %}{% endblock %}

@@ -19,6 +19,7 @@ from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 
 from graph_agent.auth import Role, require_role
 from graph_agent.models import (
+    DeleteInstanceResponse,
     ExtendRequest,
     ForkRequest,
     MergeResponse,
@@ -35,6 +36,20 @@ from graph_agent.workspace_strategy import WorkspaceSnapshotUnsupportedError
 
 def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # noqa: C901, PLR0915 -- FastAPI's route-factory pattern nests every route in this one function by convention; splitting it up would fight the framework, not the complexity
     router = APIRouter()
+
+    @router.delete(
+        "/instance/{workflow_id}",
+        response_model=DeleteInstanceResponse,
+        tags=["Instance"],
+        summary="Delete and purge workflow instance",
+    )
+    async def delete_instance_endpoint(
+        workflow_id: str,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR),
+    ) -> dict[str, object]:
+        if not await get_service().delete_instance(workflow_id):
+            raise HTTPException(404, "workflow not found")
+        return {"deleted": workflow_id}
 
     @router.get("/instance/{workflow_id}/events", tags=["Instance"], summary="Get audit event log for workflow")
     async def instance_events(

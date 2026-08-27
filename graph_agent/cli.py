@@ -221,14 +221,40 @@ def _cmd_status(workspace_root: Path | None) -> None:
     print(f"graph-agent · {workspace.root.name} · {info.url}")
 
 
-def _cmd_open(workspace_root: Path | None, editor: str | None = None) -> None:
+def _cmd_open(
+    workspace_root: Path | None,
+    editor: str | None = None,
+    target: str | None = None,
+    dev: bool = True,
+) -> None:
     workspace = Workspace.discover(workspace_root)
     info = read_runtime_file(workspace)
     if info is None or not is_daemon_alive(info):
         print(f"No daemon running for {workspace.root}. Run `graph-agent serve` first.")
         return
-    path = (f"/editor/{editor}" if editor else "/editor") if editor is not None else ""
-    query = f"?token={info.token}" if info.token else ""
+    path = ""
+    if editor is not None:
+        path = f"/editor/{editor}" if editor else "/editor"
+    elif target:
+        if target.startswith("/"):
+            path = target
+        elif target in ("editor", "modeler"):
+            path = "/editor"
+        elif target in ("dashboard", "runs"):
+            path = "/"
+        elif target in ("history", "admin"):
+            path = f"/{target}"
+        elif target.endswith(".bpmn"):
+            path = f"/editor/{target}"
+        else:
+            path = f"/instance/{target}"
+
+    query_parts: list[str] = []
+    if dev:
+        query_parts.append("dev=1")
+    if info.token:
+        query_parts.append(f"token={info.token}")
+    query = f"?{'&'.join(query_parts)}" if query_parts else ""
 
     url = f"{info.url}{path}{query}"
     webbrowser.open(url)
@@ -430,6 +456,28 @@ def _cmd_cancel(workspace_root: Path | None, run_id: str) -> None:
         print(f"Cancelled run {run_id} (status: {data.get('status')})")
     except httpx.HTTPStatusError as exc:
         print(f"Error cancelling run: {exc.response.text}")
+    except Exception as exc:
+        print(f"Error: {exc}")
+
+
+def _cmd_delete(workspace_root: Path | None, run_id: str) -> None:
+    workspace = Workspace.discover(workspace_root)
+    info = read_runtime_file(workspace)
+    if info is None or not is_daemon_alive(info):
+        print(f"No daemon running for {workspace.root}. Run `graph-agent serve` first.")
+        return
+    import httpx
+
+    try:
+        resp = httpx.delete(
+            f"{info.url}/instance/{run_id}",
+            headers={"X-Admin-Token": info.token},
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        print(f"Purged run {run_id}")
+    except httpx.HTTPStatusError as exc:
+        print(f"Error purging run: {exc.response.text}")
     except Exception as exc:
         print(f"Error: {exc}")
 
@@ -640,6 +688,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
 
     p_open = sub.add_parser("open", help="Open the running daemon in a browser")
     add_workspace_flag(p_open)
+    p_open.add_argument("target", nargs="?", default=None, help="Workflow run ID, template name, or page to open")
     p_open.add_argument(
         "--editor",
         nargs="?",
@@ -647,6 +696,8 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
         metavar="TEMPLATE",
         help="Open the BPMN editor page instead of the dashboard (optionally with a specific template)",
     )
+    p_open.add_argument("--dev", action="store_true", default=True, help="Open in development mode (default: True)")
+    p_open.add_argument("--no-dev", action="store_false", dest="dev", help="Disable development mode")
 
     p_edit = sub.add_parser("edit", help="Open the BPMN editor in a browser (shortcut for `open --editor`)")
     add_workspace_flag(p_edit)
@@ -676,6 +727,14 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
     add_workspace_flag(p_cancel)
     p_cancel.add_argument("run_id", help="Workflow run ID")
 
+    p_purge = sub.add_parser("purge", help="Delete and purge a workflow run")
+    add_workspace_flag(p_purge)
+    p_purge.add_argument("run_id", help="Workflow run ID")
+
+    p_delete = sub.add_parser("delete", help="Delete and purge a workflow run (alias for purge)")
+    add_workspace_flag(p_delete)
+    p_delete.add_argument("run_id", help="Workflow run ID")
+
     p_merge = sub.add_parser("merge", help="Merge a completed workflow run branch")
     add_workspace_flag(p_merge)
     p_merge.add_argument("run_id", help="Workflow run ID")
@@ -699,9 +758,14 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
     elif args.command == "status":
         _cmd_status(args.workspace)
     elif args.command == "open":
-        _cmd_open(args.workspace, editor=getattr(args, "editor", None))
+        _cmd_open(
+            args.workspace,
+            editor=getattr(args, "editor", None),
+            target=getattr(args, "target", None),
+            dev=getattr(args, "dev", True),
+        )
     elif args.command == "edit":
-        _cmd_open(args.workspace, editor=getattr(args, "template", None) or "")
+        _cmd_open(args.workspace, editor=getattr(args, "template", None) or "", dev=True)
     elif args.command == "stop":
         _cmd_stop(args.workspace)
     elif args.command == "run":
@@ -719,6 +783,8 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
         _cmd_show(args.workspace, args.run_id)
     elif args.command == "cancel":
         _cmd_cancel(args.workspace, args.run_id)
+    elif args.command in ("purge", "delete"):
+        _cmd_delete(args.workspace, args.run_id)
     elif args.command == "merge":
         _cmd_merge(args.workspace, args.run_id)
     elif args.command == "diff":
