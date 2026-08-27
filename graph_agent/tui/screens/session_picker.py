@@ -78,7 +78,13 @@ class SessionPickerScreen(Screen):  # type: ignore
         try:
             from textual.widgets import DataTable
 
-            self.sessions = await client.list_runs()
+            raw_sessions = await client.list_runs()
+            # Sort sessions by updated_at descending and store sorted list
+            self.sessions = sorted(
+                raw_sessions,
+                key=lambda s: s.get("updated_at") or s.get("created_at") or "",
+                reverse=True,
+            )
             table = self.query_one("#sessions-table", DataTable)
             table.clear()
 
@@ -92,14 +98,7 @@ class SessionPickerScreen(Screen):  # type: ignore
                 key="__NEW_SESSION__",
             )
 
-            # Sort sessions by updated_at descending
-            sorted_sessions = sorted(
-                self.sessions,
-                key=lambda s: s.get("updated_at") or s.get("created_at") or "",
-                reverse=True,
-            )
-
-            for s in sorted_sessions:
+            for s in self.sessions:
                 wid = str(s.get("workflow_id") or s.get("id") or "")
                 status = s.get("status", "unknown")
                 pid = s.get("process_id", "workflow")
@@ -153,7 +152,12 @@ class SessionPickerScreen(Screen):  # type: ignore
             if table.cursor_row is not None:
                 if table.cursor_row == 0:
                     return "__NEW_SESSION__"
-                # Row index matches sorted sessions
+                try:
+                    row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
+                    if row_key and row_key.value:
+                        return str(row_key.value)
+                except Exception:
+                    pass
                 actual_idx = table.cursor_row - 1
                 if 0 <= actual_idx < len(self.sessions):
                     s = self.sessions[actual_idx]

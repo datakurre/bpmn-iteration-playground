@@ -113,28 +113,33 @@ class RunDetailScreen(Screen):  # type: ignore
             # Update tasks table
             tasks_table = self.query_one("#detail-tasks-table", DataTable)
             tasks_table.clear()
-            for t in self.run_data.get("tasks", []):
-                tid = t.get("id", "")
-                tname = t.get("name", "Task")
-                ttype = t.get("type", "")
-                tstate = t.get("state", "")
+            tasks = self.run_data.get("tasks", [])
+            for t in tasks:
+                tid = str(t.get("id", ""))
+                tname = str(t.get("name") or t.get("bpmn_name") or "Task")
+                ttype = str(t.get("type", ""))
+                tstate = str(t.get("state", ""))
                 attempts = str(t.get("attempts", 1))
-                failure = t.get("failure_reason") or "-"
+                failure = str(t.get("failure_reason") or "-")
                 tasks_table.add_row(tid[:8], tname, ttype, tstate, attempts, failure, key=tid)
 
             # Update savepoints table
             sp_table = self.query_one("#detail-savepoints-table", DataTable)
             sp_table.clear()
             for sp in self.run_data.get("save_points", []):
-                spid = sp.get("id", "")
-                phase = sp.get("phase", "")
-                tname = sp.get("task_name") or sp.get("task_id") or "-"
+                spid = str(sp.get("id", ""))
+                phase = str(sp.get("phase", ""))
+                tname = str(sp.get("task_name") or sp.get("task_id") or "-")
                 created = (sp.get("created_at") or "")[:19].replace("T", " ")
-                sp_table.add_row(spid[:8], phase, str(tname), created, key=spid)
+                sp_table.add_row(spid[:8], phase, tname, created, key=spid)
 
             # Update variables JSON
             wf_data = self.run_data.get("data", {})
-            self.query_one("#detail-variables-json", Static).update(json.dumps(wf_data, indent=2))
+            try:
+                formatted_json = json.dumps(wf_data, indent=2, default=str)
+            except Exception:
+                formatted_json = str(wf_data)
+            self.query_one("#detail-variables-json", Static).update(formatted_json)
 
             # Update rich log with latest task output if present
             rich_log = self.query_one("#detail-rich-log", RichLog)
@@ -144,17 +149,18 @@ class RunDetailScreen(Screen):  # type: ignore
                 rich_log.write("No turn execution outputs recorded yet.")
             else:
                 for jid, job in jobs.items():
-                    jname = job.get("task_name", jid[:8])
-                    jstatus = job.get("status", "")
+                    jname = str(job.get("task_name", jid[:8]))
+                    jstatus = str(job.get("status", ""))
                     rich_log.write(f"[bold cyan]== Task: {jname} ({jstatus}) ==[/bold cyan]")
                     if job.get("prompt"):
-                        rich_log.write(f"[yellow]Prompt:[/yellow] {job.get('prompt')[:300]}...")
+                        prompt_str = str(job.get("prompt", ""))
+                        rich_log.write(f"[yellow]Prompt:[/yellow] {prompt_str[:300]}...")
                     if job.get("text"):
-                        rich_log.write(f"[green]Output:[/green]\n{job.get('text')}")
+                        rich_log.write(f"[green]Output:[/green]\n{job.get('text')!s}")
                     if job.get("stderr"):
-                        rich_log.write(f"[red]Stderr:[/red]\n{job.get('stderr')}")
+                        rich_log.write(f"[red]Stderr:[/red]\n{job.get('stderr')!s}")
                     if job.get("failure_reason"):
-                        rich_log.write(f"[bold red]Failure:[/bold red] {job.get('failure_reason')}")
+                        rich_log.write(f"[bold red]Failure:[/bold red] {job.get('failure_reason')!s}")
                     rich_log.write("\n" + "-" * 50 + "\n")
 
         except Exception as exc:

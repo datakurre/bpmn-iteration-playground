@@ -118,9 +118,16 @@ class RunsScreen(Screen):  # type: ignore
     def get_selected_run_id(self) -> str | None:
         try:
             table = self.query_one("#runs-table", DataTable)
-            if table.cursor_row is not None and table.cursor_row < len(self.runs):
-                r = self.runs[table.cursor_row]
-                return str(r.get("workflow_id") or r.get("id", ""))
+            if table.cursor_row is not None:
+                try:
+                    row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
+                    if row_key and row_key.value:
+                        return str(row_key.value)
+                except Exception:
+                    pass
+                if table.cursor_row < len(self.runs):
+                    r = self.runs[table.cursor_row]
+                    return str(r.get("workflow_id") or r.get("id", ""))
         except Exception:
             pass
         return None

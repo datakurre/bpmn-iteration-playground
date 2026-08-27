@@ -966,7 +966,13 @@ class WorkflowStore:
     def load(self, workflow_id: str) -> dict[str, Any] | None:
         with self.db.transaction() as connection:
             root = connection.root()
-            record = root["workflows"].get(workflow_id)
+            workflows = root["workflows"]
+            record = workflows.get(workflow_id)
+            if record is None and len(workflow_id) >= 6:
+                for k, v in workflows.items():
+                    if k.startswith(workflow_id):
+                        record = v
+                        break
             if record is None:
                 return None
             result = record.to_dict() if hasattr(record, "to_dict") else dict(record)
@@ -1136,19 +1142,25 @@ class WorkflowStore:
         with self.db.transaction() as connection:
             root = connection.root()
             workflows = root["workflows"]
-            if workflow_id not in workflows:
+            target_id = workflow_id
+            if target_id not in workflows and len(target_id) >= 6:
+                for k in list(workflows.keys()):
+                    if k.startswith(target_id):
+                        target_id = k
+                        break
+            if target_id not in workflows:
                 return False
-            wf = workflows[workflow_id]
+            wf = workflows[target_id]
             points = getattr(wf, "save_points", wf.get("save_points", []) if isinstance(wf, dict) else []) or []
             for p in points:
                 p_id = p.get("id") if isinstance(p, dict) else getattr(p, "id", None)
                 if p_id and p_id in root["save_points"]:
                     del root["save_points"][p_id]
-            del workflows[workflow_id]
-            if workflow_id in root["metadata"]:
-                del root["metadata"][workflow_id]
-            if workflow_id in root["projects"]:
-                del root["projects"][workflow_id]
+            del workflows[target_id]
+            if target_id in root["metadata"]:
+                del root["metadata"][target_id]
+            if target_id in root["projects"]:
+                del root["projects"][target_id]
             return True
 
     @_retry_on_conflict()
