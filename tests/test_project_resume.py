@@ -65,7 +65,9 @@ async def test_resume_dispatches_ready_tasks(tmp_path: Path) -> None:
 
         # Start instance but don't await jobs (simulate daemon being stopped right after start)
         wf_id, workflow, res_pid = service.runner.start(bpmn_file, None, {})
-        record = service.runner.record(wf_id, workflow, bpmn_file, res_pid, "waiting_pi", jobs={}, save_points=[], events=[])
+        record = service.runner.record(
+            wf_id, workflow, bpmn_file, res_pid, "waiting_pi", jobs={}, save_points=[], events=[]
+        )
         service.store.save(wf_id, record)
 
         # Simulate restart: create new service and run recovery + resume

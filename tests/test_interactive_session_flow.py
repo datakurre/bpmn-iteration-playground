@@ -114,6 +114,7 @@ async def test_interactive_session_lifecycle(tmp_path: Path) -> None:
 def test_diff_api_endpoint(tmp_path: Path) -> None:
     """Test GET /instance/{id}/diff endpoint returns expected schema."""
     from graph_agent.agents_root import Workspace
+
     ws = Workspace.discover(tmp_path)
     app = create_app(workspace=ws)
     client = TestClient(app)
@@ -137,14 +138,16 @@ def test_tui_stepper_widget() -> None:
     from graph_agent.tui.widgets.bpmn_stepper import BpmnStepper
 
     stepper = BpmnStepper()
-    stepper.update_state({
-        "workflow_id": "test12345",
-        "status": "running",
-        "tasks": [
-            {"id": "t1", "name": "Prompt User", "state": "COMPLETED"},
-            {"id": "t2", "name": "Formulate Execution Plan & Graph", "state": "STARTED"},
-        ],
-    })
+    stepper.update_state(
+        {
+            "workflow_id": "test12345",
+            "status": "running",
+            "tasks": [
+                {"id": "t1", "name": "Prompt User", "state": "COMPLETED"},
+                {"id": "t2", "name": "Formulate Execution Plan & Graph", "state": "STARTED"},
+            ],
+        }
+    )
     rendered = stepper.render()
     assert rendered is not None
 

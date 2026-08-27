@@ -157,7 +157,12 @@ def test_replace_spec_preserves_task_state() -> None:
 
     v2 = linear_bpmn(
         "Process_1",
-        [("Task_1", "userTask", {}), ("Task_2", "userTask", {}), ("Task_3", "userTask", {}), ("Task_4", "userTask", {})],
+        [
+            ("Task_1", "userTask", {}),
+            ("Task_2", "userTask", {}),
+            ("Task_3", "userTask", {}),
+            ("Task_4", "userTask", {}),
+        ],
     )
     replace_spec(wf, v2)
 
@@ -202,11 +207,7 @@ def test_replace_spec_cleans_predicted_chain() -> None:
     wf = _init_workflow(three_task_xml)
 
     # Count future tasks before replacement
-    future_before = [
-        t
-        for t in wf.tasks.values()
-        if t.state in (TaskState.FUTURE, TaskState.MAYBE, TaskState.LIKELY)
-    ]
+    future_before = [t for t in wf.tasks.values() if t.state in (TaskState.FUTURE, TaskState.MAYBE, TaskState.LIKELY)]
     assert len(future_before) > 0
 
     # Replace with same spec
@@ -215,10 +216,6 @@ def test_replace_spec_cleans_predicted_chain() -> None:
     # No orphaned future tasks pointing at old spec objects
     for task in wf.tasks.values():
         if task.state in (TaskState.FUTURE, TaskState.MAYBE, TaskState.LIKELY):
-            assert (
-                task.task_spec in wf.spec.task_specs.values()
-                or any(
-                    task.task_spec in s.task_specs.values()
-                    for s in wf.subprocess_specs.values()
-                )
+            assert task.task_spec in wf.spec.task_specs.values() or any(
+                task.task_spec in s.task_specs.values() for s in wf.subprocess_specs.values()
             ), f"Orphaned future task {task.task_spec.name} references old spec"

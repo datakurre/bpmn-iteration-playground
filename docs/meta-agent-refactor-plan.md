@@ -216,11 +216,12 @@ strategy cannot satisfy all three, so make it an interface with three implementa
 
 ```python
 class WorkspaceStrategy(Protocol):
-    supports_snapshot: bool                                  # drives fork UX everywhere
-    async def acquire(self, run_id: str) -> Path: ...        # a directory a turn may run in
+    supports_snapshot: bool  # drives fork UX everywhere
+
+    async def acquire(self, run_id: str) -> Path: ...  # a directory a turn may run in
     async def release(self, run_id: str) -> None: ...
-    async def snapshot(self, run_id: str, label: str) -> str | None: ...   # savepoint ref
-    async def restore(self, ref: str, into_run: str) -> Path: ...          # fork
+    async def snapshot(self, run_id: str, label: str) -> str | None: ...  # savepoint ref
+    async def restore(self, ref: str, into_run: str) -> Path: ...  # fork
     async def discard(self, run_id: str) -> None: ...
 ```
 

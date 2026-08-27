@@ -51,8 +51,19 @@ logger = logging.getLogger("bpmn.workspace_strategy")
 GIT_OP_TIMEOUT_SECONDS = 30.0
 
 _SEED_IGNORE = shutil.ignore_patterns(
-    ".git", "node_modules", ".venv", ".devenv", ".direnv", "data", "vendor",
-    "__pycache__", ".mypy_cache", ".pytest_cache", "site", "result", "*.log",
+    ".git",
+    "node_modules",
+    ".venv",
+    ".devenv",
+    ".direnv",
+    "data",
+    "vendor",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    "site",
+    "result",
+    "*.log",
 )
 
 
@@ -344,7 +355,9 @@ class WorktreeStrategy:
         msg = commit_message or f"Merge run {run_id} into {target_branch}"
         merge_proc = await _run_git("merge", "--no-ff", run_branch, "-m", msg, cwd=self.workspace.root)
         if merge_proc.returncode != 0:
-            err = merge_proc.stderr.decode(errors="replace").strip() or merge_proc.stdout.decode(errors="replace").strip()
+            err = (
+                merge_proc.stderr.decode(errors="replace").strip() or merge_proc.stdout.decode(errors="replace").strip()
+            )
             await _run_git("merge", "--abort", cwd=self.workspace.root)
             return False, f"Merge conflict or error: {err}"
 

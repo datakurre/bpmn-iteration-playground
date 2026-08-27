@@ -14,11 +14,14 @@ else:
         from textual.app import ComposeResult
         from textual.screen import Screen
     except ImportError:
+
         class Screen:  # type: ignore[no-redef]
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
+
             def __class_getitem__(cls, item: Any) -> type:
                 return cls
+
         class ComposeResult:  # type: ignore[no-redef]
             pass
 
@@ -95,6 +98,7 @@ class SessionChatScreen(Screen):  # type: ignore
 
             # Update Stepper
             from graph_agent.tui.widgets.bpmn_stepper import BpmnStepper
+
             with contextlib.suppress(Exception):
                 stepper = self.query_one("#chat-stepper", BpmnStepper)
                 stepper.update_state(self.run_state)
@@ -138,7 +142,12 @@ class SessionChatScreen(Screen):  # type: ignore
             tstate = task.get("state", "")
             lower_name = tname.lower()
 
-            if lower_name in ("prompt user", "formulate execution plan & graph", "validate bpmn & invariants", "apply graph extension"):
+            if lower_name in (
+                "prompt user",
+                "formulate execution plan & graph",
+                "validate bpmn & invariants",
+                "apply graph extension",
+            ):
                 continue
 
             if tid not in self.displayed_task_ids and tstate in ("COMPLETED", "STARTED", "FAILED"):
@@ -176,7 +185,9 @@ class SessionChatScreen(Screen):  # type: ignore
             # Find ready human task
             self.active_human_task_id = None
             for t in tasks:
-                if t.get("state") == "READY" and (t.get("type", "").lower() in ("usertask", "user_task") or "UserTask" in t.get("id", "")):
+                if t.get("state") == "READY" and (
+                    t.get("type", "").lower() in ("usertask", "user_task") or "UserTask" in t.get("id", "")
+                ):
                     self.active_human_task_id = t.get("id")
                     tname = t.get("name", "")
                     if "Review" in tname:
@@ -252,20 +263,24 @@ class SessionChatScreen(Screen):  # type: ignore
                 self.run_worker(self.action_merge_session())
             else:
                 import asyncio
+
                 self._bg_task = asyncio.create_task(self.action_merge_session())
         else:
             self.notify(f"Unknown command: /{cmd}. Valid: /diff, /palette, /editor, /retry, /merge", severity="warning")
 
     def action_open_diff(self) -> None:
         from graph_agent.tui.screens.diff_modal import DiffModalScreen
+
         self.app.push_screen(DiffModalScreen(workflow_id=self.workflow_id))
 
     def action_open_palette(self) -> None:
         from graph_agent.tui.screens.command_palette import CommandPaletteModal
+
         self.app.push_screen(CommandPaletteModal(current_workflow_id=self.workflow_id))
 
     def action_open_editor(self) -> None:
         import webbrowser
+
         client = getattr(self.app, "client", None)
         url = f"{client.base_url}/editor" if client else "http://127.0.0.1:8000/editor"
         webbrowser.open(url)

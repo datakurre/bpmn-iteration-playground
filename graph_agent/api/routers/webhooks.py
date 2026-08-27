@@ -28,7 +28,12 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:
     ) -> list[dict[str, Any]]:
         return get_service().list_webhooks()
 
-    @router.delete("/api/webhooks/{webhook_id}", response_model=DeleteWebhookResponse, tags=["Webhooks"], summary="Delete a registered webhook")
+    @router.delete(
+        "/api/webhooks/{webhook_id}",
+        response_model=DeleteWebhookResponse,
+        tags=["Webhooks"],
+        summary="Delete a registered webhook",
+    )
     async def delete_webhook(
         webhook_id: str,
         role: Role = require_role(Role.ADMIN, Role.OPERATOR),

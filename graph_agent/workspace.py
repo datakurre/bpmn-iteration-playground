@@ -156,12 +156,14 @@ def get_workspace_metadata(workdir: str, artifacts: list[str] | None = None) -> 
                     rel_path = str(p.relative_to(workdir_path))
                     size = p.stat().st_size
                     mtime = p.stat().st_mtime
-                    files.append({
-                        "name": p.name,
-                        "path": rel_path,
-                        "size": size,
-                        "mtime": mtime,
-                    })
+                    files.append(
+                        {
+                            "name": p.name,
+                            "path": rel_path,
+                            "size": size,
+                            "mtime": mtime,
+                        }
+                    )
                     total_size += size
                 except Exception:
                     pass
@@ -205,4 +207,3 @@ def cleanup_workspace(workdir: str) -> None:
     """Remove a temporary workspace directory."""
     if workdir and Path(workdir).exists() and "bpmn-" in str(workdir):
         shutil.rmtree(workdir, ignore_errors=True)
-

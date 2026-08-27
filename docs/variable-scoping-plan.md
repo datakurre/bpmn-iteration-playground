@@ -142,19 +142,19 @@ SpiffWorkflow, and how it reshapes ZODB persistence and history.
 
 ```python
 class Scope(Persistent):
-    id: str                 # == the SpiffWorkflow task.id for this execution-tree node
-    workflow_id: str         # root WorkflowInstance this scope belongs to (for indexing)
-    bpmn_id: str              # task_spec.bpmn_id
+    id: str  # == the SpiffWorkflow task.id for this execution-tree node
+    workflow_id: str  # root WorkflowInstance this scope belongs to (for indexing)
+    bpmn_id: str  # task_spec.bpmn_id
     bpmn_name: str
-    element_type: str         # "Process", "ServiceTask", "UserTask", "CallActivity", ...
-    parent_scope_id: str | None   # None only for a process root scope
+    element_type: str  # "Process", "ServiceTask", "UserTask", "CallActivity", ...
+    parent_scope_id: str | None  # None only for a process root scope
 
-    status: str                # "active" | "completed" | "failed" | "cancelled"
-    inputs: PersistentMapping   # resolved camunda:inputParameter values, as received (audit)
-    data: PersistentMapping     # local working variables while this element is active
+    status: str  # "active" | "completed" | "failed" | "cancelled"
+    inputs: PersistentMapping  # resolved camunda:inputParameter values, as received (audit)
+    data: PersistentMapping  # local working variables while this element is active
     outputs: PersistentMapping  # resolved camunda:outputParameter values, as published (audit)
 
-    entered_at: str   # ISO-8601
+    entered_at: str  # ISO-8601
     completed_at: str | None
 ```
 

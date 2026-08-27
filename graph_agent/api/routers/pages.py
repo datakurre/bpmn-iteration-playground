@@ -40,7 +40,9 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:
     ) -> Response:
         return _with_auth_cookie(request, history_page(request))
 
-    @router.get("/history/{workflow_id}", response_class=HTMLResponse, tags=["UI"], summary="Historical Instance Detail UI")
+    @router.get(
+        "/history/{workflow_id}", response_class=HTMLResponse, tags=["UI"], summary="Historical Instance Detail UI"
+    )
     async def history_detail_ui(
         request: Request,
         workflow_id: str,
@@ -68,7 +70,9 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:
     ) -> Response:
         return _with_auth_cookie(request, editor_page(request))
 
-    @router.get("/instance/{workflow_id}", response_class=HTMLResponse, tags=["UI"], summary="Live Workflow Instance View")
+    @router.get(
+        "/instance/{workflow_id}", response_class=HTMLResponse, tags=["UI"], summary="Live Workflow Instance View"
+    )
     async def instance(
         request: Request,
         workflow_id: str,
@@ -81,4 +85,3 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:
             raise HTTPException(404, "workflow not found") from exc
 
     return router
-

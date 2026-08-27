@@ -23,7 +23,10 @@ def test_history_instances_listing_and_deletion(client: TestClient) -> None:
     # Start a workflow
     start_resp = client.post(
         "/workflow/start",
-        json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "History test"}},
+        json={
+            "bpmn_path": "graph_agent/data/workflows/plan_and_execute.bpmn",
+            "variables": {"contract": "History test"},
+        },
     )
     wf_id = start_resp.json()["workflow_id"]
 
@@ -45,7 +48,9 @@ def test_history_instances_listing_and_deletion(client: TestClient) -> None:
     assert del_missing.status_code == 404
 
     # Clear all instances requires confirmation guard
-    client.post("/workflow/start", json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {}})
+    client.post(
+        "/workflow/start", json={"bpmn_path": "graph_agent/data/workflows/plan_and_execute.bpmn", "variables": {}}
+    )
     unconfirmed = client.delete("/api/history/instances")
     assert unconfirmed.status_code == 400
 
@@ -63,7 +68,7 @@ def test_history_instances_pagination_and_date_filtering(client: TestClient) -> 
     for i in range(5):
         resp = client.post(
             "/workflow/start",
-            json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {"idx": i}},
+            json={"bpmn_path": "graph_agent/data/workflows/plan_and_execute.bpmn", "variables": {"idx": i}},
         )
         wf_ids.append(resp.json()["workflow_id"])
 
@@ -95,7 +100,10 @@ def test_history_sessions_endpoints(client: TestClient) -> None:
     # Start a workflow that records a session
     resp = client.post(
         "/workflow/start",
-        json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "Session Test"}},
+        json={
+            "bpmn_path": "graph_agent/data/workflows/plan_and_execute.bpmn",
+            "variables": {"contract": "Session Test"},
+        },
     )
     assert resp.status_code == 200
 
@@ -110,6 +118,3 @@ def test_history_sessions_endpoints(client: TestClient) -> None:
     # 404 for non-existent session
     missing = client.get("/api/history/sessions/non-existent-sess-id")
     assert missing.status_code == 404
-
-
-

@@ -140,21 +140,15 @@ def _validate_service_task(task: ET.Element[Any], ns: dict[str, str]) -> tuple[l
 
     harness_type = properties.get("harness_type")
     if not harness_type:
-        warnings.append(
-            f"ServiceTask '{task_id}' has no harness_type property (defaults to pi_agent)"
-        )
+        warnings.append(f"ServiceTask '{task_id}' has no harness_type property (defaults to pi_agent)")
         effective_harness = "pi_agent"
     else:
         effective_harness = harness_type
         if harness_type not in KNOWN_HARNESS_TYPES:
-            errors.append(
-                f"ServiceTask '{task_id}' has unknown harness_type '{harness_type}'"
-            )
+            errors.append(f"ServiceTask '{task_id}' has unknown harness_type '{harness_type}'")
 
     if effective_harness in ("pi_agent", "sandbox_pi") and not properties.get("agent_role"):
-        warnings.append(
-            f"ServiceTask '{task_id}' has no agent_role property (prompt will be generic)"
-        )
+        warnings.append(f"ServiceTask '{task_id}' has no agent_role property (prompt will be generic)")
 
     # Check inputParameters for nested ${} injection risk
     for inp in task.findall(".//camunda:inputParameter", ns):
@@ -261,24 +255,14 @@ def _check_flow_node_connectivity(
         or elem.find(f".//{{{BPMN_NS}}}incoming") is not None
         or tag_name in ("startEvent", "boundaryEvent")
     )
-    has_outgoing = (
-        node_id in sources
-        or elem.find(f".//{{{BPMN_NS}}}outgoing") is not None
-        or tag_name in ("endEvent",)
-    )
+    has_outgoing = node_id in sources or elem.find(f".//{{{BPMN_NS}}}outgoing") is not None or tag_name in ("endEvent",)
 
     if not has_incoming and not has_outgoing:
-        errors.append(
-            f"Element '{node_id}' ({tag_name}) has no incoming or outgoing sequence flows"
-        )
+        errors.append(f"Element '{node_id}' ({tag_name}) has no incoming or outgoing sequence flows")
     elif not has_incoming and tag_name not in ("startEvent", "boundaryEvent"):
-        errors.append(
-            f"Element '{node_id}' ({tag_name}) has no incoming sequence flow"
-        )
+        errors.append(f"Element '{node_id}' ({tag_name}) has no incoming sequence flow")
     elif not has_outgoing and tag_name not in ("endEvent", "boundaryEvent"):
-        errors.append(
-            f"Element '{node_id}' ({tag_name}) has no outgoing sequence flow"
-        )
+        errors.append(f"Element '{node_id}' ({tag_name}) has no outgoing sequence flow")
 
     return errors
 
@@ -306,9 +290,7 @@ def _validate_flow_nodes(root: ET.Element[Any], task_ids: list[str]) -> list[str
             continue
 
         if node_id not in task_ids:
-            errors.append(
-                f"Element '{node_id}' ({tag_name}) is disconnected or unreachable in process"
-            )
+            errors.append(f"Element '{node_id}' ({tag_name}) is disconnected or unreachable in process")
             continue
 
         errors.extend(_check_flow_node_connectivity(elem, sources, targets))
@@ -336,9 +318,7 @@ def validate_bpmn(xml: str) -> ValidationResult:
 
     # 2. Extract process IDs from <bpmn:process> elements
     process_ids: list[str] = [
-        elem.get("id", "")
-        for elem in root.iter()
-        if _local_tag(elem) == "process" and elem.get("id")
+        elem.get("id", "") for elem in root.iter() if _local_tag(elem) == "process" and elem.get("id")
     ]
 
     if not process_ids:
@@ -408,8 +388,7 @@ def _attach_extensions_to_specs(root: ET.Element[Any], specs: list[Any]) -> None
                 "type": field_elem.get("type", "string"),
             }
             values = [
-                {"id": v.get("id"), "name": v.get("name", v.get("id"))}
-                for v in field_elem.findall("camunda:value", ns)
+                {"id": v.get("id"), "name": v.get("name", v.get("id"))} for v in field_elem.findall("camunda:value", ns)
             ]
             if values:
                 field_data["values"] = values
@@ -573,25 +552,17 @@ def _find_target_flow(
     ns: dict[str, str],
 ) -> etree._Element:
     """Find matching outgoing sequence flow for after_id."""
-    matching_flows = process_elem.findall(
-        f".//bpmn:sequenceFlow[@sourceRef='{after_id}']", ns
-    )
+    matching_flows = process_elem.findall(f".//bpmn:sequenceFlow[@sourceRef='{after_id}']", ns)
     if not matching_flows:
         raise ValueError(f"Target node '{after_id}' has no outgoing sequence flow")
 
     if len(matching_flows) > 1:
         if after_flow:
-            target_flow = next(
-                (f for f in matching_flows if f.get("id") == after_flow), None
-            )
+            target_flow = next((f for f in matching_flows if f.get("id") == after_flow), None)
             if target_flow is None:
-                raise ValueError(
-                    f"Specified flow '{after_flow}' not found among outgoing flows of '{after_id}'"
-                )
+                raise ValueError(f"Specified flow '{after_flow}' not found among outgoing flows of '{after_id}'")
             return target_flow
-        raise ValueError(
-            f"Target node '{after_id}' has multiple outgoing sequence flows; specify after_flow"
-        )
+        raise ValueError(f"Target node '{after_id}' has multiple outgoing sequence flows; specify after_flow")
     return matching_flows[0]
 
 
@@ -713,9 +684,7 @@ def insert_nodes(base_xml: str, spec: InsertionSpec) -> str:
         orig_target_id=orig_target_id,
     )
 
-    result_xml = etree.tostring(
-        root, encoding="utf-8", xml_declaration=True, pretty_print=True
-    ).decode("utf-8")
+    result_xml = etree.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True).decode("utf-8")
 
     # Validate output
     val_result = validate_bpmn(result_xml)
@@ -723,6 +692,3 @@ def insert_nodes(base_xml: str, spec: InsertionSpec) -> str:
         raise ValueError(f"Resulting BPMN XML is invalid: {'; '.join(val_result.errors)}")
 
     return str(result_xml)
-
-
-

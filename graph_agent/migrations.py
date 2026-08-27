@@ -3,6 +3,7 @@ unpickling (which never calls ``__init__``) leaves missing on objects persisted
 under 3.1.2. See todos/01-spiffworkflow-320-upgrade.md for the verified
 attribute surface.
 """
+
 from __future__ import annotations
 
 from typing import Any

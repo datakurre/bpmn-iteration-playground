@@ -30,9 +30,7 @@ async def test_tui_push_screens(mock_daemon):
     ws, _service, app = mock_daemon
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:
-        client = DaemonClient(
-            base_url="http://test", token="test-token", workspace=ws, http_client=http_client
-        )
+        client = DaemonClient(base_url="http://test", token="test-token", workspace=ws, http_client=http_client)
         tui_app = GraphAgentApp(client=client, workspace=ws)
 
         start_res = await http_client.post(
@@ -52,8 +50,8 @@ async def test_tui_push_screens(mock_daemon):
                 RunDetailScreen(run_id, "plan"),
                 FormScreen(run_id, "task-1"),
                 InboxScreen(),
-                LogScreen(run_id)
-                ,RunsScreen()
+                LogScreen(run_id),
+                RunsScreen(),
             ]
 
             for s in screens:

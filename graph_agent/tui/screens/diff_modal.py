@@ -13,11 +13,14 @@ else:
         from textual.app import ComposeResult
         from textual.screen import ModalScreen
     except ImportError:
+
         class ModalScreen:  # type: ignore[no-redef]
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
+
             def __class_getitem__(cls, item: Any) -> type:
                 return cls
+
         class ComposeResult:  # type: ignore[no-redef]
             pass
 
@@ -69,7 +72,9 @@ class DiffModalScreen(ModalScreen):  # type: ignore
             from graph_agent.tui.widgets.diff_view import DiffViewWidget
 
             with Container(id="diff-modal-container"):
-                yield Static(f"[bold cyan]Git Worktree Diff · {self.workflow_id[:8]}[/bold cyan]", id="diff-modal-header")
+                yield Static(
+                    f"[bold cyan]Git Worktree Diff · {self.workflow_id[:8]}[/bold cyan]", id="diff-modal-header"
+                )
                 yield DiffViewWidget(id="diff-view-widget")
                 with Horizontal(id="diff-modal-actions"):
                     yield Button("Close [Esc/d]", id="btn-close", variant="primary")

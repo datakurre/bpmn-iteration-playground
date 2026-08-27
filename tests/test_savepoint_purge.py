@@ -10,7 +10,7 @@ from graph_agent.workflow_service import WorkflowService
 
 
 async def _start_and_wait(service: WorkflowService) -> dict[str, Any]:
-    started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+    started = await service.start("graph_agent/data/workflows/plan_and_execute.bpmn", None, {"goal": "text"})
     await asyncio.gather(*list(service.jobs.values()))
     return started
 
@@ -75,17 +75,13 @@ def test_purge_endpoint(client: TestClient, service: WorkflowService) -> None:
     points = _sorted_points(service, wf_id)
     task_id = points[-1]["task_id"]
 
-    resp = client.request(
-        "DELETE", f"/instance/{wf_id}/savepoints", json={"before_task_id": task_id}
-    )
+    resp = client.request("DELETE", f"/instance/{wf_id}/savepoints", json={"before_task_id": task_id})
     assert resp.status_code == 200
     assert resp.json()["purged"] >= 1
 
 
 def test_purge_endpoint_unknown_instance(client: TestClient) -> None:
-    resp = client.request(
-        "DELETE", "/instance/nope/savepoints", json={"before": "2026-01-01T00:00:00+00:00"}
-    )
+    resp = client.request("DELETE", "/instance/nope/savepoints", json={"before": "2026-01-01T00:00:00+00:00"})
     assert resp.status_code == 404
 
 
@@ -146,9 +142,7 @@ async def test_purge_before_task_keeps_all_of_the_anchor_tasks_savepoints(
     counts: dict[str, list[dict[str, Any]]] = {}
     for p in points:
         counts.setdefault(p["task_id"], []).append(p)
-    anchor_task_id, anchor_points = next(
-        (tid, pts) for tid, pts in counts.items() if len(pts) >= 2
-    )
+    anchor_task_id, anchor_points = next((tid, pts) for tid, pts in counts.items() if len(pts) >= 2)
     older = [p for p in points if p["created_at"] < min(a["created_at"] for a in anchor_points)]
 
     result = await service.purge_save_points(wf_id, before_task_id=anchor_task_id)

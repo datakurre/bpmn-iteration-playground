@@ -118,9 +118,7 @@ def test_cli_serve_reload_with_no_port_defaults_to_8000() -> None:
     mock_run.assert_called_once_with("graph_agent.api.server:app", host="127.0.0.1", port=8000, reload=True)
 
 
-def test_cli_serve_binds_free_port_writes_runtime_and_cleans_up(
-    tmp_path: Path, _restore_admin_token_env: None
-) -> None:
+def test_cli_serve_binds_free_port_writes_runtime_and_cleans_up(tmp_path: Path, _restore_admin_token_env: None) -> None:
     workspace = Workspace.discover(tmp_path)
     captured: dict[str, object] = {}
 
@@ -253,10 +251,10 @@ def test_cli_edit_launches_editor_with_token(tmp_path: Path, capsys) -> None:
         patch("graph_agent.cli.is_daemon_alive", return_value=True),
         patch("graph_agent.cli.webbrowser.open") as mock_open,
     ):
-        main(["edit", "contract_review", "--workspace", str(tmp_path)])
+        main(["edit", "interactive_session", "--workspace", str(tmp_path)])
 
-    mock_open.assert_called_once_with("http://127.0.0.1:55555/editor/contract_review?token=test-token")
-    assert "Opened http://127.0.0.1:55555/editor/contract_review?token=test-token" in capsys.readouterr().out
+    mock_open.assert_called_once_with("http://127.0.0.1:55555/editor/interactive_session?token=test-token")
+    assert "Opened http://127.0.0.1:55555/editor/interactive_session?token=test-token" in capsys.readouterr().out
 
 
 def test_cli_open_reports_nothing_running(tmp_path: Path, capsys) -> None:
@@ -264,7 +262,6 @@ def test_cli_open_reports_nothing_running(tmp_path: Path, capsys) -> None:
         main(["open", "--workspace", str(tmp_path)])
     mock_open.assert_not_called()
     assert "No daemon running" in capsys.readouterr().out
-
 
 
 def test_cli_stop_reports_nothing_running(tmp_path: Path, capsys) -> None:

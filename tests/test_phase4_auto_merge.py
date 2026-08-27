@@ -42,9 +42,7 @@ class FileWritingAdapter(BaseAdapter):
     def capabilities(self) -> AdapterCapabilities:
         return AdapterCapabilities(display_name="File Writer", supports_sessions=False)
 
-    async def run(
-        self, prompt: str, config: dict[str, str], cwd: str, on_event: Any = None
-    ) -> AgentResult:
+    async def run(self, prompt: str, config: dict[str, str], cwd: str, on_event: Any = None) -> AgentResult:
         (Path(cwd) / self.filename).write_text(self.content, encoding="utf-8")
         return AgentResult(
             status="success",

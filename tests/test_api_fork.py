@@ -6,7 +6,7 @@ from graph_agent.workflow_service import WorkflowService
 def test_savepoint_detail_and_fork_endpoints(client: TestClient) -> None:
     start_resp = client.post(
         "/workflow/start",
-        json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "Fork Test"}},
+        json={"bpmn_path": "graph_agent/data/workflows/agent_review_cycle.bpmn", "variables": {"subject": "Fork Test"}},
     )
     wf_id = start_resp.json()["workflow_id"]
     state_data = start_resp.json()
@@ -53,7 +53,9 @@ def test_fork_from_completed_workflow_state(service: WorkflowService) -> None:
     import asyncio
 
     async def scenario() -> None:
-        started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "Completed Fork Test"})
+        started = await service.start(
+            "graph_agent/data/workflows/agent_review_cycle.bpmn", None, {"subject": "Completed Fork Test"}
+        )
         wf_id = started["workflow_id"]
         sp_id = started["save_points"][0]["id"]
 
@@ -73,7 +75,7 @@ def test_fork_from_completed_workflow_state(service: WorkflowService) -> None:
         user_task_id = ready_tasks[0]["id"]
 
         # Submit task to transition workflow to completed
-        completed = await service.submit_task(wf_id, user_task_id, {"decision": "approved"})
+        completed = await service.submit_task(wf_id, user_task_id, {"cycle_decision": "accepted", "cycle_notes": "ok"})
         assert completed["status"] == "completed"
 
         # Fork from savepoint of the completed instance
@@ -83,4 +85,3 @@ def test_fork_from_completed_workflow_state(service: WorkflowService) -> None:
         assert forked["data"]["fork_var"] == "val"
 
     asyncio.run(scenario())
-

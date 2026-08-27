@@ -44,7 +44,6 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:
                 elif x_api_key in api_keys:
                     role = api_keys[x_api_key]
 
-
             if not auth_enabled and require_auth:
                 await websocket.close(code=1008, reason="Authentication required by policy")
                 return

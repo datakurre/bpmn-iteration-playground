@@ -28,9 +28,12 @@ def test_chained_workflow_execution() -> None:
         store = WorkflowStore(":memory:")
         service = WorkflowService(store, SubprocessFakePi())
 
-        # Execute bug triage workflow
-        bug_started = await service.start("graph_agent/data/workflows/bug_triage.bpmn", None, {"bug_report": "Memory leak in auth handler"})
-        bug_id = bug_started["workflow_id"]
+        # Execute plan and execute workflow
+        started = await service.start(
+            "graph_agent/data/workflows/plan_and_execute.bpmn", None, {"goal": "Refactor auth handler"}
+        )
+        wf_id = started["workflow_id"]
+
         async def _wait_jobs():
             while any(not job.done() for job in list(service.jobs.values())):
                 pending = [job for job in list(service.jobs.values()) if not job.done()]
@@ -40,22 +43,22 @@ def test_chained_workflow_execution() -> None:
 
         await asyncio.wait_for(_wait_jobs(), timeout=5.0)
 
-        bug_state = service.state(bug_id)
-        assert bug_state["status"] == "waiting_human"
+        wf_state = service.state(wf_id)
+        assert wf_state["status"] == "waiting_human"
 
-        # Complete human clarification
-        user_tasks = [t for t in bug_state["tasks"] if t["state"] == "READY" and t.get("type") == "UserTask"]
+        # Complete human plan approval
+        user_tasks = [t for t in wf_state["tasks"] if t["state"] == "READY" and t.get("type") == "UserTask"]
         assert len(user_tasks) == 1
         complete_resp = await service.submit_task(
-            bug_id,
+            wf_id,
             user_tasks[0]["id"],
-            {"reproduction_notes": "Occurs on token refresh", "priority": "high", "proceed_with_fix": "yes"},
+            {"plan_approval": "approved", "human_answers": "Looks good"},
         )
         assert complete_resp["status"] in ("running", "waiting_human", "waiting_pi")
 
         await asyncio.wait_for(_wait_jobs(), timeout=5.0)
-        verify_state = service.state(bug_id)
-        assert verify_state["status"] == "waiting_human"
+        verify_state = service.state(wf_id)
+        assert verify_state["status"] in ("waiting_human", "completed")
 
     asyncio.run(scenario())
 
@@ -101,9 +104,7 @@ def test_call_activity_runs_child_process_with_human_gate() -> None:
         assert child_record["parent_workflow_id"] == workflow_id
 
         # Signing off in the child resumes the parent graph through its own agent turn
-        await service.submit_task(
-            workflow_id, signoff["id"], {"cycle_decision": "accepted", "cycle_notes": "ok"}
-        )
+        await service.submit_task(workflow_id, signoff["id"], {"cycle_decision": "accepted", "cycle_notes": "ok"})
         await asyncio.wait_for(_wait_jobs(service), timeout=5.0)
 
         final = service.state(workflow_id)
@@ -125,9 +126,7 @@ def test_call_activity_rejected_review_skips_delivery() -> None:
         workflow_id = started["workflow_id"]
         await asyncio.wait_for(_wait_jobs(service), timeout=5.0)
 
-        signoff = next(
-            t for t in service.state(workflow_id)["tasks"] if t["bpmn_id"] == "Task_Cycle_Signoff"
-        )
+        signoff = next(t for t in service.state(workflow_id)["tasks"] if t["bpmn_id"] == "Task_Cycle_Signoff")
         await service.submit_task(workflow_id, signoff["id"], {"cycle_decision": "rejected"})
         await asyncio.wait_for(_wait_jobs(service), timeout=5.0)
 

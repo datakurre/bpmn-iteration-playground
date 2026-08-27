@@ -47,10 +47,7 @@ def test_insert_single_task() -> None:
 
     # Check flow order via XML
     tree = etree.fromstring(result.encode("utf-8"))
-    flows = {
-        f.get("sourceRef"): f.get("targetRef")
-        for f in tree.findall(".//bpmn:sequenceFlow", NS)
-    }
+    flows = {f.get("sourceRef"): f.get("targetRef") for f in tree.findall(".//bpmn:sequenceFlow", NS)}
     assert flows.get("Task_A") == "Task_New"
     assert flows.get("Task_New") == "Task_B"
 
@@ -133,10 +130,7 @@ def test_insert_preserves_existing_structure() -> None:
 
     # Task_B -> Task_C flow should be unchanged
     tree = etree.fromstring(result.encode("utf-8"))
-    flows = {
-        f.get("sourceRef"): f.get("targetRef")
-        for f in tree.findall(".//bpmn:sequenceFlow", NS)
-    }
+    flows = {f.get("sourceRef"): f.get("targetRef") for f in tree.findall(".//bpmn:sequenceFlow", NS)}
     assert flows.get("Task_B") == "Task_C"
 
 
@@ -207,4 +201,3 @@ def test_insert_handles_whitespace_in_flow_refs() -> None:
     assert task_a is not None
     outgoings = [(elem.text or "").strip() for elem in task_a.findall(f"{{{BPMN_NS}}}outgoing")]
     assert "Flow_2" not in outgoings
-

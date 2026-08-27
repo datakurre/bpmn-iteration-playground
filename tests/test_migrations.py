@@ -9,7 +9,7 @@ from graph_agent.engine import WorkflowRunner
 
 
 def _load_any_workflow() -> BpmnWorkflow:
-    wf, _ = WorkflowRunner().load_workflow("graph_agent/data/workflows/contract_review.bpmn")
+    wf, _ = WorkflowRunner().load_workflow("graph_agent/data/workflows/plan_and_execute.bpmn")
     return wf
 
 
@@ -71,16 +71,19 @@ def test_migrate_is_idempotent_on_fresh_workflow() -> None:
 def test_store_load_migrates_legacy_workflow(store: Any) -> None:
     wf = _workflow_parked_on_message_catch()
 
-    store.save("wf1", {
-        "workflow_id": "wf1",
-        "process_id": "external_gate",
-        "bpmn_path": "graph_agent/data/workflows/external_gate.bpmn",
-        "status": "running",
-        "workflow": wf,
-        "data": {},
-        "tasks": [],
-        "save_points": [],
-    })
+    store.save(
+        "wf1",
+        {
+            "workflow_id": "wf1",
+            "process_id": "external_gate",
+            "bpmn_path": "graph_agent/data/workflows/external_gate.bpmn",
+            "status": "running",
+            "workflow": wf,
+            "data": {},
+            "tasks": [],
+            "save_points": [],
+        },
+    )
 
     stored = store.load("wf1")
     assert stored is not None
@@ -97,20 +100,22 @@ def test_store_load_migrates_legacy_workflow(store: Any) -> None:
 def test_store_load_save_point_migrates_legacy_workflow(store: Any) -> None:
     wf = _workflow_parked_on_message_catch()
 
-    store.save_save_point({
-        "id": "sp1",
-        "workflow_id": "wf1",
-        "key": "checkpoint",
-        "phase": "running",
-        "resume_action": "",
-        "task_id": "",
-        "task_name": "",
-        "status": "running",
-        "created_at": "2026-08-21T00:00:00+00:00",
-        "data": {},
-        "tasks": [],
-        "workflow": wf,
-    })
+    store.save_save_point(
+        {
+            "id": "sp1",
+            "workflow_id": "wf1",
+            "key": "checkpoint",
+            "phase": "running",
+            "resume_action": "",
+            "task_id": "",
+            "task_name": "",
+            "status": "running",
+            "created_at": "2026-08-21T00:00:00+00:00",
+            "data": {},
+            "tasks": [],
+            "workflow": wf,
+        }
+    )
 
     stored = store.load_save_point("sp1")
     assert stored is not None

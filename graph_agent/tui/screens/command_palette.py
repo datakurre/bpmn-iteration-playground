@@ -13,11 +13,14 @@ else:
         from textual.app import ComposeResult
         from textual.screen import ModalScreen
     except ImportError:
+
         class ModalScreen:  # type: ignore[no-redef]
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
+
             def __class_getitem__(cls, item: Any) -> type:
                 return cls
+
         class ComposeResult:  # type: ignore[no-redef]
             pass
 
@@ -102,36 +105,44 @@ class CommandPaletteModal(ModalScreen):  # type: ignore
 
         if cmd_id == "session_picker":
             from graph_agent.tui.screens.session_picker import SessionPickerScreen
+
             self.app.push_screen(SessionPickerScreen())
         elif cmd_id == "new_session":
             from graph_agent.tui.screens.session_picker import SessionPickerScreen
+
             picker = SessionPickerScreen()
             self.app.push_screen(picker)
             if hasattr(self, "run_worker"):
                 self.run_worker(picker.action_new_session())
             else:
                 import asyncio
+
                 self._bg_task = asyncio.create_task(picker.action_new_session())
         elif cmd_id == "open_diff":
             if self.current_workflow_id:
                 from graph_agent.tui.screens.diff_modal import DiffModalScreen
+
                 self.app.push_screen(DiffModalScreen(workflow_id=self.current_workflow_id))
             else:
                 self.notify("No active session selected to view diff", severity="warning")
         elif cmd_id == "open_editor":
             import webbrowser
+
             client = getattr(self.app, "client", None)
             url = f"{client.base_url}/editor" if client else "http://127.0.0.1:8000/editor"
             webbrowser.open(url)
             self.notify(f"Opened {url} in browser", severity="information")
         elif cmd_id == "goto_inbox":
             from graph_agent.tui.screens.inbox import InboxScreen
+
             self.app.push_screen(InboxScreen())
         elif cmd_id == "goto_runs":
             from graph_agent.tui.screens.runs import RunsScreen
+
             self.app.push_screen(RunsScreen())
         elif cmd_id == "goto_logs":
             from graph_agent.tui.screens.log import LogScreen
+
             self.app.push_screen(LogScreen())
 
     def action_dismiss_palette(self) -> None:

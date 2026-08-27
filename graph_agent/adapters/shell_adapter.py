@@ -84,9 +84,7 @@ class ShellAdapter(BaseAdapter):
     """
 
     def __init__(self, timeout_seconds: float | None = None) -> None:
-        self.timeout_seconds = (
-            timeout_seconds if timeout_seconds is not None else resolve_timeout(self.capabilities)
-        )
+        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else resolve_timeout(self.capabilities)
 
     @property
     def adapter_type(self) -> str:
@@ -306,11 +304,7 @@ class ShellAdapter(BaseAdapter):
         artifacts = await asyncio.to_thread(self._collect_artifacts, run_dir, Path(cwd), config.get("artifacts"))
 
         succeeded = exit_code == 0
-        summary = (
-            f"`{command}` succeeded"
-            if succeeded
-            else f"`{command}` exited with code {exit_code}"
-        )
+        summary = f"`{command}` succeeded" if succeeded else f"`{command}` exited with code {exit_code}"
         findings: list[str] = []
         if not succeeded:
             error_lines = [ln.rstrip() for ln in (stderr or stdout).splitlines() if ln.strip()]
@@ -344,9 +338,7 @@ class ShellAdapter(BaseAdapter):
         )
 
     @staticmethod
-    def _resolve_invocation(
-        command: str, config: dict[str, str], cwd: str
-    ) -> tuple[list[str], Path] | str:
+    def _resolve_invocation(command: str, config: dict[str, str], cwd: str) -> tuple[list[str], Path] | str:
         """Turn the declared command into an argv plus run directory, or an error message."""
         run_dir = Path(cwd)
         sub = (config.get("workdir") or "").strip()

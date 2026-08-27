@@ -18,6 +18,7 @@ def test_variables_oversized_rejected() -> None:
 
 def test_variables_deep_nesting_rejected() -> None:
     from typing import Any
+
     nested: Any = {"k": "v"}
     for _ in range(15):
         nested = {"nested": nested}

@@ -15,11 +15,21 @@ from graph_agent.pi_client import PiClient, _parse_json
         "{invalid json",
         json.dumps({"status": "success"}),  # missing keys
         json.dumps({"status": "success", "summary": "s", "findings": [], "artifacts": []}),  # missing next_action
-        json.dumps({"status": 123, "summary": "s", "findings": [], "artifacts": [], "next_action": "c"}),  # status not str
-        json.dumps({"status": "s", "summary": 123, "findings": [], "artifacts": [], "next_action": "c"}),  # summary not str
-        json.dumps({"status": "s", "summary": "s", "findings": "not list", "artifacts": [], "next_action": "c"}),  # findings not list
-        json.dumps({"status": "s", "summary": "s", "findings": [], "artifacts": "not list", "next_action": "c"}),  # artifacts not list
-        json.dumps({"status": "s", "summary": "s", "findings": [], "artifacts": [], "next_action": 123}),  # next_action not str
+        json.dumps(
+            {"status": 123, "summary": "s", "findings": [], "artifacts": [], "next_action": "c"}
+        ),  # status not str
+        json.dumps(
+            {"status": "s", "summary": 123, "findings": [], "artifacts": [], "next_action": "c"}
+        ),  # summary not str
+        json.dumps(
+            {"status": "s", "summary": "s", "findings": "not list", "artifacts": [], "next_action": "c"}
+        ),  # findings not list
+        json.dumps(
+            {"status": "s", "summary": "s", "findings": [], "artifacts": "not list", "next_action": "c"}
+        ),  # artifacts not list
+        json.dumps(
+            {"status": "s", "summary": "s", "findings": [], "artifacts": [], "next_action": 123}
+        ),  # next_action not str
     ],
 )
 def test_parse_json_invalid_edge_cases(invalid_input: str) -> None:
@@ -300,7 +310,9 @@ print(json.dumps({"type": "agent_settled"}))
 
 
 @pytest.mark.anyio
-async def test_pi_client_env_defaults_api_key_from_opencode_api_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_pi_client_env_defaults_api_key_from_opencode_api_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("OPENCODE_API_KEY", "opencode-secret-token")
 

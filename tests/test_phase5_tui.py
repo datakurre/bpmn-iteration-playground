@@ -87,32 +87,38 @@ async def test_daemon_client_inbox_aggregation(mock_daemon: tuple[Workspace, Wor
     ws, service, app = mock_daemon
 
     # Seed an instance waiting for human task
-    service.store.save("run-human", {
-        "workflow_id": "run-human",
-        "status": "waiting_human",
-        "process_id": "plan_and_execute",
-        "bpmn_path": "plan_and_execute.bpmn",
-        "created_at": "2026-08-25T10:00:00Z",
-        "tasks": [
-            {
-                "id": "task-user-1",
-                "name": "Review Plan",
-                "type": "UserTask",
-                "state": "READY",
-            }
-        ],
-    })
+    service.store.save(
+        "run-human",
+        {
+            "workflow_id": "run-human",
+            "status": "waiting_human",
+            "process_id": "plan_and_execute",
+            "bpmn_path": "plan_and_execute.bpmn",
+            "created_at": "2026-08-25T10:00:00Z",
+            "tasks": [
+                {
+                    "id": "task-user-1",
+                    "name": "Review Plan",
+                    "type": "UserTask",
+                    "state": "READY",
+                }
+            ],
+        },
+    )
 
     # Seed an instance with deferred merge
-    service.store.save("run-deferred-merge", {
-        "workflow_id": "run-deferred-merge",
-        "status": "completed",
-        "merge_status": "merge_deferred",
-        "merge_error": "Working tree is dirty",
-        "process_id": "plan_and_execute",
-        "bpmn_path": "plan_and_execute.bpmn",
-        "created_at": "2026-08-25T10:00:00Z",
-    })
+    service.store.save(
+        "run-deferred-merge",
+        {
+            "workflow_id": "run-deferred-merge",
+            "status": "completed",
+            "merge_status": "merge_deferred",
+            "merge_error": "Working tree is dirty",
+            "process_id": "plan_and_execute",
+            "bpmn_path": "plan_and_execute.bpmn",
+            "created_at": "2026-08-25T10:00:00Z",
+        },
+    )
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:
@@ -286,4 +292,3 @@ async def test_data_table_out_of_bounds_click_safe(tmp_path: Path) -> None:
         )
         # Must not raise IndexError
         await table._on_click(event)
-

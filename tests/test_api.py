@@ -25,7 +25,7 @@ def test_instance_page_404_for_missing(client: TestClient) -> None:
 def test_start_and_get_workflow_state(client: TestClient) -> None:
     response = client.post(
         "/workflow/start",
-        json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "Test Agreement"}},
+        json={"bpmn_path": "graph_agent/data/workflows/plan_and_execute.bpmn", "variables": {"goal": "Test Goal"}},
     )
     assert response.status_code == 200
     data = response.json()
@@ -51,13 +51,13 @@ def test_template_registry_endpoints(client: TestClient) -> None:
     assert list_resp.status_code == 200
     templates = list_resp.json()
     assert len(templates) >= 2
-    assert any(t["id"] == "contract_review" for t in templates)
+    assert any(t["id"] == "plan_and_execute" for t in templates)
 
-    detail_resp = client.get("/api/templates/contract_review")
+    detail_resp = client.get("/api/templates/plan_and_execute")
     assert detail_resp.status_code == 200
-    assert detail_resp.json()["id"] == "contract_review"
+    assert detail_resp.json()["id"] == "plan_and_execute"
 
-    xml_resp = client.get("/api/templates/contract_review/xml")
+    xml_resp = client.get("/api/templates/plan_and_execute/xml")
     assert xml_resp.status_code == 200
     assert "bpmn:definitions" in xml_resp.text
 
@@ -101,7 +101,7 @@ def test_workflow_save_endpoint(client: TestClient) -> None:
 def test_submit_task_validation(client: TestClient) -> None:
     start_resp = client.post(
         "/workflow/start",
-        json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "Test"}},
+        json={"bpmn_path": "graph_agent/data/workflows/plan_and_execute.bpmn", "variables": {"contract": "Test"}},
     )
     wf_id = start_resp.json()["workflow_id"]
 
@@ -120,7 +120,7 @@ def test_submit_task_validation(client: TestClient) -> None:
 def test_download_workspace_endpoint(client: TestClient) -> None:
     start_resp = client.post(
         "/workflow/start",
-        json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "Test"}},
+        json={"bpmn_path": "graph_agent/data/workflows/plan_and_execute.bpmn", "variables": {"contract": "Test"}},
     )
     wf_id = start_resp.json()["workflow_id"]
 
@@ -170,7 +170,10 @@ def test_configure_logging_preserves_external_handlers() -> None:
 def test_cancel_workflow_endpoint(client: TestClient) -> None:
     start_resp = client.post(
         "/workflow/start",
-        json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "Cancel Test"}},
+        json={
+            "bpmn_path": "graph_agent/data/workflows/plan_and_execute.bpmn",
+            "variables": {"contract": "Cancel Test"},
+        },
     )
     wf_id = start_resp.json()["workflow_id"]
 
@@ -203,7 +206,7 @@ def test_prometheus_metrics_endpoint(client: TestClient) -> None:
 def test_sse_events_stream_endpoint(client: TestClient) -> None:
     start_resp = client.post(
         "/workflow/start",
-        json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "SSE Test"}},
+        json={"bpmn_path": "graph_agent/data/workflows/plan_and_execute.bpmn", "variables": {"contract": "SSE Test"}},
     )
     wf_id = start_resp.json()["workflow_id"]
 
@@ -213,6 +216,7 @@ def test_sse_events_stream_endpoint(client: TestClient) -> None:
 
     # Valid instance stream
     from unittest import mock
+
     with (
         mock.patch("asyncio.sleep", new_callable=mock.AsyncMock, side_effect=asyncio.CancelledError),
         client.stream("GET", f"/instance/{wf_id}/events/stream") as stream_resp,
@@ -221,8 +225,3 @@ def test_sse_events_stream_endpoint(client: TestClient) -> None:
         for chunk in stream_resp.iter_text():
             assert "data:" in chunk
             break
-
-
-
-
-

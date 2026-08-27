@@ -10,6 +10,7 @@ else:
     try:
         from textual.widgets import Static
     except ImportError:
+
         class Static:  # type: ignore[no-redef]
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass

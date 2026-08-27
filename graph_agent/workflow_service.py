@@ -88,6 +88,7 @@ class WorkflowService:
                 self.registry.register(pi_client)
                 self.registry.bind("pi_agent", pi_client)
             else:
+
                 class GenericAdapter(BaseAdapter):
                     def __init__(self, target: Any) -> None:
                         self.target = target
@@ -102,7 +103,9 @@ class WorkflowService:
                         # session threading or every turn starts a fresh context.
                         return AdapterCapabilities(display_name="Pi Agent", supports_sessions=True)
 
-                    async def run(self, prompt: str, config: dict[str, str], cwd: str, on_event: Any = None) -> AgentResult:
+                    async def run(
+                        self, prompt: str, config: dict[str, str], cwd: str, on_event: Any = None
+                    ) -> AgentResult:
                         sig = inspect.signature(self.target.run)
                         kwargs: dict[str, Any] = {}
                         if "session_id" in sig.parameters:
@@ -178,8 +181,7 @@ class WorkflowService:
             "pi_session_id": record.get("pi_session_id") or record.get("data", {}).get("pi_session_id"),
             "network": record.get("network") or record.get("data", {}).get("network"),
             "policy_error": record.get("policy_error") or record.get("data", {}).get("policy_error"),
-            "workspace_metadata": record.get("workspace_metadata")
-            or record.get("data", {}).get("workspace_metadata"),
+            "workspace_metadata": record.get("workspace_metadata") or record.get("data", {}).get("workspace_metadata"),
             "save_points": [self._save_point_summary(point) for point in record.get("save_points", [])],
             "events": record.get("events", []),
             "parent_workflow_id": record.get("parent_workflow_id"),
@@ -358,7 +360,9 @@ class WorkflowService:
             self.runner.start, bpmn_path, process_id, variables
         )
         status = self._status(workflow)
-        record = self.runner.record(workflow_id, workflow, bpmn_path, resolved_process_id, status, jobs={}, save_points=[], events=[])
+        record = self.runner.record(
+            workflow_id, workflow, bpmn_path, resolved_process_id, status, jobs={}, save_points=[], events=[]
+        )
         await asyncio.to_thread(self.store.save, workflow_id, record)
         self._sync_children(workflow_id, record)
 
@@ -481,9 +485,7 @@ class WorkflowService:
         record = self._record(workflow_id)
         status = record.get("status")
         if not allow_mid_execution and status in ("running", "waiting_pi", "retry_requested"):
-            raise ValueError(
-                "Workflow is mid-execution (running agent turn); wait for completion"
-            )
+            raise ValueError("Workflow is mid-execution (running agent turn); wait for completion")
 
         from graph_agent.bpmn_utils import replace_spec as do_replace
 
@@ -531,13 +533,9 @@ class WorkflowService:
         Cannot be called while an agent turn is in progress.
         """
         async with self._lock(workflow_id):
-            return await self._replace_spec_unlocked(
-                workflow_id, new_xml, allow_mid_execution=allow_mid_execution
-            )
+            return await self._replace_spec_unlocked(workflow_id, new_xml, allow_mid_execution=allow_mid_execution)
 
-    async def validate_spec_replacement(
-        self, workflow_id: str, new_xml: str
-    ) -> dict[str, Any]:
+    async def validate_spec_replacement(self, workflow_id: str, new_xml: str) -> dict[str, Any]:
         """Dry-run validation: check migration feasibility without applying changes."""
         record = self._record(workflow_id)
         from SpiffWorkflow.task import TaskState
@@ -568,9 +566,7 @@ class WorkflowService:
 
         new_task_ids = set(val_result.task_ids)
         current_tasks = [
-            t
-            for t in workflow.get_tasks()
-            if t.state not in (TaskState.FUTURE, TaskState.MAYBE, TaskState.LIKELY)
+            t for t in workflow.get_tasks() if t.state not in (TaskState.FUTURE, TaskState.MAYBE, TaskState.LIKELY)
         ]
         migrated_tasks: list[str] = []
         removed_tasks: list[str] = []
@@ -584,9 +580,7 @@ class WorkflowService:
                     migrated_tasks.append(bpmn_id)
             elif t.state in (TaskState.COMPLETED, TaskState.CANCELLED):
                 removed_tasks.append(bpmn_id)
-                warnings.append(
-                    f"Completed task '{bpmn_id}' not in new spec (history only)"
-                )
+                warnings.append(f"Completed task '{bpmn_id}' not in new spec (history only)")
             else:
                 errors.append(
                     f"Active task '{bpmn_id}' (state={TaskState.get_name(t.state)}) not found in new BPMN spec"
@@ -595,9 +589,7 @@ class WorkflowService:
         new_tasks = [
             tid
             for tid in val_result.task_ids
-            if tid not in migrated_tasks
-            and tid not in ("Start", "End", "Root")
-            and not tid.endswith(".EndJoin")
+            if tid not in migrated_tasks and tid not in ("Start", "End", "Root") and not tid.endswith(".EndJoin")
         ]
 
         return {
@@ -648,9 +640,7 @@ class WorkflowService:
             new_xml = insert_nodes(current_xml, insertion)
 
             # 4. Apply spec replacement
-            result = await self._replace_spec_unlocked(
-                workflow_id, new_xml, allow_mid_execution=allow_mid_execution
-            )
+            result = await self._replace_spec_unlocked(workflow_id, new_xml, allow_mid_execution=allow_mid_execution)
             result["inserted_nodes"] = [n.bpmn_id for n in nodes_list]
             result["spec_xml"] = new_xml
             return result
@@ -662,7 +652,9 @@ class WorkflowService:
             raise FileNotFoundError(path)
         return await asyncio.to_thread(path.read_text, encoding="utf-8")
 
-    async def fork(self, workflow_id: str, save_point_id: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def fork(
+        self, workflow_id: str, save_point_id: str, variables: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         return await fork_module.fork(self, workflow_id, save_point_id, variables)
 
     async def submit_task(self, workflow_id: str, task_id: str, variables: dict[str, Any]) -> dict[str, Any]:
@@ -683,7 +675,9 @@ class WorkflowService:
                 # No explicit outputParameters: the declared form fields are this UserTask's
                 # own mapping -- only a submitted variable the task itself asked for crosses
                 # into the outer scope. See docs/variable-scoping-plan.md.
-                form_fields = extensions.get("form", {}).get("fields", []) if isinstance(extensions.get("form"), dict) else []
+                form_fields = (
+                    extensions.get("form", {}).get("fields", []) if isinstance(extensions.get("form"), dict) else []
+                )
                 declared_names = {f.get("id") for f in form_fields if f.get("id")}
                 published = {k: v for k, v in variables.items() if k in declared_names}
             task.workflow.data.update(published)
@@ -982,9 +976,7 @@ class WorkflowService:
         workspace_metadata: dict[str, Any] | None = None,
         prompt: str | None = None,
     ) -> None:
-        await jobs.complete_pi(
-            self, workflow_id, task_id, result, workspace_metadata=workspace_metadata, prompt=prompt
-        )
+        await jobs.complete_pi(self, workflow_id, task_id, result, workspace_metadata=workspace_metadata, prompt=prompt)
 
     @staticmethod
     def _status(workflow: Any) -> str:
@@ -993,10 +985,7 @@ class WorkflowService:
         for task in workflow.get_tasks(state=TaskState.READY):
             if task.task_spec.__class__.__name__ == "UserTask":
                 return "waiting_human"
-        if any(
-            isinstance(task.task_spec, CatchingEvent)
-            for task in workflow.get_tasks(state=TaskState.WAITING)
-        ):
+        if any(isinstance(task.task_spec, CatchingEvent) for task in workflow.get_tasks(state=TaskState.WAITING)):
             return "waiting_event"
         return "running"
 
@@ -1026,8 +1015,7 @@ class WorkflowService:
 
             if formjs_type == "select" and "values" in field:
                 component["values"] = [
-                    {"label": v.get("name", v.get("id")), "value": v.get("id")}
-                    for v in field["values"]
+                    {"label": v.get("name", v.get("id")), "value": v.get("id")} for v in field["values"]
                 ]
             if formjs_type == "number":
                 component["validate"] = {"required": False}
@@ -1063,6 +1051,7 @@ class WorkflowService:
                     "message": msg,
                 }
             from graph_agent.workspace_strategy import WorktreeStrategy
+
             strategy = WorktreeStrategy(self.workspace)
             turns_count = sum(j.get("attempts", 1) for j in record.get("jobs", {}).values())
             bpmn_name = Path(record.get("bpmn_path", "workflow")).stem
@@ -1133,6 +1122,7 @@ class WorkflowService:
 
         if self.workspace and self.workspace.is_git and self.workspace.worktrees_dir.is_dir():
             from graph_agent.workspace_strategy import WorktreeStrategy
+
             strategy = WorktreeStrategy(self.workspace)
             for child in list(self.workspace.worktrees_dir.iterdir()):
                 if child.is_dir():
@@ -1177,6 +1167,7 @@ class WorkflowService:
             return {"diff": "", "stat": "", "files_changed": [], "status": "no_worktree"}
 
         import subprocess
+
         res = await asyncio.to_thread(
             subprocess.run,
             ["git", "diff", "HEAD"],
@@ -1218,4 +1209,3 @@ class WorkflowService:
             "files_changed": files,
             "status": "ok",
         }
-

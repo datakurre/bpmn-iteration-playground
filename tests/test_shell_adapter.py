@@ -6,7 +6,7 @@ from graph_agent.adapters.shell_adapter import ShellAdapter
 def test_shell_adapter(tmp_path):
     adapter = ShellAdapter()
 
-    config = {"command": "echo '{\"status\": \"success\"}'"}
+    config = {"command": 'echo \'{"status": "success"}\''}
 
     with contextlib.suppress(Exception):
         adapter.run("prompt", config, str(tmp_path))

@@ -81,10 +81,10 @@
         <div class="acc-body p-0 bg-transparent border-t-0">
           <label for="template-select" class="block text-muted text-[11.5px] font-semibold uppercase tracking-wider mb-1.5">Workflow Template</label>
           <select id="template-select" class="w-full border border-line rounded-md bg-card text-ink p-2 text-xs focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent mb-3">
-            <option value="workflows/contract_review.bpmn">Contract Review</option>
+            <option value="workflows/interactive_session.bpmn">Interactive Agent Session</option>
           </select>
           <label for="contract" class="block text-muted text-[11.5px] font-semibold uppercase tracking-wider mb-1.5">Context / Variables (JSON or text)</label>
-          <textarea id="contract" rows="4" class="w-full border border-line rounded-md bg-card text-ink p-2 text-xs focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent min-h-[90px] leading-relaxed mb-3">Review the supplied contract for clauses and compliance risks.</textarea>
+          <textarea id="contract" rows="4" class="w-full border border-line rounded-md bg-card text-ink p-2 text-xs focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent min-h-[90px] leading-relaxed mb-3">{"user_prompt": "Describe your goal or task..."}</textarea>
           <button id="start" class="btn w-full">Start Process</button>
           <p class="text-muted text-xs mt-2" id="message"></p>
         </div>

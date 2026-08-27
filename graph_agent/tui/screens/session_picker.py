@@ -13,11 +13,14 @@ else:
         from textual.app import ComposeResult
         from textual.screen import Screen
     except ImportError:
+
         class Screen:  # type: ignore[no-redef]
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
+
             def __class_getitem__(cls, item: Any) -> type:
                 return cls
+
         class ComposeResult:  # type: ignore[no-redef]
             pass
 
@@ -194,6 +197,7 @@ class SessionPickerScreen(Screen):  # type: ignore
                 self.run_worker(self.action_new_session())
             else:
                 import asyncio
+
                 self._bg_task = asyncio.create_task(self.action_new_session())
         elif sid:
             from graph_agent.tui.screens.session_chat import SessionChatScreen

@@ -24,9 +24,7 @@ class ConcurrencyTrackingAdapter(BaseAdapter):
     def capabilities(self) -> AdapterCapabilities:
         return AdapterCapabilities(display_name="Concurrency Tracker", supports_sessions=False)
 
-    async def run(
-        self, prompt: str, config: dict[str, str], cwd: str, on_event: Any = None
-    ) -> AgentResult:
+    async def run(self, prompt: str, config: dict[str, str], cwd: str, on_event: Any = None) -> AgentResult:
         async with self._lock:
             self.current_concurrent += 1
             if self.current_concurrent > self.peak_concurrent:
@@ -70,8 +68,14 @@ async def test_turn_concurrency_bounds_parallel_executions(tmp_path: Path, monke
 
     # Wait for all background jobs to finish
     for _ in range(50):
-        running = any(j.get("status") == "running" for s in states for j in service.state(s["workflow_id"]).get("jobs", {}).values())
-        if not running and all(service.state(s["workflow_id"])["status"] in ("completed", "waiting_human", "failed") for s in states):
+        running = any(
+            j.get("status") == "running"
+            for s in states
+            for j in service.state(s["workflow_id"]).get("jobs", {}).values()
+        )
+        if not running and all(
+            service.state(s["workflow_id"])["status"] in ("completed", "waiting_human", "failed") for s in states
+        ):
             break
         await asyncio.sleep(0.05)
 
@@ -81,7 +85,9 @@ async def test_turn_concurrency_bounds_parallel_executions(tmp_path: Path, monke
 
 
 @pytest.mark.parametrize("raw_value", ["0", "-1", "-100"])
-def test_max_parallel_turns_is_clamped_to_at_least_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raw_value: str) -> None:
+def test_max_parallel_turns_is_clamped_to_at_least_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raw_value: str
+) -> None:
     """MAX_PARALLEL_TURNS=0 would make `asyncio.Semaphore(0)` never grant a permit,
     silently deadlocking every agent turn forever; a negative value raises ValueError out
     of the Semaphore constructor, crashing __init__ outright. Both must fail safe."""
@@ -94,7 +100,9 @@ def test_max_parallel_turns_is_clamped_to_at_least_one(tmp_path: Path, monkeypat
     assert service._turn_semaphore._value == 1
 
 
-def test_max_parallel_turns_falls_back_to_default_when_not_a_number(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_max_parallel_turns_falls_back_to_default_when_not_a_number(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("MAX_PARALLEL_TURNS", "not-a-number")
     store = WorkflowStore(tmp_path / "data")
 

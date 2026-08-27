@@ -13,6 +13,7 @@ else:
         from textual.app import ComposeResult
         from textual.screen import Screen
     except ImportError:
+
         class Screen:  # type: ignore[no-redef]
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass

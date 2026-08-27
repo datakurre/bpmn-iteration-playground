@@ -163,9 +163,7 @@ def build_scenario() -> dict[str, str]:
         },
     )["workflow_id"]
     state = wait_for_status(source, "waiting_human")
-    after_draft = next(
-        sp for sp in state["save_points"] if sp["phase"] == "after_harness"
-    )["id"]
+    after_draft = next(sp for sp in state["save_points"] if sp["phase"] == "after_harness")["id"]
     forked = _request("POST", f"/instance/{source}/fork/{after_draft}", {"variables": {}})["workflow_id"]
     state = wait_for_status(forked, "waiting_human")
     _request(
@@ -222,9 +220,7 @@ def main() -> None:
             headless=True,
             args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
         )
-        context = browser.new_context(
-            viewport={"width": 1600, "height": 1000}, device_scale_factor=2
-        )
+        context = browser.new_context(viewport={"width": 1600, "height": 1000}, device_scale_factor=2)
         page = context.new_page()
         shot = Shooter(page, context.new_cdp_session(page))
 

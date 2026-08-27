@@ -93,11 +93,7 @@ def resolve_output_mapping(output_params: dict[str, str], sources: dict[str, Any
     """
     published: dict[str, Any] = {}
     for target_var, source_expr in output_params.items():
-        source_key = (
-            source_expr[2:-1]
-            if source_expr.startswith("${") and source_expr.endswith("}")
-            else source_expr
-        )
+        source_key = source_expr[2:-1] if source_expr.startswith("${") and source_expr.endswith("}") else source_expr
         published[target_var] = sources.get(source_key)
     return published
 
@@ -203,9 +199,7 @@ class WorkflowRunner:
         raise ValueError("No BPMN XML available for this workflow instance")
 
     @staticmethod
-    def _specs_defined_by(
-        bpmn_path: str, root: Any, ns: dict[str, str], workflow: BpmnWorkflow
-    ) -> list[Any]:
+    def _specs_defined_by(bpmn_path: str, root: Any, ns: dict[str, str], workflow: BpmnWorkflow) -> list[Any]:
         """The loaded specs this file actually defines, keyed by process id.
 
         Every `*.bpmn` in the directory is parsed and then walked for extensions -- that is
@@ -272,8 +266,7 @@ class WorkflowRunner:
                     "type": field.get("type", "string"),
                 }
                 values = [
-                    {"id": v.get("id"), "name": v.get("name", v.get("id"))}
-                    for v in field.findall("camunda:value", ns)
+                    {"id": v.get("id"), "name": v.get("name", v.get("id"))} for v in field.findall("camunda:value", ns)
                 ]
                 if values:
                     field_data["values"] = values
@@ -331,7 +324,9 @@ class WorkflowRunner:
             if task.state & (TaskState.READY | TaskState.STARTED | TaskState.COMPLETED)
         ]
 
-    def record(self, workflow_id: str, workflow: BpmnWorkflow, bpmn_path: str, process_id: str, status: str, **extra: Any) -> dict[str, Any]:
+    def record(
+        self, workflow_id: str, workflow: BpmnWorkflow, bpmn_path: str, process_id: str, status: str, **extra: Any
+    ) -> dict[str, Any]:
         return {
             "workflow": workflow,
             "bpmn_path": str(Path(bpmn_path)),
@@ -386,6 +381,5 @@ class WorkflowRunner:
         return (
             "Complete this BPMN task. Make the requested repository changes or analysis, "
             "then respond with only one valid JSON object containing status, summary, "
-            "findings, artifacts, and next_action. Do not wrap it in markdown.\n\n"
-            + json.dumps(context, default=str)
+            "findings, artifacts, and next_action. Do not wrap it in markdown.\n\n" + json.dumps(context, default=str)
         )

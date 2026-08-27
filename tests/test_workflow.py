@@ -33,16 +33,17 @@ def test_pi_task_persists_and_waits_for_human_task() -> None:
     async def scenario() -> None:
         pi = FakePi()
         service = WorkflowService(WorkflowStore(":memory:"), pi)
-        state = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+        state = await service.start("graph_agent/data/workflows/agent_review_cycle.bpmn", None, {"subject": "text"})
         await asyncio.gather(*service.jobs.values())
         state = service.state(state["workflow_id"])
         assert state["status"] == "waiting_human"
-        assert state["data"]["extract_status"] == "success"
+        assert state["data"]["cycle_status"] == "success"
         assert "agent_status" not in state["data"]
         phases = [point["phase"] for point in state["save_points"]]
         assert phases == ["before_harness", "after_harness", "human_wait"]
-        review_task = next(task for task in state["tasks"] if task["bpmn_id"] == "ServiceTask_Review")
-        assert service.form(state["workflow_id"], review_task["id"])["fields"][0]["id"] == "decision"
+        signoff_task = next(task for task in state["tasks"] if task["bpmn_id"] == "Task_Cycle_Signoff")
+        form_field_ids = [f["id"] for f in service.form(state["workflow_id"], signoff_task["id"])["fields"]]
+        assert "cycle_decision" in form_field_ids
 
         before = next(point for point in state["save_points"] if point["phase"] == "before_harness")
         before_fork = await service.fork(state["workflow_id"], before["id"])
@@ -56,12 +57,13 @@ def test_pi_task_persists_and_waits_for_human_task() -> None:
         assert pi.calls == 2
 
         completed = await service.submit_task(
-            state["workflow_id"], review_task["id"], {"decision": "approved"}
+            state["workflow_id"], signoff_task["id"], {"cycle_decision": "accepted", "cycle_notes": "ok"}
         )
         assert completed["status"] == "completed"
-        assert completed["data"]["decision"] == "approved"
+        assert completed["data"]["cycle_decision"] == "accepted"
 
     asyncio.run(scenario())
+
 
 def test_session_id_propagated_to_record_and_data() -> None:
     class SessionPi:
@@ -76,13 +78,13 @@ def test_session_id_propagated_to_record_and_data() -> None:
                 [],
                 "",
                 0,
-                f"session-abc-{self.calls}"
+                f"session-abc-{self.calls}",
             )
 
     async def scenario() -> None:
         pi = SessionPi()
         service = WorkflowService(WorkflowStore(":memory:"), pi)
-        state = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+        state = await service.start("graph_agent/data/workflows/agent_review_cycle.bpmn", None, {"subject": "text"})
         await asyncio.gather(*service.jobs.values())
         state = service.state(state["workflow_id"])
 
@@ -108,7 +110,7 @@ def test_failed_pi_state_contains_failure_reason() -> None:
 
     async def scenario() -> None:
         service = WorkflowService(WorkflowStore(":memory:"), FailedPi())
-        started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {})
+        started = await service.start("graph_agent/data/workflows/agent_review_cycle.bpmn", None, {})
         await asyncio.gather(*service.jobs.values())
         state = service.state(started["workflow_id"])
         assert state["status"] == "failed"
@@ -132,7 +134,7 @@ def test_failed_pi_task_retries_on_explicit_request() -> None:
     async def scenario() -> None:
         pi = FlakyPi()
         service = WorkflowService(WorkflowStore(":memory:"), pi)
-        started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {})
+        started = await service.start("graph_agent/data/workflows/agent_review_cycle.bpmn", None, {})
         await asyncio.gather(*service.jobs.values())
         state = service.state(started["workflow_id"])
         assert pi.calls == 1
@@ -154,7 +156,7 @@ def test_jobs_and_locks_cleanup() -> None:
     async def scenario() -> None:
         pi = FakePi()
         service = WorkflowService(WorkflowStore(":memory:"), pi)
-        state = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+        state = await service.start("graph_agent/data/workflows/agent_review_cycle.bpmn", None, {"subject": "text"})
         wf_id = state["workflow_id"]
         assert len(service.jobs) > 0
         assert wf_id in service._locks
@@ -168,7 +170,7 @@ def test_jobs_and_locks_cleanup() -> None:
         assert wf_id not in service._locks
 
         # Test clear_instances cleans up all locks
-        state2 = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+        state2 = await service.start("graph_agent/data/workflows/agent_review_cycle.bpmn", None, {"subject": "text"})
         wf_id2 = state2["workflow_id"]
         await asyncio.gather(*list(service.jobs.values()))
         assert wf_id2 in service._locks
@@ -186,7 +188,7 @@ def test_cancelled_task_completes_with_cancelled_status() -> None:
 
     async def scenario() -> None:
         service = WorkflowService(WorkflowStore(":memory:"), SlowPi())
-        started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {})
+        started = await service.start("graph_agent/data/workflows/agent_review_cycle.bpmn", None, {})
         wf_id = started["workflow_id"]
         await asyncio.sleep(0.05)
         for job in list(service.jobs.values()):
@@ -194,6 +196,7 @@ def test_cancelled_task_completes_with_cancelled_status() -> None:
         await asyncio.gather(*list(service.jobs.values()), return_exceptions=True)
         state = service.state(wf_id)
         assert state["status"] == "cancelled"
+
     asyncio.run(scenario())
 
 
@@ -203,15 +206,15 @@ def test_service_task_publishes_only_declared_output_parameters() -> None:
     async def scenario() -> None:
         pi = FakePi()
         service = WorkflowService(WorkflowStore(":memory:"), pi)
-        started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+        started = await service.start("graph_agent/data/workflows/agent_review_cycle.bpmn", None, {"subject": "text"})
         wf_id = started["workflow_id"]
         await asyncio.gather(*list(service.jobs.values()))
         state = service.state(wf_id)
 
-        # Declared by ServiceTask_Extract
-        assert state["data"]["extract_status"] == "success"
-        assert state["data"]["extract_summary"] == "complete"
-        assert state["data"]["extract_findings"] == []
+        # Declared by Task_Cycle_Review
+        assert state["data"]["cycle_status"] == "success"
+        assert state["data"]["cycle_summary"] == "complete"
+        assert state["data"]["cycle_findings"] == []
 
         # Never published implicitly
         for implicit in ("agent_status", "agent_output", "agent_text", "status"):
@@ -219,11 +222,9 @@ def test_service_task_publishes_only_declared_output_parameters() -> None:
 
         # ...but still available task-locally for inspection in the UI, via the job
         # entry -- never via SpiffWorkflow's own task.data, which is inherited by
-        # successor tasks and merged into workflow.data on completion (see
-        # test_completed_instance_data_excludes_harness_scratch_keys for the leak that
-        # writing it there used to cause).
-        extract_task = next(t for t in state["tasks"] if t["bpmn_id"] == "ServiceTask_Extract")
-        job = state["jobs"][extract_task["id"]]
+        # successor tasks and merged into workflow.data on completion
+        review_task = next(t for t in state["tasks"] if t["bpmn_id"] == "Task_Cycle_Review")
+        job = state["jobs"][review_task["id"]]
         assert job["status"] == "success"
         assert job["output"]["summary"] == "complete"
 
@@ -234,13 +235,6 @@ def test_completed_instance_data_excludes_harness_scratch_keys() -> None:
     """A task that fails once and then succeeds on retry must not leave its
     failure_reason (or any other harness-internal key) sitting in the *completed*
     instance's workflow data.
-
-    Regression test: SpiffWorkflow merges the terminal task's own `task.data` into
-    `workflow.data` when the instance completes, so a scratch key written there (rather
-    than onto the job/record) survives every retry and resurfaces at completion even
-    though a plain mid-workflow snapshot (as in
-    test_service_task_publishes_only_declared_output_parameters, which never reaches
-    "completed") would not show it.
     """
 
     class FlakyThenOkPi:
@@ -252,7 +246,13 @@ def test_completed_instance_data_excludes_harness_scratch_keys() -> None:
                 return PiResult("failed", None, "", [], "boom: first attempt fails", 1)
             return PiResult(
                 "success",
-                {"status": "success", "summary": "complete", "findings": [], "artifacts": [], "next_action": "continue"},
+                {
+                    "status": "success",
+                    "summary": "complete",
+                    "findings": [],
+                    "artifacts": [],
+                    "next_action": "continue",
+                },
                 "result",
                 [],
                 "",
@@ -262,7 +262,7 @@ def test_completed_instance_data_excludes_harness_scratch_keys() -> None:
     async def scenario() -> None:
         pi = FlakyThenOkPi()
         service = WorkflowService(WorkflowStore(":memory:"), pi)
-        started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+        started = await service.start("graph_agent/data/workflows/agent_review_cycle.bpmn", None, {"subject": "text"})
         wf_id = started["workflow_id"]
         await asyncio.gather(*list(service.jobs.values()))
         state = service.state(wf_id)
@@ -270,16 +270,26 @@ def test_completed_instance_data_excludes_harness_scratch_keys() -> None:
         assert state["data"].get("failure_reason") is None or "boom" not in str(state["data"].get("failure_reason"))
         assert "boom" in (state.get("failure_reason") or "")
 
-        extract_task = next(t for t in state["tasks"] if t["bpmn_id"] == "ServiceTask_Extract")
-        await service.retry_task(wf_id, extract_task["id"])
+        review_task = next(t for t in state["tasks"] if t["bpmn_id"] == "Task_Cycle_Review")
+        await service.retry_task(wf_id, review_task["id"])
         await asyncio.gather(*[job for job in service.jobs.values() if not job.done()])
         state = service.state(wf_id)
 
-        review_task = next(t for t in state["tasks"] if t["bpmn_id"] == "ServiceTask_Review")
-        state = await service.submit_task(wf_id, review_task["id"], {"decision": "approved"})
+        signoff_task = next(t for t in state["tasks"] if t["bpmn_id"] == "Task_Cycle_Signoff")
+        state = await service.submit_task(
+            wf_id, signoff_task["id"], {"cycle_decision": "accepted", "cycle_notes": "ok"}
+        )
         assert state["status"] == "completed"
 
-        for scratch in ("failure_reason", "agent_status", "agent_output", "agent_text", "status", "policy_error", "network"):
+        for scratch in (
+            "failure_reason",
+            "agent_status",
+            "agent_output",
+            "agent_text",
+            "status",
+            "policy_error",
+            "network",
+        ):
             assert scratch not in state["data"], f"{scratch} leaked into completed instance data"
 
     asyncio.run(scenario())
@@ -317,7 +327,7 @@ async def test_output_parameters_missing_fallback_none() -> None:
     store = WorkflowStore(":memory:")
     service = WorkflowService(store, FakePi())
 
-    wf_started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "Test"})
+    wf_started = await service.start("graph_agent/data/workflows/agent_review_cycle.bpmn", None, {"subject": "Test"})
     wf_id = wf_started["workflow_id"]
 
     # Get the ready task
@@ -375,28 +385,19 @@ def test_workflow_registry_logs_warning_on_malformed_file(tmp_path: Path, caplog
     assert any("Failed to parse BPMN template" in record.message for record in caplog.records)
 
 
-
-
-
-
-
-
-
 def test_superseded_savepoint_attempts_are_pruned(monkeypatch) -> None:
     """Each attempt deep-copies the workflow graph, so only the newest per generation is kept."""
 
     async def scenario() -> None:
         service = WorkflowService(WorkflowStore(":memory:"), FakePi())
-        started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+        started = await service.start("graph_agent/data/workflows/agent_review_cycle.bpmn", None, {"subject": "text"})
         wf_id = started["workflow_id"]
         await asyncio.gather(*list(service.jobs.values()))
 
         record = service.store.load(wf_id)
         assert record is not None
         workflow = record["workflow"]
-        task = next(
-            t for t in workflow.get_tasks() if getattr(t.task_spec, "bpmn_id", None) == "ServiceTask_Extract"
-        )
+        task = next(t for t in workflow.get_tasks() if getattr(t.task_spec, "bpmn_id", None) == "Task_Cycle_Review")
 
         for attempt in range(2, 5):
             await service._add_save_point(
@@ -419,16 +420,14 @@ def test_savepoint_retention_is_configurable(monkeypatch) -> None:
 
     async def scenario() -> None:
         service = WorkflowService(WorkflowStore(":memory:"), FakePi())
-        started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+        started = await service.start("graph_agent/data/workflows/agent_review_cycle.bpmn", None, {"subject": "text"})
         await asyncio.gather(*list(service.jobs.values()))
 
         wf_id = started["workflow_id"]
         record = service.store.load(wf_id)
         assert record is not None
         workflow = record["workflow"]
-        task = next(
-            t for t in workflow.get_tasks() if getattr(t.task_spec, "bpmn_id", None) == "ServiceTask_Extract"
-        )
+        task = next(t for t in workflow.get_tasks() if getattr(t.task_spec, "bpmn_id", None) == "Task_Cycle_Review")
         for attempt in range(2, 6):
             await service._add_save_point(
                 wf_id, record, workflow, task, "before_harness", "run_harness", f":run_0:attempt_{attempt}"

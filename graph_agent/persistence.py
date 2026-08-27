@@ -47,8 +47,10 @@ def _retry_on_conflict(max_retries: int = 5) -> Callable[[F], F]:
                 except ConflictError:
                     if attempt == max_retries - 1:
                         raise
-                    time.sleep(0.02 * (2 ** attempt))
+                    time.sleep(0.02 * (2**attempt))
+
         return wrapper  # type: ignore[return-value]
+
     return decorator
 
 
@@ -394,12 +396,30 @@ class WorkflowInstance(Persistent):  # type: ignore[misc]  # persistent ships no
 #: Record keys mapped to first-class WorkflowInstance attributes. Anything else a caller
 #: puts on a record (pi_session_id, network, policy_error, ...) is kept in `extra` rather
 #: than silently dropped on save.
-_INSTANCE_FIELDS = frozenset({
-    "workflow_id", "process_id", "bpmn_path", "status", "workflow", "data", "jobs",
-    "tasks", "save_points", "events", "failure_reason", "failure_history", "forked_from",
-    "forked_from_save_point", "parent_workflow_id", "created_at", "updated_at",
-    "workspace_blob", "workspace_archive", "workspace_version",
-})
+_INSTANCE_FIELDS = frozenset(
+    {
+        "workflow_id",
+        "process_id",
+        "bpmn_path",
+        "status",
+        "workflow",
+        "data",
+        "jobs",
+        "tasks",
+        "save_points",
+        "events",
+        "failure_reason",
+        "failure_history",
+        "forked_from",
+        "forked_from_save_point",
+        "parent_workflow_id",
+        "created_at",
+        "updated_at",
+        "workspace_blob",
+        "workspace_archive",
+        "workspace_version",
+    }
+)
 
 
 class WorkflowStore:
@@ -544,6 +564,7 @@ class WorkflowStore:
         self.db.close()
         if self._temp_blob_dir and os.path.exists(self._temp_blob_dir):
             import shutil
+
             shutil.rmtree(self._temp_blob_dir, ignore_errors=True)
 
     @staticmethod
@@ -780,13 +801,9 @@ class WorkflowStore:
                     events = raw_record.get("events", [])
 
                 workspace_blob = _safe_blob_copy(
-                    raw_record.get("workspace_blob")
-                    or getattr(existing, "workspace_blob", None)
+                    raw_record.get("workspace_blob") or getattr(existing, "workspace_blob", None)
                 )
-                workspace_archive = (
-                    raw_record.get("workspace_archive")
-                    or getattr(existing, "workspace_archive", None)
-                )
+                workspace_archive = raw_record.get("workspace_archive") or getattr(existing, "workspace_archive", None)
                 raw_workspace_version = raw_record.get("workspace_version")
                 workspace_version = (
                     raw_workspace_version
@@ -812,11 +829,20 @@ class WorkflowStore:
                     if raw_events:
                         existing_events_set = {
                             (e.get("timestamp"), e.get("event_type"), e.get("task_id"))
-                            if isinstance(e, (dict, PersistentMapping)) else (getattr(e, "timestamp", None), getattr(e, "event_type", None), getattr(e, "task_id", None))
+                            if isinstance(e, (dict, PersistentMapping))
+                            else (
+                                getattr(e, "timestamp", None),
+                                getattr(e, "event_type", None),
+                                getattr(e, "task_id", None),
+                            )
                             for e in instance.events
                         }
                         for e in raw_events:
-                            e_dict = dict(e) if isinstance(e, (dict, PersistentMapping)) else (e.to_dict() if hasattr(e, "to_dict") else vars(e))
+                            e_dict = (
+                                dict(e)
+                                if isinstance(e, (dict, PersistentMapping))
+                                else (e.to_dict() if hasattr(e, "to_dict") else vars(e))
+                            )
                             key = (e_dict.get("timestamp"), e_dict.get("event_type"), e_dict.get("task_id"))
                             if key not in existing_events_set:
                                 instance.events.append(PersistentMapping(e_dict))
@@ -824,8 +850,12 @@ class WorkflowStore:
                     instance.failure_reason = raw_record.get("failure_reason")
                     instance.failure_history = PersistentList(raw_record.get("failure_history", []))
                     instance.forked_from = raw_record.get("forked_from", instance.forked_from)
-                    instance.forked_from_save_point = raw_record.get("forked_from_save_point", instance.forked_from_save_point)
-                    instance.parent_workflow_id = raw_record.get("parent_workflow_id", getattr(instance, "parent_workflow_id", None))
+                    instance.forked_from_save_point = raw_record.get(
+                        "forked_from_save_point", instance.forked_from_save_point
+                    )
+                    instance.parent_workflow_id = raw_record.get(
+                        "parent_workflow_id", getattr(instance, "parent_workflow_id", None)
+                    )
                     instance.created_at = created_at
                     instance.updated_at = updated_at
                     if workspace_blob is not None:
@@ -840,10 +870,7 @@ class WorkflowStore:
                             instance.extra[extra_key] = extra_value
                     instance._p_changed = True
                 else:
-                    events = [
-                        PersistentMapping(e) if isinstance(e, dict) else e
-                        for e in raw_record.get("events", [])
-                    ]
+                    events = [PersistentMapping(e) if isinstance(e, dict) else e for e in raw_record.get("events", [])]
                     instance = WorkflowInstance(
                         workflow_id=workflow_id,
                         process_id=raw_record.get("process_id", ""),
@@ -875,7 +902,9 @@ class WorkflowStore:
             for scope_dict in raw_record.pop("_pending_scopes", []) or []:
                 self._apply_scope(instance, workflow_id, scope_dict)
 
-            ws_meta = raw_record.get("workspace_metadata") or (raw_record.get("data", {}).get("workspace_metadata") if isinstance(raw_record.get("data"), dict) else {})
+            ws_meta = raw_record.get("workspace_metadata") or (
+                raw_record.get("data", {}).get("workspace_metadata") if isinstance(raw_record.get("data"), dict) else {}
+            )
             if not ws_meta and existing is not None:
                 ws_meta = getattr(existing, "workspace_metadata", {})
 
@@ -1034,8 +1063,12 @@ class WorkflowStore:
                             status=d.get("status", "unknown"),
                             task_count=len(d.get("tasks", [])),
                             save_point_count=len(sps),
-                            created_at=sps[0].get("created_at") if sps and isinstance(sps[0], dict) else d.get("created_at"),
-                            updated_at=sps[-1].get("created_at") if sps and isinstance(sps[-1], dict) else d.get("updated_at"),
+                            created_at=sps[0].get("created_at")
+                            if sps and isinstance(sps[0], dict)
+                            else d.get("created_at"),
+                            updated_at=sps[-1].get("created_at")
+                            if sps and isinstance(sps[-1], dict)
+                            else d.get("updated_at"),
                             data=d.get("data", {}),
                             failure_reason=d.get("failure_reason"),
                             parent_workflow_id=d.get("parent_workflow_id"),
@@ -1074,11 +1107,7 @@ class WorkflowStore:
             if len(metadata_tree) == 0 and len(workflows_tree) > 0:
                 for wf_id, wf in workflows_tree.items():
                     status = (
-                        wf.status
-                        if hasattr(wf, "status")
-                        else wf.get("status")
-                        if isinstance(wf, dict)
-                        else "unknown"
+                        wf.status if hasattr(wf, "status") else wf.get("status") if isinstance(wf, dict) else "unknown"
                     )
                     if status not in ("completed", "cancelled"):
                         result.append(wf_id)
@@ -1099,8 +1128,7 @@ class WorkflowStore:
         with self.db.transaction() as connection:
             root = connection.root()
             return [
-                (wf_id, wf.to_dict() if hasattr(wf, "to_dict") else dict(wf))
-                for wf_id, wf in root["workflows"].items()
+                (wf_id, wf.to_dict() if hasattr(wf, "to_dict") else dict(wf)) for wf_id, wf in root["workflows"].items()
             ]
 
     @_retry_on_conflict()
@@ -1263,4 +1291,3 @@ class WorkflowStore:
                     instance.workspace_archive = None
                 instance.workspace_version = current_version + 1
                 instance._p_changed = True
-

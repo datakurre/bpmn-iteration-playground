@@ -15,8 +15,8 @@ with sync_playwright() as playwright:
     page.goto("http://127.0.0.1:8000/", wait_until="domcontentloaded")
     # /api/templates repopulates #template-select asynchronously and can reorder it, so pin
     # the workflow explicitly instead of relying on the option order at click time.
-    page.select_option("#template-select", "graph_agent/data/workflows/contract_review.bpmn")
-    page.fill("#contract", "Review this agreement for compliance.")
+    page.select_option("#template-select", "graph_agent/data/workflows/agent_review_cycle.bpmn")
+    page.fill("#contract", "Run the review cycle.")
     page.click("#start")
     page.wait_for_url("**/instance/*")
     page.locator("button[data-purge]").nth(2).wait_for(timeout=10000)
@@ -29,9 +29,7 @@ with sync_playwright() as playwright:
     # before_harness; row 0 is the human_wait savepoint, which belongs to the UserTask.
     # Anchoring on row 1 or 2 must therefore purge NOTHING -- both belong to the anchor task,
     # and nothing older than that task exists.
-    anchor_ids = page.locator("button[data-purge]").evaluate_all(
-        "buttons => buttons.map(b => b.dataset.purge)"
-    )
+    anchor_ids = page.locator("button[data-purge]").evaluate_all("buttons => buttons.map(b => b.dataset.purge)")
     dialogs: list[str] = []
     page.once("dialog", lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()))
     page.locator("button[data-purge]").nth(2).click()

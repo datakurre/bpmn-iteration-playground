@@ -41,7 +41,12 @@ def build_router(get_project_service: Callable[[], ProjectService]) -> APIRouter
     ) -> list[dict[str, Any]]:
         return get_project_service().list_projects()
 
-    @router.get("/project/current", response_model=ProjectDetail, tags=["Projects"], summary="Get current workspace Project detail")
+    @router.get(
+        "/project/current",
+        response_model=ProjectDetail,
+        tags=["Projects"],
+        summary="Get current workspace Project detail",
+    )
     async def get_current_project(
         role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
     ) -> dict[str, Any]:

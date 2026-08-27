@@ -33,9 +33,9 @@ def _validate_variables(v: dict[str, Any]) -> dict[str, Any]:
 
 class StartWorkflowRequest(BaseModel):
     bpmn_path: str = Field(
-        default="graph_agent/data/workflows/contract_review.bpmn",
+        default="graph_agent/data/workflows/interactive_session.bpmn",
         description="Path to the BPMN file to execute",
-        json_schema_extra={"example": "graph_agent/data/workflows/contract_review.bpmn"},
+        json_schema_extra={"example": "graph_agent/data/workflows/interactive_session.bpmn"},
     )
     process_id: str | None = Field(
         default=None,
@@ -44,7 +44,7 @@ class StartWorkflowRequest(BaseModel):
     variables: dict[str, Any] = Field(
         default_factory=dict,
         description="Initial workflow variables",
-        json_schema_extra={"example": {"contract": "Review this agreement for compliance."}},
+        json_schema_extra={"example": {"user_prompt": "Implement the requested feature."}},
     )
 
     @field_validator("variables")
@@ -334,5 +334,3 @@ class ExtendRequest(BaseModel):
     after: str  # BPMN ID to insert after
     nodes: list[ExtendNodeRequest]
     after_flow: str | None = None
-
-

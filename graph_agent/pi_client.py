@@ -127,9 +127,7 @@ def _final_text(events: list[dict[str, Any]]) -> str:
         if isinstance(content, str):
             return content
         return "".join(
-            block.get("text", "")
-            for block in content
-            if isinstance(block, dict) and block.get("type") == "text"
+            block.get("text", "") for block in content if isinstance(block, dict) and block.get("type") == "text"
         )
     for event in reversed(events):
         messages = event.get("messages")
@@ -142,9 +140,7 @@ def _final_text(events: list[dict[str, Any]]) -> str:
             if isinstance(content, str):
                 return content
             return "".join(
-                block.get("text", "")
-                for block in content
-                if isinstance(block, dict) and block.get("type") == "text"
+                block.get("text", "") for block in content if isinstance(block, dict) and block.get("type") == "text"
             )
     return ""
 
@@ -207,7 +203,11 @@ def _parse_json(text: str) -> dict[str, Any] | None:
     required = {"status", "summary", "findings", "artifacts", "next_action"}
     if not required.issubset(value):
         return None
-    if not isinstance(value["status"], str) or not isinstance(value["summary"], str) or not isinstance(value["next_action"], str):
+    if (
+        not isinstance(value["status"], str)
+        or not isinstance(value["summary"], str)
+        or not isinstance(value["next_action"], str)
+    ):
         return None
     if not isinstance(value["findings"], list) or not isinstance(value["artifacts"], list):
         return None
@@ -241,7 +241,11 @@ class PiClient:
             elif cand.is_file():
                 configured_executable = str(cand.resolve())
 
-        if not configured_executable and demo_executable.is_file() and (os.getenv("PI_OFFLINE") == "1" or not os.getenv("OPENAI_API_KEY")):
+        if (
+            not configured_executable
+            and demo_executable.is_file()
+            and (os.getenv("PI_OFFLINE") == "1" or not os.getenv("OPENAI_API_KEY"))
+        ):
             configured_executable = str(demo_executable)
         self.executable = configured_executable or (str(local_executable) if local_executable.is_file() else "pi")
         self.timeout_seconds = timeout_seconds
@@ -260,7 +264,11 @@ class PiClient:
     ) -> PiResult:
         demo_executable = str(Path(__file__).resolve().parent / "data" / "pi-demo")
         executable = self.executable
-        if not self._explicit_executable and (os.getenv("PI_OFFLINE") == "1" or (Path(__file__).resolve().parents[1] / ".pi_offline").is_file()) and Path(demo_executable).is_file():
+        if (
+            not self._explicit_executable
+            and (os.getenv("PI_OFFLINE") == "1" or (Path(__file__).resolve().parents[1] / ".pi_offline").is_file())
+            and Path(demo_executable).is_file()
+        ):
             executable = demo_executable
         result = await self._execute(
             executable,

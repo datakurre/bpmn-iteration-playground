@@ -15,8 +15,8 @@ with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
     page = browser.new_page(viewport={"width": 1440, "height": 1000})
     page.goto("http://127.0.0.1:8000/", wait_until="domcontentloaded")
-    page.select_option("#template-select", "graph_agent/data/workflows/contract_review.bpmn")
-    page.fill("#contract", "Review this agreement for compliance.")
+    page.select_option("#template-select", "graph_agent/data/workflows/agent_review_cycle.bpmn")
+    page.fill("#contract", "Run the review cycle.")
     page.click("#start")
     page.wait_for_url("**/instance/*")
     workflow_id = page.url.rstrip("/").split("/")[-1]
@@ -27,8 +27,7 @@ with sync_playwright() as playwright:
     card = page.locator("#workspace-files-card")
     card.wait_for(state="visible", timeout=10000)
     assert not card.evaluate("el => el.classList.contains('hidden')"), (
-        "workspace files card is still hidden; the panel is bound to a key the state payload "
-        "does not carry"
+        "workspace files card is still hidden; the panel is bound to a key the state payload does not carry"
     )
 
     rows = page.locator("#ws-files a[href*='/workspace/file']")

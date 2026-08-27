@@ -57,11 +57,7 @@ async def add_save_point(
 ) -> None:
     save_points = record.setdefault("save_points", [])
     task_id_str = str(task.id) if task is not None else ""
-    task_name_str = (
-        getattr(task.task_spec, "bpmn_name", task.task_spec.name)
-        if task is not None
-        else phase
-    )
+    task_name_str = getattr(task.task_spec, "bpmn_name", task.task_spec.name) if task is not None else phase
     key = f"{task_id_str}:{phase}{key_suffix}" if task_id_str else f"{phase}:{uuid.uuid4().hex[:8]}{key_suffix}"
     if any(point.get("key") == key for point in save_points):
         return
@@ -132,9 +128,7 @@ def _prune_save_points(service: WorkflowService, record: dict[str, Any], task_id
             service.store.delete_save_point(save_point_id)
         except Exception as exc:
             logger.warning("Failed to delete superseded savepoint %s: %s", save_point_id, exc)
-    logger.info(
-        "Pruned %d superseded savepoint(s) for task %s phase %s", len(superseded), task_id, phase
-    )
+    logger.info("Pruned %d superseded savepoint(s) for task %s phase %s", len(superseded), task_id, phase)
 
 
 def _savepoint_to_detail(point: dict[str, Any], workflow_id: str) -> dict[str, Any]:
@@ -209,9 +203,7 @@ async def purge_save_points(
         if boundary_task_id is None:
             cutoff = before
         else:
-            cutoff = min(
-                p["created_at"] for p in points if p.get("task_id") == boundary_task_id
-            )
+            cutoff = min(p["created_at"] for p in points if p.get("task_id") == boundary_task_id)
 
         purge_ids = {p["id"] for p in points if p.get("created_at") < cutoff and p.get("id")}
         if purge_ids:

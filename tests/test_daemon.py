@@ -112,9 +112,7 @@ def test_is_daemon_alive_true_when_health_check_succeeds() -> None:
     with patch("graph_agent.daemon.httpx.get") as mock_get:
         mock_get.return_value = MagicMock(status_code=200)
         assert is_daemon_alive(info, check_http=True) is True
-        mock_get.assert_called_once_with(
-            "http://127.0.0.1:12345/health", headers={"X-Admin-Token": "tok"}, timeout=1.0
-        )
+        mock_get.assert_called_once_with("http://127.0.0.1:12345/health", headers={"X-Admin-Token": "tok"}, timeout=1.0)
 
 
 def test_is_daemon_alive_false_on_non_200() -> None:

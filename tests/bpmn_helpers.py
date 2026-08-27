@@ -19,9 +19,7 @@ def minimal_bpmn(
         tag = task_type if ":" in task_type else f"bpmn:{task_type}"
         flow_id = f"Flow_{flow_counter}"
         flow_counter += 1
-        flow_xml_parts.append(
-            f'<bpmn:sequenceFlow id="{flow_id}" sourceRef="{prev_node}" targetRef="{task_id}" />'
-        )
+        flow_xml_parts.append(f'<bpmn:sequenceFlow id="{flow_id}" sourceRef="{prev_node}" targetRef="{task_id}" />')
         task_xml_parts.append(
             f'<{tag} id="{task_id}" name="{task_id}">'
             f"<bpmn:incoming>{flow_id}</bpmn:incoming>"
@@ -31,9 +29,7 @@ def minimal_bpmn(
         prev_node = task_id
 
     final_flow_id = f"Flow_{flow_counter}"
-    flow_xml_parts.append(
-        f'<bpmn:sequenceFlow id="{final_flow_id}" sourceRef="{prev_node}" targetRef="EndEvent_1" />'
-    )
+    flow_xml_parts.append(f'<bpmn:sequenceFlow id="{final_flow_id}" sourceRef="{prev_node}" targetRef="EndEvent_1" />')
 
     tasks_str = "\n    ".join(task_xml_parts)
     flows_str = "\n    ".join(flow_xml_parts)
@@ -84,14 +80,9 @@ def linear_bpmn(
         tag = task_type if ":" in task_type else f"bpmn:{task_type}"
         flow_id = f"Flow_{flow_counter}"
         flow_counter += 1
-        flow_xml_parts.append(
-            f'<bpmn:sequenceFlow id="{flow_id}" sourceRef="{prev_node}" targetRef="{task_id}" />'
-        )
+        flow_xml_parts.append(f'<bpmn:sequenceFlow id="{flow_id}" sourceRef="{prev_node}" targetRef="{task_id}" />')
 
-        props_xml = [
-            f'<camunda:property name="{k}" value="{v}" />'
-            for k, v in properties.items()
-        ]
+        props_xml = [f'<camunda:property name="{k}" value="{v}" />' for k, v in properties.items()]
         ext_str = (
             f"<bpmn:extensionElements><camunda:properties>{''.join(props_xml)}</camunda:properties></bpmn:extensionElements>"
             if props_xml
@@ -109,9 +100,7 @@ def linear_bpmn(
         prev_node = task_id
 
     final_flow_id = f"Flow_{flow_counter}"
-    flow_xml_parts.append(
-        f'<bpmn:sequenceFlow id="{final_flow_id}" sourceRef="{prev_node}" targetRef="EndEvent_1" />'
-    )
+    flow_xml_parts.append(f'<bpmn:sequenceFlow id="{final_flow_id}" sourceRef="{prev_node}" targetRef="EndEvent_1" />')
 
     tasks_str = "\n    ".join(task_xml_parts)
     flows_str = "\n    ".join(flow_xml_parts)
@@ -183,13 +172,9 @@ def bpmn_with_camunda_service_task(
 
     props_str = "\n          ".join(props_xml)
 
-    inputs_xml = [
-        f'<camunda:inputParameter name="{k}">{v}</camunda:inputParameter>'
-        for k, v in input_params.items()
-    ]
+    inputs_xml = [f'<camunda:inputParameter name="{k}">{v}</camunda:inputParameter>' for k, v in input_params.items()]
     outputs_xml = [
-        f'<camunda:outputParameter name="{k}">{v}</camunda:outputParameter>'
-        for k, v in output_params.items()
+        f'<camunda:outputParameter name="{k}">{v}</camunda:outputParameter>' for k, v in output_params.items()
     ]
     io_str = "\n          ".join(inputs_xml + outputs_xml)
 

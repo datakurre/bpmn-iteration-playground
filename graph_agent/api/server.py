@@ -53,7 +53,6 @@ def _mount_static_files(app: FastAPI) -> None:
 
 
 def create_app(service: WorkflowService | None = None, workspace: Workspace | None = None) -> FastAPI:
-
     """Build the FastAPI app.
 
     `workspace` only matters when `service` is omitted -- it decides where a *default*
@@ -133,7 +132,6 @@ def create_app(service: WorkflowService | None = None, workspace: Workspace | No
     app.add_middleware(OriginHostGuardMiddleware)
 
     _mount_static_files(app)
-
 
     app.include_router(system.build_router(get_service))
     app.include_router(pages.build_router(get_service))

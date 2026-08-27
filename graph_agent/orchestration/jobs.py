@@ -47,6 +47,7 @@ DEFAULT_HARNESS_TYPE = "pi_agent"
 # Only an explicit retry_task() call clears the flag.
 WORKSPACE_CONFLICT_MESSAGE = "workspace changed during this turn; re-run against current state"
 
+
 def _sanitize(value: Any, max_length: int = 50_000, depth: int = 0, max_depth: int = 10) -> Any:
     if depth > max_depth:
         return "[nested too deep]"
@@ -143,7 +144,9 @@ def capabilities(service: WorkflowService, task: Any) -> AdapterCapabilities:
 
 
 def jobs_for_workflow(service: WorkflowService, workflow_id: str) -> list[asyncio.Task[None]]:
-    return [job for task_id, job in service.jobs.items() if not job.done() and service._job_workflow(task_id, workflow_id)]
+    return [
+        job for task_id, job in service.jobs.items() if not job.done() and service._job_workflow(task_id, workflow_id)
+    ]
 
 
 def job_workflow(service: WorkflowService, task_id: str, workflow_id: str) -> bool:
@@ -187,9 +190,7 @@ async def dispatch(service: WorkflowService, workflow_id: str, _lock_held: bool 
                 continue
             task_key = str(task.id)
             existing_job = jobs.get(task_key)
-            if existing_job and (
-                existing_job.get("status") == "running" or existing_job.get("conflict")
-            ):
+            if existing_job and (existing_job.get("status") == "running" or existing_job.get("conflict")):
                 continue
             if task_key in service.jobs and not service.jobs[task_key].done():
                 continue
@@ -204,9 +205,7 @@ async def dispatch(service: WorkflowService, workflow_id: str, _lock_held: bool 
                     source_data["__current_spec"] = service.get_spec_xml(workflow_id)
             scope_inputs = resolve_scope_inputs(extensions.get("inputParameters", {}), source_data)
             task.data = scope_inputs
-            service._record_scope(
-                record, task, "ServiceTask", status="active", inputs=scope_inputs, data=scope_inputs
-            )
+            service._record_scope(record, task, "ServiceTask", status="active", inputs=scope_inputs, data=scope_inputs)
 
             record["status"] = "waiting_pi"
             await service._add_save_point(
@@ -360,13 +359,16 @@ async def run_pi(service: WorkflowService, workflow_id: str, task_id: str) -> No
 
             async def _on_event(ev: dict[str, Any]) -> None:
                 with contextlib.suppress(Exception):
-                    await ws_manager.broadcast(workflow_id, {
-                        "type": "pi_event",
-                        "workflow_id": workflow_id,
-                        "task_id": task_id,
-                        "task_name": getattr(task, "name", task_id),
-                        "event": ev,
-                    })
+                    await ws_manager.broadcast(
+                        workflow_id,
+                        {
+                            "type": "pi_event",
+                            "workflow_id": workflow_id,
+                            "task_id": task_id,
+                            "task_name": getattr(task, "name", task_id),
+                            "event": ev,
+                        },
+                    )
 
             result = await adapter.run(prompt, config, cwd, on_event=_on_event)
 
@@ -443,12 +445,15 @@ async def complete_pi(  # noqa: C901, PLR0912, PLR0915 -- reconciles one agent-t
         if net_data:
             record["network"] = net_data
             with contextlib.suppress(Exception):
-                await ws_manager.broadcast(workflow_id, {
-                    "type": "network_summary",
-                    "workflow_id": workflow_id,
-                    "task_id": task_id,
-                    "network": net_data,
-                })
+                await ws_manager.broadcast(
+                    workflow_id,
+                    {
+                        "type": "network_summary",
+                        "workflow_id": workflow_id,
+                        "task_id": task_id,
+                        "network": net_data,
+                    },
+                )
 
         policy_err = getattr(result, "policy_error", None)
         if policy_err:
@@ -469,9 +474,7 @@ async def complete_pi(  # noqa: C901, PLR0912, PLR0915 -- reconciles one agent-t
                 if harness_caps.no_output_hint:
                     failure_reason = f"{failure_reason} {harness_caps.no_output_hint}"
             elif not failure_reason:
-                failure_reason = (
-                    f"{harness_label} returned output that did not match the required JSON result schema"
-                )
+                failure_reason = f"{harness_label} returned output that did not match the required JSON result schema"
 
         sanitized_output = _sanitize_output(result.output)
 
@@ -524,9 +527,7 @@ async def complete_pi(  # noqa: C901, PLR0912, PLR0915 -- reconciles one agent-t
         published: dict[str, Any] = {}
         for target_var, source_expr in output_params.items():
             source_key = (
-                source_expr[2:-1]
-                if source_expr.startswith("${") and source_expr.endswith("}")
-                else source_expr
+                source_expr[2:-1] if source_expr.startswith("${") and source_expr.endswith("}") else source_expr
             )
             val = _resolve_path(source_key, sources) if "." in source_key else sources.get(source_key)
             # Only actionable when the agent actually produced a result: on a failed
@@ -564,7 +565,9 @@ async def complete_pi(  # noqa: C901, PLR0912, PLR0915 -- reconciles one agent-t
             f":run_{generation}:attempt_{attempt}",
         )
 
-        scope_status = "completed" if result.status == "success" else ("cancelled" if result.status == "cancelled" else "failed")
+        scope_status = (
+            "completed" if result.status == "success" else ("cancelled" if result.status == "cancelled" else "failed")
+        )
         service._record_scope(
             record, task, "ServiceTask", status=scope_status, data=dict(task.data), outputs=published, completed=True
         )
@@ -602,7 +605,11 @@ async def complete_pi(  # noqa: C901, PLR0912, PLR0915 -- reconciles one agent-t
                 data={"failure_reason": failure_reason, "exit_code": result.exit_code},
             )
 
-        status = service._status(workflow) if result.status == "success" else ("cancelled" if result.status == "cancelled" else "failed")
+        status = (
+            service._status(workflow)
+            if result.status == "success"
+            else ("cancelled" if result.status == "cancelled" else "failed")
+        )
         if status == "failed":
             service.events.emit(
                 "workflow_failed",

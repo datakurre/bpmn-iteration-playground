@@ -7,6 +7,7 @@ BASE_URL = os.environ.get("APP_URL", "http://localhost:8000")
 OUTPUT_DIR = Path(__file__).resolve().parents[1] / "docs" / "images"
 CDP_URL = "http://127.0.0.1:9222"
 
+
 def main():  # noqa: PLR0915 -- linear step-by-step manual walkthrough script; splitting it up would obscure the sequence it demonstrates
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     print(f"Connecting to Host Browser over CDP at {CDP_URL}...")
@@ -73,7 +74,9 @@ def main():  # noqa: PLR0915 -- linear step-by-step manual walkthrough script; s
         # Step 4: Submit Human Review Decision
         print("4. Filling and submitting Human Review Form (FormJS)...")
         page.locator("input[id$='decision']").fill("approved")
-        page.locator("input[id$='notes']").fill("Approved: GDPR compliance and 2x ARR liability caps verified from contract.")
+        page.locator("input[id$='notes']").fill(
+            "Approved: GDPR compliance and 2x ARR liability caps verified from contract."
+        )
         page.locator("#submit").click()
 
         print("   Waiting for workflow state -> 'completed'...")
@@ -127,6 +130,7 @@ def main():  # noqa: PLR0915 -- linear step-by-step manual walkthrough script; s
             print(f"WARNING: Browser recorded errors: {errors}")
         else:
             print("SUCCESS: Full host browser walkthrough completed with zero page errors!")
+
 
 if __name__ == "__main__":
     main()

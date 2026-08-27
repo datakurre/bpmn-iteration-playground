@@ -53,7 +53,10 @@ class RunsScreen(Screen):  # type: ignore
 
             yield Header(show_clock=True)
             with Container(id="runs-container"):
-                yield Static("[b]Workflow Runs[/b]  (Enter/d: Detail, i: Inbox, s: Start, e: Editor, r: Refresh, m: Merge, c: Cancel)", id="runs-title")
+                yield Static(
+                    "[b]Workflow Runs[/b]  (Enter/d: Detail, i: Inbox, s: Start, e: Editor, r: Refresh, m: Merge, c: Cancel)",
+                    id="runs-title",
+                )
                 yield DataTable(id="runs-table", cursor_type="row")
                 with Horizontal(id="runs-actions"):
                     yield Button("View Detail [d]", id="btn-detail", variant="primary")
@@ -206,8 +209,6 @@ class RunsScreen(Screen):  # type: ignore
             self.notify(f"Opened BPMN editor at {url}", severity="information")
         except Exception as exc:
             self.notify(f"Failed to open browser: {exc}", severity="error")
-
-
 
     async def on_button_pressed(self, event: Any) -> None:
         btn_id = getattr(event.button, "id", "")

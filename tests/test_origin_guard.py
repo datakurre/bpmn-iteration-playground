@@ -36,15 +36,17 @@ def test_post_with_mismatched_origin_is_blocked_before_reaching_the_route() -> N
     with _client() as client:
         resp = client.post(
             "/workflow/start",
-            json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {}},
+            json={"bpmn_path": "graph_agent/data/workflows/plan_and_execute.bpmn", "variables": {}},
             headers={"Origin": "https://evil.example"},
         )
     assert resp.status_code == 403
 
 
 def test_websocket_with_mismatched_origin_is_closed() -> None:
-    with _client() as client, pytest.raises(WebSocketDisconnect) as exc_info, client.websocket_connect(
-        "/ws/instance/nonexistent", headers={"Origin": "https://evil.example"}
+    with (
+        _client() as client,
+        pytest.raises(WebSocketDisconnect) as exc_info,
+        client.websocket_connect("/ws/instance/nonexistent", headers={"Origin": "https://evil.example"}),
     ):
         pass
     assert exc_info.value.code == 4403

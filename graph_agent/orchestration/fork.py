@@ -35,7 +35,9 @@ async def fork(
             raise ValueError(
                 f"Cannot fork child workflow '{workflow_id}' directly; fork root workflow '{source['parent_workflow_id']}' instead"
             )
-        logger.info("Forking workflow from savepoint", extra={"workflow_id": workflow_id, "save_point_id": save_point_id})
+        logger.info(
+            "Forking workflow from savepoint", extra={"workflow_id": workflow_id, "save_point_id": save_point_id}
+        )
         point = service.store.load_save_point(save_point_id)
         if point is None:
             point = next(

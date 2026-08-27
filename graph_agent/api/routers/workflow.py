@@ -16,7 +16,9 @@ from graph_agent.workflow_service import WorkflowNotFoundError, WorkflowService
 def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:
     router = APIRouter()
 
-    @router.post("/workflow/start", response_model=WorkflowState, tags=["Workflow"], summary="Start a new workflow instance")
+    @router.post(
+        "/workflow/start", response_model=WorkflowState, tags=["Workflow"], summary="Start a new workflow instance"
+    )
     async def start(
         request: StartWorkflowRequest,
         role: Role = require_role(Role.ADMIN, Role.OPERATOR),
@@ -26,7 +28,12 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:
         except FileNotFoundError as exc:
             raise HTTPException(404, "BPMN file not found") from exc
 
-    @router.get("/workflow/{workflow_id}/state", response_model=WorkflowState, tags=["Workflow"], summary="Get workflow execution state")
+    @router.get(
+        "/workflow/{workflow_id}/state",
+        response_model=WorkflowState,
+        tags=["Workflow"],
+        summary="Get workflow execution state",
+    )
     async def state(
         workflow_id: str,
         role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
@@ -36,7 +43,13 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:
         except WorkflowNotFoundError as exc:
             raise HTTPException(404, "workflow not found") from exc
 
-    @router.post("/workflow/{workflow_id}/submit-task/{task_id}", response_model=WorkflowState, tags=["Workflow"], summary="Submit human task by ID", deprecated=True)
+    @router.post(
+        "/workflow/{workflow_id}/submit-task/{task_id}",
+        response_model=WorkflowState,
+        tags=["Workflow"],
+        summary="Submit human task by ID",
+        deprecated=True,
+    )
     async def submit_task(
         workflow_id: str,
         task_id: str,
@@ -50,7 +63,12 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:
         except (KeyError, ValueError) as exc:
             raise HTTPException(409, str(exc)) from exc
 
-    @router.post("/workflow/{workflow_id}/submit-task", response_model=WorkflowState, tags=["Workflow"], summary="Submit human task via JSON body")
+    @router.post(
+        "/workflow/{workflow_id}/submit-task",
+        response_model=WorkflowState,
+        tags=["Workflow"],
+        summary="Submit human task via JSON body",
+    )
     async def submit_task_body(
         workflow_id: str,
         request: SubmitTaskRequest,

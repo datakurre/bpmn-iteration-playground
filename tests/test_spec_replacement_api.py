@@ -96,7 +96,7 @@ async def test_put_spec_removes_active_task_returns_409(tmp_path: Path) -> None:
         app = create_app(service)
 
         # Start workflow with Task_A -> Task_B
-        v1_xml = linear_bpmn("Process_1", [("Task_A", "userTask", {}) , ("Task_B", "userTask", {})])
+        v1_xml = linear_bpmn("Process_1", [("Task_A", "userTask", {}), ("Task_B", "userTask", {})])
         bpmn_file = _write_bpmn(tmp_path, "v1.bpmn", v1_xml)
         instance = await service.start(bpmn_file, {})
         wf_id = instance["workflow_id"]
@@ -334,4 +334,3 @@ async def test_spec_invalid_utf8_returns_400(tmp_path: Path) -> None:
             assert "UTF-8" in resp_val.json()["detail"]
     finally:
         store.close()
-

@@ -63,7 +63,7 @@ async def test_create_project_rejects_duplicate_slug(project_service: ProjectSer
 @pytest.mark.anyio
 async def test_list_projects_only_lists_project_templates(project_service: ProjectService) -> None:
     await project_service.create("Alpha", BPMN_PATH)
-    await project_service.service.start("graph_agent/data/workflows/bug_triage.bpmn", variables={"bug_report": "x"})
+    await project_service.service.start("graph_agent/data/workflows/plan_and_execute.bpmn", variables={"goal": "x"})
     projects = project_service.list_projects()
     assert [p["slug"] for p in projects] == ["alpha"]
 

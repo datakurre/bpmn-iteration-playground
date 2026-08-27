@@ -9,11 +9,11 @@ def test_orphan_recovery_on_startup() -> None:
     async def scenario() -> None:
         store = WorkflowStore(":memory:")
         runner = WorkflowRunner()
-        workflow, pid = runner.load_workflow("graph_agent/data/workflows/contract_review.bpmn")
+        workflow, pid = runner.load_workflow("graph_agent/data/workflows/plan_and_execute.bpmn")
         record = runner.record(
             "orphaned-wf-1",
             workflow,
-            "graph_agent/data/workflows/contract_review.bpmn",
+            "graph_agent/data/workflows/plan_and_execute.bpmn",
             pid,
             "waiting_pi",
             jobs={"task-1": {"status": "running"}},

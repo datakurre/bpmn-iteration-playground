@@ -77,9 +77,7 @@ class GraphExtendAdapter(BaseAdapter):
 
         if self.service is not None:
             try:
-                result = await self.service.extend_graph(
-                    workflow_id, req, allow_mid_execution=True
-                )
+                result = await self.service.extend_graph(workflow_id, req, allow_mid_execution=True)
                 return AgentResult(
                     status="success",
                     output={

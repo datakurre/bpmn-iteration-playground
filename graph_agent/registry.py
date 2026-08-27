@@ -30,14 +30,10 @@ class WorkflowTemplate:
         }
 
 
-# The bundled templates ship as package data (graph_agent/data/workflows/) and in models/
+# The bundled templates ship as package data (graph_agent/data/workflows/)
 # so a `WorkflowRegistry()` default finds real templates when this package is installed or run locally.
 BUNDLED_WORKFLOWS_DIR = Path(__file__).resolve().parent / "data" / "workflows"
-BUNDLED_MODELS_DIR = (
-    BUNDLED_WORKFLOWS_DIR
-    if BUNDLED_WORKFLOWS_DIR.exists()
-    else (Path(__file__).resolve().parents[1] / "models")
-)
+BUNDLED_MODELS_DIR = BUNDLED_WORKFLOWS_DIR
 
 
 class WorkflowRegistry:
@@ -128,9 +124,7 @@ class WorkflowRegistry:
         """
         camunda_ns = dict(ns)
         camunda_ns["camunda"] = "http://camunda.org/schema/1.0/bpmn"
-        for prop in process.findall(
-            "./bpmn:extensionElements/camunda:properties/camunda:property", camunda_ns
-        ):
+        for prop in process.findall("./bpmn:extensionElements/camunda:properties/camunda:property", camunda_ns):
             if prop.get("name") == "project":
                 return prop.get("value", "").strip().lower() in ("true", "1", "yes")
         return False

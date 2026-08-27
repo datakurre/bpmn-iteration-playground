@@ -87,9 +87,7 @@ async def test_snapshot_commits_written_files_and_returns_a_sha(tmp_path: Path) 
 
     assert ref is not None
     assert len(ref) == 40  # a full git SHA
-    log = subprocess.run(
-        ["git", "log", "--oneline", "-1"], cwd=path, capture_output=True, text=True, check=True
-    ).stdout
+    log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=path, capture_output=True, text=True, check=True).stdout
     assert "after_harness" in log
 
 

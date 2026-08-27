@@ -38,11 +38,7 @@ async def test_bootstrap_starts_at_prompt(tmp_path: Path) -> None:
         service = WorkflowService(store)
         state = await service.start(str(BPMN_PATH))
         assert state["status"] == "waiting_human"
-        prompt_tasks = [
-            t
-            for t in state["tasks"]
-            if t["bpmn_id"] == "UserTask_Prompt" and t["state"] == "READY"
-        ]
+        prompt_tasks = [t for t in state["tasks"] if t["bpmn_id"] == "UserTask_Prompt" and t["state"] == "READY"]
         assert len(prompt_tasks) == 1
     finally:
         store.close()
@@ -174,11 +170,7 @@ async def test_bootstrap_full_cycle(tmp_path: Path) -> None:
         # 6. Should loop back to UserTask_Prompt
         final_state = service.state(wf_id)
         assert final_state["status"] == "waiting_human"
-        prompt_tasks = [
-            t
-            for t in final_state["tasks"]
-            if t["bpmn_id"] == "UserTask_Prompt" and t["state"] == "READY"
-        ]
+        prompt_tasks = [t for t in final_state["tasks"] if t["bpmn_id"] == "UserTask_Prompt" and t["state"] == "READY"]
         assert len(prompt_tasks) == 1
     finally:
         store.close()
@@ -412,4 +404,3 @@ async def test_bootstrap_multiple_extension_cycles(tmp_path: Path) -> None:
 
     finally:
         store.close()
-

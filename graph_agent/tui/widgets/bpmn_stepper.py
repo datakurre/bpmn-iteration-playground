@@ -10,6 +10,7 @@ else:
     try:
         from textual.widgets import Static
     except ImportError:
+
         class Static:  # type: ignore[no-redef]
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
@@ -54,19 +55,34 @@ class BpmnStepper(Static):
 
         standard_keywords = ("prompt", "plan", "lint", "apply", "extend", "review", "start", "end", "root")
         spliced_tasks = [
-            t for t in tasks
+            t
+            for t in tasks
             if not any(k in t.get("name", "").lower() or k in t.get("id", "").lower() for k in standard_keywords)
         ]
         spliced_completed = sum(1 for t in spliced_tasks if t.get("state") == "COMPLETED")
         spliced_total = len(spliced_tasks)
 
-        p4_active = any(t.get("state") in ("READY", "STARTED") for t in spliced_tasks) or (p3_done and not p5_active and not p5_done and status == "running")
+        p4_active = any(t.get("state") in ("READY", "STARTED") for t in spliced_tasks) or (
+            p3_done and not p5_active and not p5_done and status == "running"
+        )
         p4_done = (spliced_total > 0 and spliced_completed == spliced_total) or (p3_done and (p5_active or p5_done))
 
         steps: list[str] = []
-        steps.append("[bold cyan]▶ 1. Prompt User[/bold cyan]" if p1_active else ("[green]✓ 1. Prompt[/green]" if p1_done else "[dim]1. Prompt[/dim]"))
-        steps.append("[bold cyan]⚙ 2. Planner Loop[/bold cyan]" if p2_active else ("[green]✓ 2. Planner[/green]" if p2_done else "[dim]2. Planner[/dim]"))
-        steps.append("[bold cyan]⚡ 3. Splicing BPMN[/bold cyan]" if p3_active else ("[green]✓ 3. Migrated[/green]" if p3_done else "[dim]3. Migrate[/dim]"))
+        steps.append(
+            "[bold cyan]▶ 1. Prompt User[/bold cyan]"
+            if p1_active
+            else ("[green]✓ 1. Prompt[/green]" if p1_done else "[dim]1. Prompt[/dim]")
+        )
+        steps.append(
+            "[bold cyan]⚙ 2. Planner Loop[/bold cyan]"
+            if p2_active
+            else ("[green]✓ 2. Planner[/green]" if p2_done else "[dim]2. Planner[/dim]")
+        )
+        steps.append(
+            "[bold cyan]⚡ 3. Splicing BPMN[/bold cyan]"
+            if p3_active
+            else ("[green]✓ 3. Migrated[/green]" if p3_done else "[dim]3. Migrate[/dim]")
+        )
 
         if p4_active:
             cnt_str = f" ({spliced_completed}/{spliced_total})" if spliced_total else ""
@@ -76,7 +92,11 @@ class BpmnStepper(Static):
         else:
             steps.append("[dim]4. Execute[/dim]")
 
-        steps.append("[bold yellow]⏸ 5. Review Checkpoint[/bold yellow]" if p5_active else ("[green]✓ 5. Review[/green]" if p5_done else "[dim]5. Review[/dim]"))
+        steps.append(
+            "[bold yellow]⏸ 5. Review Checkpoint[/bold yellow]"
+            if p5_active
+            else ("[green]✓ 5. Review[/green]" if p5_done else "[dim]5. Review[/dim]")
+        )
         steps.append("[bold green]★ Complete[/bold green]" if status == "completed" else "[dim]Done[/dim]")
         return steps
 

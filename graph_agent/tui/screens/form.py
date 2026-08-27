@@ -15,6 +15,7 @@ else:
         from textual.app import ComposeResult
         from textual.screen import Screen
     except ImportError:
+
         class Screen:  # type: ignore[no-redef]
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
@@ -191,7 +192,6 @@ class FormScreen(Screen):  # type: ignore
 
         return data
 
-
     async def action_submit(self) -> None:
         client = getattr(self.app, "client", None)
         if not client:
@@ -234,8 +234,6 @@ class FormScreen(Screen):  # type: ignore
             self.notify(f"Opened {url} in browser", severity="information")
         except Exception as exc:
             self.notify(f"Failed to open browser: {exc}", severity="error")
-
-
 
     def action_go_back(self) -> None:
         self.app.pop_screen()

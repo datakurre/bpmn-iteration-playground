@@ -38,7 +38,12 @@ def build_router(
     ) -> list[dict[str, Any]]:
         return et_registry.list_templates()
 
-    @router.get("/api/harnesses", response_model=list[HarnessSummary], tags=["Templates"], summary="List registered harness types")
+    @router.get(
+        "/api/harnesses",
+        response_model=list[HarnessSummary],
+        tags=["Templates"],
+        summary="List registered harness types",
+    )
     async def list_harnesses(
         role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
     ) -> list[dict[str, Any]]:
@@ -49,22 +54,34 @@ def build_router(
             if adapter is None:
                 continue
             caps = adapter.capabilities
-            harnesses.append({
-                "harness_type": harness_type,
-                "display_name": caps.display_name,
-                "supports_sessions": caps.supports_sessions,
-                "consumes_prompt": caps.consumes_prompt,
-                "view": caps.view,
-            })
+            harnesses.append(
+                {
+                    "harness_type": harness_type,
+                    "display_name": caps.display_name,
+                    "supports_sessions": caps.supports_sessions,
+                    "consumes_prompt": caps.consumes_prompt,
+                    "view": caps.view,
+                }
+            )
         return harnesses
 
-    @router.get("/api/templates", response_model=list[TemplateSummary], tags=["Templates"], summary="List available BPMN templates")
+    @router.get(
+        "/api/templates",
+        response_model=list[TemplateSummary],
+        tags=["Templates"],
+        summary="List available BPMN templates",
+    )
     async def list_templates(
         role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
     ) -> list[dict[str, Any]]:
         return [t.to_dict() for t in template_registry.list_templates()]
 
-    @router.get("/api/templates/{process_id}", response_model=TemplateSummary, tags=["Templates"], summary="Get template metadata")
+    @router.get(
+        "/api/templates/{process_id}",
+        response_model=TemplateSummary,
+        tags=["Templates"],
+        summary="Get template metadata",
+    )
     async def get_template(
         process_id: str,
         role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
@@ -74,7 +91,12 @@ def build_router(
             raise HTTPException(404, "template not found")
         return template.to_dict()
 
-    @router.get("/api/templates/{process_id}/xml", response_class=PlainTextResponse, tags=["Templates"], summary="Get template raw BPMN XML")
+    @router.get(
+        "/api/templates/{process_id}/xml",
+        response_class=PlainTextResponse,
+        tags=["Templates"],
+        summary="Get template raw BPMN XML",
+    )
     async def get_template_xml(
         process_id: str,
         role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
@@ -85,9 +107,16 @@ def build_router(
         path = Path(template.path)
         if not path.is_file():
             raise HTTPException(404, "template file not found")
-        return PlainTextResponse(await asyncio.to_thread(path.read_text, encoding="utf-8"), media_type="application/xml")
+        return PlainTextResponse(
+            await asyncio.to_thread(path.read_text, encoding="utf-8"), media_type="application/xml"
+        )
 
-    @router.post("/api/workflows/save", response_model=SaveWorkflowResponse, tags=["Templates"], summary="Save or update BPMN XML file")
+    @router.post(
+        "/api/workflows/save",
+        response_model=SaveWorkflowResponse,
+        tags=["Templates"],
+        summary="Save or update BPMN XML file",
+    )
     async def save_workflow(
         body: SaveWorkflowRequest,
         role: Role = require_role(Role.ADMIN, Role.OPERATOR),

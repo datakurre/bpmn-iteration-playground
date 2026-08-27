@@ -12,13 +12,16 @@ from graph_agent.workflow_service import WorkflowService
 @pytest.fixture
 def e2e_client():
     store = WorkflowStore(":memory:")
-    mock = MockAdapter(status="success", output={
-        "status": "success",
-        "summary": "E2E review completed successfully",
-        "findings": ["finding-1", "finding-2"],
-        "artifacts": ["document.md"],
-        "next_action": "continue",
-    })
+    mock = MockAdapter(
+        status="success",
+        output={
+            "status": "success",
+            "summary": "E2E review completed successfully",
+            "findings": ["finding-1", "finding-2"],
+            "artifacts": ["document.md"],
+            "next_action": "continue",
+        },
+    )
     service = WorkflowService(store, mock)
     app = create_app(service=service)
     with TestClient(app) as client:
@@ -50,7 +53,10 @@ def test_e2e_full_workflow_lifecycle(e2e_client: TestClient) -> None:
     # 5. Start a workflow
     start_resp = e2e_client.post(
         "/workflow/start",
-        json={"bpmn_path": "graph_agent/data/workflows/contract_review.bpmn", "variables": {"contract": "E2E Agreement"}},
+        json={
+            "bpmn_path": "graph_agent/data/workflows/agent_review_cycle.bpmn",
+            "variables": {"subject": "E2E Agreement"},
+        },
     )
     assert start_resp.status_code == 200
     wf_id = start_resp.json()["workflow_id"]
@@ -63,6 +69,7 @@ def test_e2e_full_workflow_lifecycle(e2e_client: TestClient) -> None:
 
     # 7. Check instance state and wait for user task to become READY
     import time
+
     task_id = None
     for _ in range(50):
         state_resp = e2e_client.get(f"/instance/{wf_id}/state")
@@ -84,7 +91,7 @@ def test_e2e_full_workflow_lifecycle(e2e_client: TestClient) -> None:
     # 9. Submit task
     submit_resp = e2e_client.post(
         f"/instance/{wf_id}/submit-task/{task_id}",
-        json={"variables": {"decision": "approved", "notes": "Approved in E2E"}},
+        json={"variables": {"cycle_decision": "accepted", "cycle_notes": "Approved in E2E"}},
     )
     assert submit_resp.status_code == 200
     assert submit_resp.json()["status"] == "completed"

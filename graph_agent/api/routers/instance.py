@@ -54,7 +54,12 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
         except (WorkflowNotFoundError, KeyError) as exc:
             raise HTTPException(404, f"save point not found: {exc.args[0]}") from exc
 
-    @router.delete("/instance/{workflow_id}/savepoints", response_model=PurgeSavePointsResponse, tags=["Instance"], summary="Purge savepoints older than an anchor")
+    @router.delete(
+        "/instance/{workflow_id}/savepoints",
+        response_model=PurgeSavePointsResponse,
+        tags=["Instance"],
+        summary="Purge savepoints older than an anchor",
+    )
     async def purge_instance_savepoints(
         workflow_id: str,
         request: PurgeSavePointsRequest,
@@ -69,7 +74,9 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
-    @router.get("/instance/{workflow_id}/state", response_model=WorkflowState, tags=["Instance"], summary="Get instance state")
+    @router.get(
+        "/instance/{workflow_id}/state", response_model=WorkflowState, tags=["Instance"], summary="Get instance state"
+    )
     async def instance_state(
         workflow_id: str,
         role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
@@ -79,7 +86,12 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
         except WorkflowNotFoundError as exc:
             raise HTTPException(404, "workflow not found") from exc
 
-    @router.get("/instance/{workflow_id}/diagram", response_class=PlainTextResponse, tags=["Instance"], summary="Get instance BPMN diagram")
+    @router.get(
+        "/instance/{workflow_id}/diagram",
+        response_class=PlainTextResponse,
+        tags=["Instance"],
+        summary="Get instance BPMN diagram",
+    )
     async def instance_diagram(
         workflow_id: str,
         role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
@@ -91,7 +103,9 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
         except FileNotFoundError as exc:
             raise HTTPException(404, "BPMN diagram not found") from exc
 
-    @router.get("/instance/{workflow_id}/spec", response_class=Response, tags=["Instance"], summary="Get instance BPMN spec XML")
+    @router.get(
+        "/instance/{workflow_id}/spec", response_class=Response, tags=["Instance"], summary="Get instance BPMN spec XML"
+    )
     async def instance_spec(
         workflow_id: str,
         role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
@@ -125,7 +139,9 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
                 raise HTTPException(409, detail=msg) from exc
             raise HTTPException(400, detail=msg) from exc
 
-    @router.post("/instance/{workflow_id}/spec/validate", tags=["Instance"], summary="Validate instance BPMN spec replacement")
+    @router.post(
+        "/instance/{workflow_id}/spec/validate", tags=["Instance"], summary="Validate instance BPMN spec replacement"
+    )
     async def validate_instance_spec(
         workflow_id: str,
         request: Request,
@@ -205,7 +221,9 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
             headers={"Content-Disposition": f'attachment; filename="{workflow_id[:12]}-workspace.tar.zst"'},
         )
 
-    @router.get("/instance/{workflow_id}/workspace/files", tags=["Instance"], summary="Get workspace file metadata manifest")
+    @router.get(
+        "/instance/{workflow_id}/workspace/files", tags=["Instance"], summary="Get workspace file metadata manifest"
+    )
     async def instance_workspace_files(
         workflow_id: str,
         role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
@@ -218,7 +236,9 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
         meta = get_service().get_workspace_metadata(workflow_id)
         return meta or {"file_count": 0, "total_size": 0, "files": [], "artifacts": []}
 
-    @router.get("/instance/{workflow_id}/workspace/file", tags=["Instance"], summary="Extract and view single workspace file")
+    @router.get(
+        "/instance/{workflow_id}/workspace/file", tags=["Instance"], summary="Extract and view single workspace file"
+    )
     async def instance_workspace_file(
         workflow_id: str,
         path: str,
@@ -268,7 +288,12 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
         except (KeyError, ValueError) as exc:
             raise HTTPException(409, str(exc)) from exc
 
-    @router.post("/instance/{workflow_id}/fork/{save_point_id}", response_model=WorkflowState, tags=["Instance"], summary="Fork workflow from savepoint")
+    @router.post(
+        "/instance/{workflow_id}/fork/{save_point_id}",
+        response_model=WorkflowState,
+        tags=["Instance"],
+        summary="Fork workflow from savepoint",
+    )
     async def fork_instance(
         workflow_id: str,
         save_point_id: str,
@@ -295,7 +320,12 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
-    @router.post("/instance/{workflow_id}/submit-task/{task_id}", response_model=WorkflowState, tags=["Instance"], summary="Submit user task")
+    @router.post(
+        "/instance/{workflow_id}/submit-task/{task_id}",
+        response_model=WorkflowState,
+        tags=["Instance"],
+        summary="Submit user task",
+    )
     async def instance_submit_task(
         workflow_id: str,
         task_id: str,
@@ -309,7 +339,9 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
         except (KeyError, ValueError) as exc:
             raise HTTPException(409, str(exc)) from exc
 
-    @router.get("/instance/{workflow_id}/events/pending", tags=["Instance"], summary="List events the instance is waiting on")
+    @router.get(
+        "/instance/{workflow_id}/events/pending", tags=["Instance"], summary="List events the instance is waiting on"
+    )
     async def instance_pending_events(
         workflow_id: str,
         role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
@@ -319,7 +351,12 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
         except WorkflowNotFoundError as exc:
             raise HTTPException(404, "workflow not found") from exc
 
-    @router.post("/instance/{workflow_id}/message/{message_name}", response_model=WorkflowState, tags=["Instance"], summary="Deliver an external message to a waiting catch event")
+    @router.post(
+        "/instance/{workflow_id}/message/{message_name}",
+        response_model=WorkflowState,
+        tags=["Instance"],
+        summary="Deliver an external message to a waiting catch event",
+    )
     async def instance_message(
         workflow_id: str,
         message_name: str,
@@ -333,7 +370,12 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
         except KeyError as exc:
             raise HTTPException(409, str(exc)) from exc
 
-    @router.post("/instance/{workflow_id}/retry/{task_id}", response_model=WorkflowState, tags=["Instance"], summary="Retry failed service task")
+    @router.post(
+        "/instance/{workflow_id}/retry/{task_id}",
+        response_model=WorkflowState,
+        tags=["Instance"],
+        summary="Retry failed service task",
+    )
     async def retry_instance_task(
         workflow_id: str,
         task_id: str,
@@ -346,7 +388,12 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
         except (KeyError, ValueError) as exc:
             raise HTTPException(409, str(exc)) from exc
 
-    @router.post("/instance/{workflow_id}/cancel", response_model=WorkflowState, tags=["Instance"], summary="Cancel running workflow instance")
+    @router.post(
+        "/instance/{workflow_id}/cancel",
+        response_model=WorkflowState,
+        tags=["Instance"],
+        summary="Cancel running workflow instance",
+    )
     async def cancel_instance(
         workflow_id: str,
         role: Role = require_role(Role.ADMIN, Role.OPERATOR),
@@ -358,7 +405,12 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
         except KeyError as exc:
             raise HTTPException(404, "workflow not found") from exc
 
-    @router.post("/instance/{workflow_id}/merge", response_model=MergeResponse, tags=["Instance"], summary="Merge completed workflow branch")
+    @router.post(
+        "/instance/{workflow_id}/merge",
+        response_model=MergeResponse,
+        tags=["Instance"],
+        summary="Merge completed workflow branch",
+    )
     async def merge_instance(
         workflow_id: str,
         role: Role = require_role(Role.ADMIN, Role.OPERATOR),
@@ -389,7 +441,9 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
                     break
                 await asyncio.sleep(0.5)
                 current = svc.state(workflow_id)
-                if current.get("status") != last_status or len(current.get("events", [])) > len(initial.get("events", [])):
+                if current.get("status") != last_status or len(current.get("events", [])) > len(
+                    initial.get("events", [])
+                ):
                     last_status = current.get("status")
                     yield f"data: {json.dumps(current)}\n\n"
                     if last_status in ("completed", "failed", "cancelled"):

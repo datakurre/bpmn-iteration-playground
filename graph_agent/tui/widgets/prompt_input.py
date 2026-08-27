@@ -12,9 +12,11 @@ else:
         from textual.containers import Container
         from textual.message import Message
     except ImportError:
+
         class Container:  # type: ignore[no-redef]
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
+
         class Message:  # type: ignore[no-redef]
             pass
 

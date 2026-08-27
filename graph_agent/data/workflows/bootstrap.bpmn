@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_Bootstrap" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="Process_Bootstrap" name="Self-Extending Bootstrap Loop" isExecutable="true">
-    <bpmn:documentation>Minimal self-extending BPMN loop: prompt user -> architect plans extension -> human review/edit -> migrate -> execute -> repeat.</bpmn:documentation>
+    <bpmn:documentation>Minimal self-extending BPMN loop: prompt user -&gt; architect plans extension -&gt; human review/edit -&gt; migrate -&gt; execute -&gt; repeat.</bpmn:documentation>
     <bpmn:startEvent id="Start_Bootstrap" name="Start">
       <bpmn:outgoing>Flow_Start_To_Prompt</bpmn:outgoing>
     </bpmn:startEvent>
@@ -14,7 +14,6 @@
         </camunda:formData>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_Start_To_Prompt</bpmn:incoming>
-      <bpmn:incoming>Flow_Loop_Prompt</bpmn:incoming>
       <bpmn:incoming>Flow_Reject_Prompt</bpmn:incoming>
       <bpmn:outgoing>Flow_Prompt_To_Extend</bpmn:outgoing>
     </bpmn:userTask>
@@ -75,12 +74,16 @@
       <bpmn:incoming>Flow_Edit_To_GW</bpmn:incoming>
       <bpmn:outgoing>Flow_Edit_Apply</bpmn:outgoing>
       <bpmn:outgoing>Flow_Reject_Prompt</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Edit_Exit</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="Flow_Edit_Apply" name="Apply" sourceRef="ExclusiveGateway_Edit" targetRef="ServiceTask_Migrate">
       <bpmn:conditionExpression>approval == 'apply'</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="Flow_Reject_Prompt" name="Reject" sourceRef="ExclusiveGateway_Edit" targetRef="UserTask_Prompt">
-      <bpmn:conditionExpression>approval != 'apply'</bpmn:conditionExpression>
+      <bpmn:conditionExpression>approval == 'reject'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Edit_Exit" name="Exit" sourceRef="ExclusiveGateway_Edit" targetRef="End_Bootstrap">
+      <bpmn:conditionExpression>approval != 'apply' and approval != 'reject'</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:serviceTask id="ServiceTask_Migrate" name="Apply Extension">
       <bpmn:extensionElements>
@@ -93,16 +96,95 @@
         </camunda:inputOutput>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_Edit_Apply</bpmn:incoming>
-      <bpmn:outgoing>Flow_Migrate_To_Loop</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Migrate_To_Prompt</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:sequenceFlow id="Flow_Migrate_To_Loop" sourceRef="ServiceTask_Migrate" targetRef="Gateway_Loop" />
-    <bpmn:exclusiveGateway id="Gateway_Loop" name="Loop Gateway">
-      <bpmn:incoming>Flow_Migrate_To_Loop</bpmn:incoming>
-      <bpmn:outgoing>Flow_Loop_Prompt</bpmn:outgoing>
-    </bpmn:exclusiveGateway>
-    <bpmn:sequenceFlow id="Flow_Loop_Prompt" sourceRef="Gateway_Loop" targetRef="UserTask_Prompt" />
+    <bpmn:sequenceFlow id="Flow_Migrate_To_Prompt" sourceRef="ServiceTask_Migrate" targetRef="UserTask_Prompt" />
+    <bpmn:endEvent id="End_Bootstrap" name="End">
+      <bpmn:incoming>Flow_Edit_Exit</bpmn:incoming>
+    </bpmn:endEvent>
   </bpmn:process>
-  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
-    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Process_Bootstrap" />
+  <bpmndi:BPMNDiagram id="BPMNDiagram_Process_Bootstrap">
+    <bpmndi:BPMNPlane id="BPMNPlane_Process_Bootstrap" bpmnElement="Process_Bootstrap">
+      <bpmndi:BPMNShape id="Start_Bootstrap_di" bpmnElement="Start_Bootstrap">
+        <dc:Bounds x="57" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="UserTask_Prompt_di" bpmnElement="UserTask_Prompt">
+        <dc:Bounds x="175" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceTask_Extend_di" bpmnElement="ServiceTask_Extend">
+        <dc:Bounds x="325" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ExclusiveGateway_Check_di" bpmnElement="ExclusiveGateway_Check" isMarkerVisible="true">
+        <dc:Bounds x="500" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="UserTask_EditGraph_di" bpmnElement="UserTask_EditGraph">
+        <dc:Bounds x="625" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ExclusiveGateway_Edit_di" bpmnElement="ExclusiveGateway_Edit" isMarkerVisible="true">
+        <dc:Bounds x="800" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceTask_Migrate_di" bpmnElement="ServiceTask_Migrate">
+        <dc:Bounds x="925" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Bootstrap_di" bpmnElement="End_Bootstrap">
+        <dc:Bounds x="207" y="192" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="UserTask_Retry_di" bpmnElement="UserTask_Retry">
+        <dc:Bounds x="625" y="170" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_Start_To_Prompt_di" bpmnElement="Flow_Start_To_Prompt">
+        <di:waypoint x="93" y="70" />
+        <di:waypoint x="175" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Prompt_To_Extend_di" bpmnElement="Flow_Prompt_To_Extend">
+        <di:waypoint x="275" y="70" />
+        <di:waypoint x="325" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Extend_To_GW_di" bpmnElement="Flow_Extend_To_GW">
+        <di:waypoint x="425" y="70" />
+        <di:waypoint x="500" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Check_OK_di" bpmnElement="Flow_Check_OK">
+        <di:waypoint x="550" y="70" />
+        <di:waypoint x="625" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Check_Fail_di" bpmnElement="Flow_Check_Fail">
+        <di:waypoint x="525" y="95" />
+        <di:waypoint x="525" y="210" />
+        <di:waypoint x="625" y="210" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Edit_To_GW_di" bpmnElement="Flow_Edit_To_GW">
+        <di:waypoint x="725" y="70" />
+        <di:waypoint x="800" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Edit_Apply_di" bpmnElement="Flow_Edit_Apply">
+        <di:waypoint x="850" y="70" />
+        <di:waypoint x="925" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Reject_Prompt_di" bpmnElement="Flow_Reject_Prompt">
+        <di:waypoint x="825" y="95" />
+        <di:waypoint x="825" y="140" />
+        <di:waypoint x="225" y="140" />
+        <di:waypoint x="225" y="110" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Edit_Exit_di" bpmnElement="Flow_Edit_Exit">
+        <di:waypoint x="825" y="45" />
+        <di:waypoint x="825" y="0" />
+        <di:waypoint x="225" y="0" />
+        <di:waypoint x="225" y="192" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Migrate_To_Prompt_di" bpmnElement="Flow_Migrate_To_Prompt">
+        <di:waypoint x="975" y="110" />
+        <di:waypoint x="975" y="140" />
+        <di:waypoint x="225" y="140" />
+        <di:waypoint x="225" y="110" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Retry_To_Extend_di" bpmnElement="Flow_Retry_To_Extend">
+        <di:waypoint x="675" y="250" />
+        <di:waypoint x="675" y="280" />
+        <di:waypoint x="375" y="280" />
+        <di:waypoint x="375" y="110" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>
 </bpmn:definitions>

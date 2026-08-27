@@ -5,7 +5,9 @@ from graph_agent.engine import WorkflowRunner, resolve_input
 
 
 class FakeTaskSpec:
-    def __init__(self, extensions: dict[str, Any] | None = None, bpmn_name: str | None = None, name: str = "TaskName") -> None:
+    def __init__(
+        self, extensions: dict[str, Any] | None = None, bpmn_name: str | None = None, name: str = "TaskName"
+    ) -> None:
         self.extensions = extensions
         self.bpmn_name = bpmn_name
         self.name = name

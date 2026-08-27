@@ -89,38 +89,44 @@ class DaemonClient:
                 found_task = False
                 for task in tasks:
                     if task.get("state") == "READY" and task.get("type", "").lower() in ("usertask", "user_task", ""):
-                        inbox_items.append({
+                        inbox_items.append(
+                            {
+                                "type": "human_task",
+                                "workflow_id": wid,
+                                "process_id": run.get("process_id", "workflow"),
+                                "task_id": task.get("id"),
+                                "task_name": task.get("name", "Human Task"),
+                                "created_at": run.get("created_at", ""),
+                                "status": status,
+                            }
+                        )
+                        found_task = True
+                if not found_task:
+                    inbox_items.append(
+                        {
                             "type": "human_task",
                             "workflow_id": wid,
                             "process_id": run.get("process_id", "workflow"),
-                            "task_id": task.get("id"),
-                            "task_name": task.get("name", "Human Task"),
+                            "task_id": None,
+                            "task_name": "Pending Human Input",
                             "created_at": run.get("created_at", ""),
                             "status": status,
-                        })
-                        found_task = True
-                if not found_task:
-                    inbox_items.append({
-                        "type": "human_task",
+                        }
+                    )
+
+            if merge_status == "merge_deferred":
+                inbox_items.append(
+                    {
+                        "type": "deferred_merge",
                         "workflow_id": wid,
                         "process_id": run.get("process_id", "workflow"),
                         "task_id": None,
-                        "task_name": "Pending Human Input",
-                        "created_at": run.get("created_at", ""),
-                        "status": status,
-                    })
-
-            if merge_status == "merge_deferred":
-                inbox_items.append({
-                    "type": "deferred_merge",
-                    "workflow_id": wid,
-                    "process_id": run.get("process_id", "workflow"),
-                    "task_id": None,
-                    "task_name": "Auto-merge deferred (click to merge)",
-                    "created_at": run.get("updated_at") or run.get("created_at", ""),
-                    "merge_error": run.get("merge_error", "Working tree dirty or merge conflict"),
-                    "status": "merge_deferred",
-                })
+                        "task_name": "Auto-merge deferred (click to merge)",
+                        "created_at": run.get("updated_at") or run.get("created_at", ""),
+                        "merge_error": run.get("merge_error", "Working tree dirty or merge conflict"),
+                        "status": "merge_deferred",
+                    }
+                )
 
         return inbox_items
 

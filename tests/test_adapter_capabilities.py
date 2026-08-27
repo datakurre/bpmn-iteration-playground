@@ -14,9 +14,6 @@ from graph_agent.persistence import WorkflowStore
 from graph_agent.pi_client import PiResult
 from graph_agent.workflow_service import WorkflowService
 
-BEAMER = "graph_agent/data/workflows/beamer_slides.bpmn"
-BRIEF = {"topic": "adapters", "audience": "engineers", "duration_minutes": 10}
-
 
 class FakePi:
     """A Pi-shaped client; the service wraps it in its GenericAdapter."""
@@ -89,7 +86,6 @@ def test_replace_rebinds_every_alias_of_the_previous_instance() -> None:
     replacement = ShellAdapter()
     registry.replace(replacement)
 
-    # A plain register() would have left the alias on the old instance.
     assert registry.get("shell") is replacement
     assert registry.get("shell_alias") is replacement
 
@@ -107,20 +103,53 @@ def test_plugin_importing_a_builtin_adapter_does_not_re_register_it(
     assert registry.get("shell") is before
 
 
+SHELL_BPMN = """<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                  id="Definitions_ShellTest" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="shell_test" name="Shell Test" isExecutable="true">
+    <bpmn:startEvent id="Start_1"><bpmn:outgoing>Flow_1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="Start_1" targetRef="Task_Agent_1" />
+    <bpmn:serviceTask id="Task_Agent_1" name="Agent Step">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="pi_agent" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_Agent_1" targetRef="Task_Shell_1" />
+    <bpmn:serviceTask id="Task_Shell_1" name="Prepare Workspace">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness_type" value="shell" />
+          <camunda:property name="command" value="echo prepared" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_3" sourceRef="Task_Shell_1" targetRef="End_1" />
+    <bpmn:endEvent id="End_1"><bpmn:incoming>Flow_3</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>"""
+
+
 @pytest.mark.anyio
-async def test_unregistered_harness_fails_instead_of_falling_back_to_pi() -> None:
+async def test_unregistered_harness_fails_instead_of_falling_back_to_pi(tmp_path: Any) -> None:
     """A shell task must never have its prompt quietly run through the agent."""
     registry = AdapterRegistry(auto_discover=False)
     del registry._adapters["shell"]
     service = WorkflowService(WorkflowStore(":memory:"), FakePi(), adapter_registry=registry)
 
-    state = await service.start(BEAMER, None, dict(BRIEF))
+    bpmn_file = tmp_path / "shell_test.bpmn"
+    bpmn_file.write_text(SHELL_BPMN, encoding="utf-8")
+
+    state = await service.start(str(bpmn_file), "shell_test", {})
     workflow_id = state["workflow_id"]
     while any(not job.done() for job in list(service.jobs.values())):
         await asyncio.gather(*[j for j in list(service.jobs.values()) if not j.done()])
-    state = service.state(workflow_id)
-    task_id = next(t["id"] for t in state["tasks"] if t["bpmn_id"] == "Task_Review_Outline")
-    await service.submit_task(workflow_id, task_id, {"outline_decision": "approved"})
 
     state = service.state(workflow_id)
     assert state["status"] == "failed"
@@ -128,20 +157,20 @@ async def test_unregistered_harness_fails_instead_of_falling_back_to_pi() -> Non
 
 
 @pytest.mark.anyio
-async def test_a_shell_turn_does_not_hold_an_agent_session() -> None:
+async def test_a_shell_turn_does_not_hold_an_agent_session(tmp_path: Any) -> None:
     """The bug this surface exists for: a build step must not join session threading.
 
     Holding an inherited id made a shell job register as a colliding sibling, forcing
     parallel agent turns to fork their session for nothing.
     """
     service = WorkflowService(WorkflowStore(":memory:"), FakePi())
-    state = await service.start(BEAMER, None, dict(BRIEF))
+    bpmn_file = tmp_path / "shell_test.bpmn"
+    bpmn_file.write_text(SHELL_BPMN, encoding="utf-8")
+
+    state = await service.start(str(bpmn_file), "shell_test", {})
     workflow_id = state["workflow_id"]
     while any(not job.done() for job in list(service.jobs.values())):
         await asyncio.gather(*[j for j in list(service.jobs.values()) if not j.done()])
-    state = service.state(workflow_id)
-    task_id = next(t["id"] for t in state["tasks"] if t["bpmn_id"] == "Task_Review_Outline")
-    await service.submit_task(workflow_id, task_id, {"outline_decision": "approved"})
 
     record = service.store.load(workflow_id)
     assert record is not None

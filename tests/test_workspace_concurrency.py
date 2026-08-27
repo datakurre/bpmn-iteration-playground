@@ -134,9 +134,7 @@ async def test_conflicted_turn_can_be_retried(service: WorkflowService) -> None:
 
     record = service.store.load(wf_id)
     assert record is not None
-    failed_task_id = next(
-        task_id for task_id, job in record["jobs"].items() if job.get("status") == "failed"
-    )
+    failed_task_id = next(task_id for task_id, job in record["jobs"].items() if job.get("status") == "failed")
     assert record["jobs"][failed_task_id]["conflict"] is True
 
     # WorkspaceConflictError must not be retried automatically: the losing turn stays failed

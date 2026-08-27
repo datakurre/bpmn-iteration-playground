@@ -10,6 +10,7 @@ else:
     try:
         from textual.widgets import Static
     except ImportError:
+
         class Static:  # type: ignore[no-redef]
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
@@ -37,7 +38,11 @@ class UserPromptBubble(Static):
     def render(self) -> Any:
         from rich.text import Text
 
-        header = f"[bold cyan]You[/bold cyan] [dim]({self.timestamp})[/dim]\n" if self.timestamp else "[bold cyan]You[/bold cyan]\n"
+        header = (
+            f"[bold cyan]You[/bold cyan] [dim]({self.timestamp})[/dim]\n"
+            if self.timestamp
+            else "[bold cyan]You[/bold cyan]\n"
+        )
         return Text.from_markup(f"{header}[white]{self.prompt_text}[/white]")
 
 
@@ -98,7 +103,11 @@ class TaskExecutionCard(Static):
     def render(self) -> Any:
         from rich.text import Text
 
-        badge = "[green]✓ COMPLETED[/green]" if self.status == "completed" else ("[red]✗ FAILED[/red]" if self.status == "failed" else "[yellow]▶ RUNNING[/yellow]")
+        badge = (
+            "[green]✓ COMPLETED[/green]"
+            if self.status == "completed"
+            else ("[red]✗ FAILED[/red]" if self.status == "failed" else "[yellow]▶ RUNNING[/yellow]")
+        )
         lines = [f"[bold]{self.task_name}[/bold]  {badge}"]
         if self.summary:
             lines.append(f"[dim]{self.summary}[/dim]")

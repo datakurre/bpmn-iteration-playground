@@ -54,7 +54,7 @@ def test_savepoint_snapshot_independent_persistence() -> None:
         "wf-1",
         {
             "status": "running",
-            "process_id": "contract_review",
+            "process_id": "plan_and_execute",
             "save_points": [
                 {
                     "id": "sp-200",
@@ -219,6 +219,7 @@ def test_events_merged_on_save() -> None:
 
 def test_memory_storage_cleans_temp_blob_dir() -> None:
     import os
+
     store = WorkflowStore(":memory:")
     assert hasattr(store, "_temp_blob_dir")
     blob_dir = store._temp_blob_dir
@@ -232,6 +233,7 @@ def test_memory_storage_cleans_temp_blob_dir() -> None:
 @pytest.mark.anyio
 async def test_concurrent_async_workflow_store_operations() -> None:
     import asyncio
+
     store = WorkflowStore(":memory:")
 
     async def workflow_worker(idx: int) -> None:
@@ -411,6 +413,3 @@ def test_session_crud_operations() -> None:
     store.clear()
     assert len(store.list_sessions()) == 0
     store.close()
-
-
-

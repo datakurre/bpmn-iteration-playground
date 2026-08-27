@@ -11,8 +11,6 @@ from fastapi import Depends, HTTPException, Request
 logger = logging.getLogger("bpmn.auth")
 
 
-
-
 class Role(StrEnum):
     ADMIN = "admin"
     OPERATOR = "operator"
@@ -99,9 +97,7 @@ def get_current_role(request: Request) -> Role | None:
 
     # Check explicit api key headers, queries, or cookies
     candidate_api_key = (
-        request.headers.get("x-api-key")
-        or request.query_params.get("api_key")
-        or request.cookies.get("api_key")
+        request.headers.get("x-api-key") or request.query_params.get("api_key") or request.cookies.get("api_key")
     )
     if candidate_api_key and candidate_api_key in api_keys:
         return api_keys[candidate_api_key]
@@ -119,11 +115,6 @@ def get_current_role(request: Request) -> Role | None:
             return Role.ADMIN
 
     return None
-
-
-
-
-
 
 
 def require_role(*allowed_roles: Role) -> Any:

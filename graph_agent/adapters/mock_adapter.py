@@ -10,13 +10,17 @@ class MockAdapter(BaseAdapter):
 
     def __init__(self, status: str = "success", output: dict[str, Any] | None = None) -> None:
         self.status = status
-        self.output = output if output is not None else {
-            "status": "success",
-            "summary": "Mock execution completed successfully",
-            "findings": [],
-            "artifacts": [],
-            "next_action": "continue",
-        }
+        self.output = (
+            output
+            if output is not None
+            else {
+                "status": "success",
+                "summary": "Mock execution completed successfully",
+                "findings": [],
+                "artifacts": [],
+                "next_action": "continue",
+            }
+        )
         self.calls = 0
 
     @property
@@ -39,6 +43,7 @@ class MockAdapter(BaseAdapter):
         if on_event and callable(on_event):
             try:
                 import asyncio
+
                 res = on_event({"type": "message_end", "content": "mock event"})
                 if asyncio.iscoroutine(res):
                     await res

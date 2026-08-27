@@ -53,10 +53,10 @@ async def test_workspace_metadata_and_single_file_extraction() -> None:
 
 def test_workspace_api_endpoints(client: TestClient) -> None:
     # Start a workflow
-    start_resp = client.post("/workflow/start", json={
-        "bpmn_path": "graph_agent/data/workflows/contract_review.bpmn",
-        "variables": {"contract": "Test contract agreement."}
-    })
+    start_resp = client.post(
+        "/workflow/start",
+        json={"bpmn_path": "graph_agent/data/workflows/plan_and_execute.bpmn", "variables": {"goal": "Test goal."}},
+    )
     assert start_resp.status_code == 200
     wf_id = start_resp.json()["workflow_id"]
 
@@ -91,7 +91,6 @@ async def test_unpack_workspace_gz_fallback() -> None:
         assert greeting_file.read_text() == "Hello from GZ archive"
     finally:
         cleanup_workspace(workdir)
-
 
 
 @pytest.mark.anyio
@@ -173,7 +172,9 @@ async def test_pack_workspace_falls_back_to_gzip_when_tar_subprocess_fails(monke
 
 
 @pytest.mark.anyio
-async def test_pack_workspace_to_bytes_falls_back_to_gzip_when_tar_subprocess_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_pack_workspace_to_bytes_falls_back_to_gzip_when_tar_subprocess_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import subprocess
 
     from graph_agent.workspace import pack_workspace_to_bytes
@@ -259,7 +260,7 @@ async def test_state_exposes_workspace_metadata(service: WorkflowService) -> Non
     """
     import asyncio
 
-    started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+    started = await service.start("graph_agent/data/workflows/agent_review_cycle.bpmn", None, {"subject": "text"})
     await asyncio.gather(*list(service.jobs.values()))
     wf_id = started["workflow_id"]
 

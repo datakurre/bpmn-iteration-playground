@@ -15,6 +15,7 @@ else:
     try:
         from textual.app import App
     except ImportError:
+
         class App:  # type: ignore[no-redef]
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
@@ -158,6 +159,7 @@ def _patch_data_table() -> None:
         import contextlib
 
         from textual.widgets import DataTable
+
         original_on_click = DataTable._on_click
 
         async def _safe_on_click(self: DataTable[Any], event: Any) -> None:
@@ -172,7 +174,6 @@ def _patch_data_table() -> None:
 
 
 _patch_data_table()
-
 
 
 def launch_tui(client: DaemonClient, workspace: Workspace | None = None) -> int:
@@ -191,4 +192,3 @@ def launch_tui(client: DaemonClient, workspace: Workspace | None = None) -> int:
     app = GraphAgentApp(client=client, workspace=workspace)
     app.run()
     return 0
-

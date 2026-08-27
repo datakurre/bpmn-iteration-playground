@@ -42,13 +42,11 @@ def test_webhook_crud_api(client: TestClient) -> None:
     assert invalid_resp.status_code == 422
 
 
-
 def test_workflow_lifecycle_event_logging(service: WorkflowService) -> None:
     async def scenario() -> None:
-        started = await service.start(
-            "graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "Event Test"}
-        )
+        started = await service.start("graph_agent/data/workflows/plan_and_execute.bpmn", None, {"goal": "Event Test"})
         wf_id = started["workflow_id"]
+
         async def _wait():
             while any(not job.done() for job in list(service.jobs.values())):
                 pending = [j for j in list(service.jobs.values()) if not j.done()]
@@ -80,6 +78,7 @@ def test_event_bus_tracks_pending_tasks() -> None:
     class DummyStore:
         def append_event(self, wf_id: str, ev: dict) -> None:
             pass
+
         def list_webhooks(self) -> list[dict]:
             return [{"url": "http://127.0.0.1:9999/hook", "events": ["test_event"]}]
 
@@ -106,6 +105,7 @@ async def test_webhook_delivery_retry_and_failure(monkeypatch) -> None:
 
     # 1. Total failure after retries
     attempt_count = 0
+
     async def failing_post(*args, **kwargs):
         nonlocal attempt_count
         attempt_count += 1
@@ -139,6 +139,7 @@ async def test_webhook_delivery_retry_and_failure(monkeypatch) -> None:
 @pytest.mark.anyio
 async def test_webhook_hmac_signature(monkeypatch: pytest.MonkeyPatch) -> None:
     from unittest.mock import MagicMock
+
     bus = EventBus(store=None)
     event = WorkflowEvent(event_type="workflow_completed", workflow_id="wf-hmac")
 
@@ -155,9 +156,6 @@ async def test_webhook_hmac_signature(monkeypatch: pytest.MonkeyPatch) -> None:
     await bus._deliver_webhook("http://example.com/webhook", event, secret="test-secret-key")
     assert "X-Webhook-Signature" in captured_headers
     assert captured_headers["X-Webhook-Signature"].startswith("sha256=")
-
-
-
 
 
 def test_event_bus_swallows_append_event_errors() -> None:

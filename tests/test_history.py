@@ -35,11 +35,15 @@ def test_history_instances_and_savepoint_detail() -> None:
         assert service.history_instances() == []
 
         # 2. Start a workflow and complete human task
-        started = await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text"})
+        started = await service.start("graph_agent/data/workflows/agent_review_cycle.bpmn", None, {"subject": "text"})
         await asyncio.gather(*service.jobs.values())
 
-        review_task = next(task for task in service.state(started["workflow_id"])["tasks"] if task["bpmn_id"] == "ServiceTask_Review")
-        await service.submit_task(started["workflow_id"], review_task["id"], {"decision": "approved"})
+        signoff_task = next(
+            task for task in service.state(started["workflow_id"])["tasks"] if task["bpmn_id"] == "Task_Cycle_Signoff"
+        )
+        await service.submit_task(
+            started["workflow_id"], signoff_task["id"], {"cycle_decision": "accepted", "cycle_notes": "ok"}
+        )
 
         # 3. Verify history list
         items = service.history_instances()
@@ -59,7 +63,7 @@ def test_history_instances_and_savepoint_detail() -> None:
         detail = service.save_point_detail(started["workflow_id"], sp_id)
         assert detail["id"] == sp_id
         assert detail["phase"] == "before_harness"
-        assert "contract" in detail["data"]
+        assert "subject" in detail["data"]
 
         # 5. Verify storage stats and packing
         stats = await service.storage_stats()
@@ -74,7 +78,7 @@ def test_history_instances_and_savepoint_detail() -> None:
         assert service.history_instances() == []
 
         # 7. Verify clear instances
-        await service.start("graph_agent/data/workflows/contract_review.bpmn", None, {"contract": "text 2"})
+        await service.start("graph_agent/data/workflows/agent_review_cycle.bpmn", None, {"subject": "text 2"})
         assert len(service.history_instances()) == 1
         assert await service.clear_instances() == 1
         assert service.history_instances() == []

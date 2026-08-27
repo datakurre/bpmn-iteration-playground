@@ -47,4 +47,3 @@ def admin_page(request: Request | None = None) -> Response:
 def editor_page(request: Request | None = None) -> Response:
     req = _ensure_request(request)
     return templates.TemplateResponse(req, "editor.html")
-

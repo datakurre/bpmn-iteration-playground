@@ -96,5 +96,5 @@ class EventBus:
                 except Exception as exc:
                     logger.debug(f"Webhook delivery attempt {attempt + 1} to {url} failed: {exc}")
                     if attempt < retries - 1:
-                        await asyncio.sleep(2 ** attempt)
+                        await asyncio.sleep(2**attempt)
             return False

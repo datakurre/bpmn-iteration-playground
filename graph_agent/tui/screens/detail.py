@@ -14,6 +14,7 @@ else:
         from textual.app import ComposeResult
         from textual.screen import Screen
     except ImportError:
+
         class Screen:  # type: ignore[no-redef]
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
@@ -241,8 +242,6 @@ class RunDetailScreen(Screen):  # type: ignore
             self.notify(f"Opened {url} in browser", severity="information")
         except Exception as exc:
             self.notify(f"Failed to open browser: {exc}", severity="error")
-
-
 
     async def on_button_pressed(self, event: Any) -> None:
         btn_id = getattr(event.button, "id", "")

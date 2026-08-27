@@ -234,7 +234,6 @@ def _cmd_open(workspace_root: Path | None, editor: str | None = None) -> None:
     print(f"Opened {url}")
 
 
-
 def _cmd_stop(workspace_root: Path | None) -> None:
     workspace = Workspace.discover(workspace_root)
     info = read_runtime_file(workspace)
@@ -281,6 +280,7 @@ def _cmd_run(
         return
 
     import json
+
     variables: dict[str, Any] = {}
     for item in vars_list or []:
         if "=" in item:
@@ -300,6 +300,7 @@ def _cmd_run(
         variables["timeout"] = timeout
 
     import httpx
+
     try:
         resp = httpx.post(
             f"{info.url}/workflow/start",
@@ -342,6 +343,7 @@ def _cmd_ls(workspace_root: Path | None, show_all: bool) -> None:
         print(f"No daemon running for {workspace.root}. Run `graph-agent serve` first.")
         return
     import httpx
+
     endpoint = f"{info.url}/api/history/instances" if show_all else f"{info.url}/api/history/instances?status=active"
     try:
         resp = httpx.get(endpoint, headers={"X-Admin-Token": info.token}, timeout=30.0)
@@ -375,6 +377,7 @@ def _cmd_show(workspace_root: Path | None, run_id: str) -> None:
     import json
 
     import httpx
+
     try:
         resp = httpx.get(
             f"{info.url}/instance/{run_id}/state",
@@ -414,6 +417,7 @@ def _cmd_cancel(workspace_root: Path | None, run_id: str) -> None:
         print(f"No daemon running for {workspace.root}. Run `graph-agent serve` first.")
         return
     import httpx
+
     try:
         resp = httpx.post(
             f"{info.url}/instance/{run_id}/cancel",
@@ -436,6 +440,7 @@ def _cmd_merge(workspace_root: Path | None, run_id: str) -> None:
         print(f"No daemon running for {workspace.root}. Run `graph-agent serve` first.")
         return
     import httpx
+
     try:
         resp = httpx.post(
             f"{info.url}/instance/{run_id}/merge",
@@ -465,6 +470,7 @@ def _cmd_diff(workspace_root: Path | None, run_id: str) -> None:
         print(f"No daemon running for {workspace.root}. Run `graph-agent serve` first.")
         return
     import httpx
+
     try:
         resp = httpx.get(
             f"{info.url}/instance/{run_id}/diff",
@@ -521,6 +527,7 @@ def _cmd_logs(workspace_root: Path | None, run_id: str, follow: bool) -> None:
         _stream_logs(info.url, info.token, run_id)
         return
     import httpx
+
     try:
         resp = httpx.get(
             f"{info.url}/instance/{run_id}/state",
@@ -581,11 +588,19 @@ def add_engine_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--provider", type=str, default=None, help="AI agent provider (e.g. opencode-go, openai)")
     p.add_argument("--executable", type=str, default=None, help="Path to Pi executable binary")
     p.add_argument("--timeout", type=int, default=None, help="Turn execution timeout in seconds")
-    p.add_argument("--offline", action="store_true", default=False, help="Force offline mode using deterministic demo mock")
+    p.add_argument(
+        "--offline", action="store_true", default=False, help="Force offline mode using deterministic demo mock"
+    )
     p.add_argument("--max-parallel-turns", type=int, default=None, help="Max concurrent active agent turns")
-    p.add_argument("--timer-interval", type=int, default=None, help="Background timer tick interval in seconds (0 disables)")
-    p.add_argument("--savepoint-retention", type=int, default=None, help="Number of turn attempts retained in savepoints")
-    p.add_argument("--workspace-mode", choices=["worktree", "in_place", "blob"], default=None, help="Workspace execution strategy")
+    p.add_argument(
+        "--timer-interval", type=int, default=None, help="Background timer tick interval in seconds (0 disables)"
+    )
+    p.add_argument(
+        "--savepoint-retention", type=int, default=None, help="Number of turn attempts retained in savepoints"
+    )
+    p.add_argument(
+        "--workspace-mode", choices=["worktree", "in_place", "blob"], default=None, help="Workspace execution strategy"
+    )
     p.add_argument("--log-level", choices=["debug", "info", "warning", "error"], default=None, help="Logging level")
 
 
@@ -613,7 +628,9 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
     p_serve.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     p_serve.add_argument("--port", type=int, default=0, help="Bind port (default: 0, a free port)")
     p_serve.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
-    p_serve.add_argument("--no-tui", action="store_true", help="Run daemon headlessly without TUI (foreground, blocking)")
+    p_serve.add_argument(
+        "--no-tui", action="store_true", help="Run daemon headlessly without TUI (foreground, blocking)"
+    )
 
     p_status = sub.add_parser("status", help="Show the running daemon's URL, if any")
     add_workspace_flag(p_status)
@@ -639,7 +656,9 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
     add_workspace_flag(p_run)
     add_engine_flags(p_run)
     p_run.add_argument("template", help="BPMN template name or path")
-    p_run.add_argument("--var", "-v", action="append", dest="vars", help="Workflow variable key=value (can be used multiple times)")
+    p_run.add_argument(
+        "--var", "-v", action="append", dest="vars", help="Workflow variable key=value (can be used multiple times)"
+    )
     p_run.add_argument("--no-merge", action="store_true", help="Disable auto-merge on completion")
 
     p_ls = sub.add_parser("ls", help="List workflow runs")
