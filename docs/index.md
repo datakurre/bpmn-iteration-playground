@@ -23,7 +23,8 @@ graph TD
 ## Core Capabilities
 
 - **BPMN 2.0 Process Controller**: Industrial-strength business process execution with exclusive/parallel gateways, CallActivity sub-processes, message catch events, and user tasks.
-- **Local Agent Harnesses**: Step-by-step turns dispatched to local agent harnesses (Pi CLI via `pi_agent`, `SandboxPiAdapter` with Podman isolation, or deterministic build steps via `ShellAdapter`).
+- **In-Flight Spec Replacement & Dynamic Graph Extension**: Seamlessly update running BPMN diagrams in-flight (`replace_spec`), validate migrations, and programmatically insert new tasks (`extend_graph`) via self-extending meta-workflows.
+- **Local Agent Harnesses**: Step-by-step turns dispatched to local agent harnesses (Pi CLI via `pi_agent`, `SandboxPiAdapter` with Podman isolation, deterministic build steps via `ShellAdapter`, or graph extenders via `GraphExtendAdapter`).
 - **Isolated Workspace Strategies**:
   - `worktree`: Runs each workflow on a dedicated Git branch (`bpmn/run/<id>`) in `.agents/worktrees/<id>` with auto-merge on clean completion.
   - `in_place`: Runs directly in the project root with a serialized `asyncio.Lock` workspace mutex for non-Git repositories.
@@ -51,7 +52,6 @@ graph TD
 - [Authoring BPMN Workflows](authoring-workflows.md)
 - [Extending Adapters](extending-adapters.md)
 - [Variable Scoping Reference](variable-scoping-plan.md)
-- [OpenCode Secret Specification](opencode-secretspec.md)
 
 ### 🔍 Features Deep Dive
 - [BPMN Orchestration & ZODB](features/orchestration.md)

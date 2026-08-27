@@ -189,6 +189,33 @@ not a scripting language, so a workflow cannot count its own iterations; putting
 the failure branch is how a repair loop terminates without one. See
 [Extending Adapters](extending-adapters.md) for every property the shell harness accepts.
 
+### Self-Extending Workflows & Meta-Graph Extension
+
+Workflows can dynamically extend themselves by declaring a service task with `harness_type="graph_extend"`:
+
+```xml
+<bpmn:serviceTask id="ServiceTask_Migrate" name="Apply Graph Extension">
+  <bpmn:extensionElements>
+    <camunda:properties>
+      <camunda:property name="harness_type" value="graph_extend" />
+    </camunda:properties>
+    <camunda:inputOutput>
+      <camunda:inputParameter name="extension_spec">${extension_spec}</camunda:inputParameter>
+      <camunda:outputParameter name="status">${status}</camunda:outputParameter>
+      <camunda:outputParameter name="summary">${summary}</camunda:outputParameter>
+    </camunda:inputOutput>
+  </bpmn:extensionElements>
+</bpmn:serviceTask>
+```
+
+When this task runs, `GraphExtendAdapter` reads `extension_spec` (containing `after`, `nodes`, and optional `after_flow`) from the task inputs and calls `extend_graph` to insert the declared nodes into the running workflow XML and apply spec replacement seamlessly. See `graph_agent/data/workflows/bootstrap.bpmn` for a complete working template.
+
+### BPMN XML Validation
+
+Before loading or replacing specs, workflows can be validated using the built-in validator utilities:
+- `validate_bpmn(xml)`: Checks XML syntax, processes, sequence flows, element IDs, and extension rules.
+- `validate_extensions(xml)`: Audits service tasks for declared `harness_type`, `agent_role`, safe `${...}` expression syntax (flags injection risks like `${a.${b}}`), and valid output source keys.
+
 ### FormJS Field Types
 - `string`, `text` $\rightarrow$ textfield
 - `long`, `double` $\rightarrow$ number

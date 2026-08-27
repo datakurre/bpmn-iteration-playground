@@ -4,7 +4,11 @@
 
 - **API-First Architecture**: Canonical **FastAPI** REST and WebSocket API backing the CLI, the interactive Terminal UI (TUI), and the browser-based Workflow Studio.
 - **Durable Orchestration**: Built on [SpiffWorkflow](https://spiffworkflow.org/) with per-workspace local **ZODB** ACID persistence.
-- **Agent Turns as Tasks**: Service tasks dispatch to local AI agent harnesses (such as [Pi](https://github.com/badlogic/pi-mono)) or deterministic tools ([ShellAdapter](graph_agent/adapters/shell_adapter.py)).
+- **In-Flight Spec Replacement & Dynamic Graph Extension**:
+  - Replace BPMN spec XML in-flight with execution state preservation (`PUT /instance/{id}/spec`).
+  - Atomically splice new service tasks and user tasks into running graphs (`POST /instance/{id}/extend`).
+  - Self-extending bootstrap meta-workflows using `GraphExtendAdapter` (`harness_type: graph_extend`).
+- **Agent Turns as Tasks**: Service tasks dispatch to local AI agent harnesses (such as [Pi](https://github.com/badlogic/pi-mono)), deterministic tools ([ShellAdapter](graph_agent/adapters/shell_adapter.py)), or meta-graph extenders ([GraphExtendAdapter](graph_agent/adapters/graph_extend_adapter.py)).
 - **Isolated Workspace Strategies**:
   - `worktree`: Runs each graph on an isolated Git worktree branch (`bpmn/run/<id>`) with auto-merge on clean completion.
   - `in_place`: Serialized in-place execution with concurrency mutex for non-Git repositories.

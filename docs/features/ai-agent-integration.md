@@ -6,7 +6,7 @@ Pi Workflow Studio executes local AI agents through a stateless, non-interactive
 
 ## 1. Stateless Turn Protocol
 
-The communication between the FastAPI backend and the Pi agent process is implemented in [`graph_agent/pi_client.py`](../../graph_agent/pi_client.py):
+The communication between the FastAPI backend and the Pi agent process is implemented in `graph_agent/pi_client.py`:
 
 ```
 FastAPI (PiClient)                      Pi Subprocess (node_modules/.bin/pi)

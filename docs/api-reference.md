@@ -125,6 +125,107 @@ or
 
 ---
 
+## BPMN Spec & Graph Extension Endpoints
+
+### Get Current BPMN Spec XML
+`GET /instance/{workflow_id}/spec`
+
+Returns the raw BPMN 2.0 XML spec (`application/xml`) representing the instance's current execution graph.
+
+---
+
+### In-Flight Spec Replacement
+`PUT /instance/{workflow_id}/spec`
+
+Replaces the running workflow's BPMN spec with new XML in-flight. Preserves active execution state, repoints runtime tasks to matching new specs, cleanly purges untriggered future tasks, captures a `spec_replaced` savepoint, and emits a `spec_replaced` audit event.
+
+- **Content-Type**: `application/xml` or `text/xml`
+- **Request Body**: Raw BPMN 2.0 XML string
+- **Error Codes**:
+  - `400 Bad Request`: Invalid XML structure, non-UTF-8 body, or failed BPMN validation.
+  - `404 Not Found`: Workflow instance not found.
+  - `409 Conflict`: Workflow is mid-execution (`running`, `waiting_pi`, `retry_requested`) or the new spec removes active uncompleted tasks.
+
+**Response:**
+```json
+{
+  "workflow_id": "a1b2c3d4e5f6",
+  "status": "waiting_human",
+  "warnings": [
+    "Completed task 'Task_1' not in new spec (history only)"
+  ]
+}
+```
+
+---
+
+### Dry-Run Spec Validation
+`POST /instance/{workflow_id}/spec/validate`
+
+Performs a dry-run feasibility analysis of migrating the running workflow instance to a new BPMN XML spec without applying changes.
+
+- **Content-Type**: `application/xml` or `text/xml`
+- **Request Body**: Raw BPMN 2.0 XML string
+
+**Response:**
+```json
+{
+  "valid": true,
+  "errors": [],
+  "warnings": [],
+  "migrated_tasks": ["Task_1", "Task_2"],
+  "new_tasks": ["Task_3"],
+  "removed_tasks": []
+}
+```
+
+---
+
+### Dynamic Graph Extension
+`POST /instance/{workflow_id}/extend`
+
+Atomically splices new BPMN nodes (service tasks, user tasks) into the running instance graph and applies spec replacement under instance lock.
+
+**Request Body (`ExtendRequest`):**
+```json
+{
+  "after": "Task_A",
+  "after_flow": null,
+  "nodes": [
+    {
+      "bpmn_id": "Task_Review",
+      "name": "Automated Review",
+      "element_type": "serviceTask",
+      "properties": {
+        "harness_type": "pi_agent",
+        "agent_role": "reviewer"
+      },
+      "input_params": {
+        "draft": "${document_content}"
+      },
+      "output_params": {
+        "status": "${status}",
+        "summary": "${summary}"
+      },
+      "form_fields": {}
+    }
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "workflow_id": "a1b2c3d4e5f6",
+  "status": "waiting_human",
+  "warnings": [],
+  "inserted_nodes": ["Task_Review"],
+  "spec_xml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>..."
+}
+```
+
+---
+
 ## Projects & Supervisor Endpoints
 
 ### Get Current Project

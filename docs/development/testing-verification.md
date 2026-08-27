@@ -58,4 +58,4 @@ The script executes a complete workflow scenario and captures high-resolution sc
 
 ## 3. GitHub Actions Documentation Deployment
 
-The GitHub Actions workflow located at [`.github/workflows/docs.yml`](../../.github/workflows/docs.yml) builds the documentation site using `mkdocs-material` on every push to `main` and publishes the static documentation site directly to GitHub Pages.
+The GitHub Actions workflow located at `.github/workflows/docs.yml` builds the documentation site using `mkdocs-material` on every push to `main` and publishes the static documentation site directly to GitHub Pages.

@@ -44,7 +44,7 @@ Workflows are standard BPMN 2.0 XML files placed in `.agents/workflows/` (or bun
 
 ## 2. ZODB ACID Persistence
 
-State persistence is managed via [`graph_agent/persistence.py`](../../graph_agent/persistence.py):
+State persistence is managed via [`graph_agent/persistence.py`](file:///workspace/graph-agent/graph_agent/persistence.py):
 
 - **Storage Engine**: `ZODB.FileStorage` writing transaction logs to `.agents/state/Data.fs`.
 - **In-Memory Mode**: Supported for testing via `WorkflowStore(":memory:")`.
@@ -56,3 +56,19 @@ State persistence is managed via [`graph_agent/persistence.py`](../../graph_agen
 ## 3. Scoped Variable Publication
 
 Service tasks publish variables to the workflow exclusively through declared `camunda:outputParameters`. This prevents parallel agent branches from overwriting each other's verdicts and isolates task telemetry to `job` records while publishing cleanly to `task.data` and `workflow.data`.
+
+---
+
+## 4. In-Flight Spec Replacement & Dynamic Graph Extension
+
+### Dynamic BPMN Spec Replacement (`replace_spec`)
+Running workflow instances can migrate their BPMN 2.0 XML spec dynamically without discarding active execution state:
+- **Active Task Preservation**: Runtime tasks in non-future states (`READY`, `STARTED`, `COMPLETED`, `WAITING`) are matched and repointed to their corresponding new `TaskSpec` definitions.
+- **Predicted Tasks Purge**: Untriggered future tasks are globally purged and re-predicted from the new specification graph (`workflow._predict()`).
+- **SavePoint Checkpoint**: A durable savepoint (`phase="spec_replaced"`) is committed to ZODB upon migration.
+- **Mid-Execution Protection**: Rejects external replacements with `409 Conflict` while turns are actively running (`waiting_pi`, `running`, `retry_requested`).
+
+### Dynamic Graph Extension (`extend_graph`)
+Workflows can dynamically extend themselves at runtime:
+- **Programmatic Splicing**: Slices new nodes between existing elements (`insert_nodes`) and rewires incoming/outgoing sequence flows.
+- **Self-Extending Bootstrap Meta-Loop**: Shipped with `graph_agent/data/workflows/bootstrap.bpmn` where an Architect AI agent plans graph extensions, a human reviewer gates the proposal, and `GraphExtendAdapter` (`harness_type: graph_extend`) executes the extension in-flight.

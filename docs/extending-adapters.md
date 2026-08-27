@@ -154,3 +154,23 @@ compiler the agent cannot satisfy would never terminate.
 the `prepare_workspace` hook. Files already present are never overwritten, so the scaffold
 can re-run on later turns without discarding the agent's edits. A task that declares only
 `template` and no `command` is a pure scaffold step.
+
+## Worked example: the graph-extension harness
+
+`GraphExtendAdapter` (`graph_agent/adapters/graph_extend_adapter.py`, `harness_type: graph_extend`) enables a running workflow to modify its own execution graph. It accepts an `extension_spec` payload containing target node IDs and new node definitions, and invokes `WorkflowService.extend_graph()` to atomically splice the nodes into the active BPMN XML specification.
+
+```xml
+<bpmn:serviceTask id="ServiceTask_Migrate" name="Apply Extension">
+  <bpmn:extensionElements>
+    <camunda:properties>
+      <camunda:property name="harness_type" value="graph_extend" />
+    </camunda:properties>
+    <camunda:inputOutput>
+      <camunda:inputParameter name="extension_spec">${extension_spec}</camunda:inputParameter>
+      <camunda:outputParameter name="status">${status}</camunda:outputParameter>
+      <camunda:outputParameter name="summary">${summary}</camunda:outputParameter>
+    </camunda:inputOutput>
+  </bpmn:extensionElements>
+</bpmn:serviceTask>
+```
+
