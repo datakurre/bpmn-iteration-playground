@@ -403,6 +403,8 @@ function renderState(next: WorkflowState): void {
     $("workspace-files-card")?.classList.add("hidden");
   }
 
+  void loadDiff();
+
   reviewTask = next.tasks.find((t) => t.state === "READY" && (t.type === "UserTask" || !t.type));
   if (reviewTask) {
     $("review-card")?.classList.remove("hidden");
@@ -416,6 +418,38 @@ function renderState(next: WorkflowState): void {
     next.tasks.filter((t) => t.state === "STARTED").forEach((t) => canvas.addMarker(t.bpmn_id, "task-active"));
     next.tasks.filter((t) => t.state === "READY").forEach((t) => canvas.addMarker(t.bpmn_id, "task-ready"));
     next.tasks.filter((t) => t.state === "COMPLETED").forEach((t) => canvas.addMarker(t.bpmn_id, "task-completed"));
+  }
+}
+
+async function loadDiff(): Promise<void> {
+  try {
+    const response = await fetch(`/instance/${id}/diff`);
+    if (!response.ok) return;
+    const diffData = await response.json();
+    const diffText = (diffData.diff || "").trim();
+    const diffCard = $("diff-card");
+    if (!diffCard) return;
+
+    if (diffText || (diffData.files_changed && diffData.files_changed.length > 0)) {
+      diffCard.classList.remove("hidden");
+      const badge = $("diff-files-badge");
+      if (badge) badge.textContent = String(diffData.files_changed?.length || (diffText ? "1" : "0"));
+      const summaryEl = $("diff-files-summary");
+      if (summaryEl && diffData.files_changed && diffData.files_changed.length > 0) {
+        summaryEl.innerHTML = diffData.files_changed
+          .map(
+            (f: { status?: string; path: string }) =>
+              `<span class="badge bg-panel-header text-[10px] border border-line font-mono">${escapeHtml(f.status || "M")} ${escapeHtml(f.path)}</span>`
+          )
+          .join("");
+      }
+      const contentEl = $("diff-content");
+      if (contentEl) contentEl.textContent = diffText || "No changes in worktree.";
+    } else {
+      diffCard.classList.add("hidden");
+    }
+  } catch (e) {
+    console.debug("Diff not available:", e);
   }
 }
 

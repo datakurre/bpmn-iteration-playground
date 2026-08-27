@@ -143,6 +143,21 @@
             </div>
           </div>
 
+          <!-- Worktree Git Diff Accordion -->
+          <div id="diff-card" class="acc-card flex flex-col shrink-0 hidden">
+            <div class="acc-header" role="button" tabindex="0" aria-expanded="true" onclick="toggleAcc(this)" onkeydown="handleAccKey(event, this)">
+              <div class="acc-title">
+                <svg class="acc-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                <span>Worktree Diff</span>
+              </div>
+              <span class="badge" id="diff-files-badge">0</span>
+            </div>
+            <div class="acc-body p-2 pb-3">
+              <div id="diff-files-summary" class="mb-2 text-xs flex flex-wrap gap-1"></div>
+              <pre id="diff-content" class="overflow-y-auto max-h-[300px] text-ink bg-[var(--color-code-bg)] border border-line-subtle rounded-md p-2.5 text-[10.5px] font-mono leading-relaxed whitespace-pre-wrap break-all"></pre>
+            </div>
+          </div>
+
           <!-- Workflow Data Accordion (First) -->
           <div class="acc-card flex flex-col shrink-0">
             <div class="acc-header" role="button" tabindex="0" aria-expanded="true" onclick="toggleAcc(this)" onkeydown="handleAccKey(event, this)">
