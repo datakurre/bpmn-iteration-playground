@@ -442,6 +442,9 @@ allowed_hosts = [
     "opencode.ai:443",
 ]
 
+[ports]
+web = 8080
+
 [[network.allowed_routes]]
 header = "Authorization"
 host = "opencode.ai:443"

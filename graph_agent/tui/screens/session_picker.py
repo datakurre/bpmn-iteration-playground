@@ -43,24 +43,16 @@ class SessionPickerScreen(Screen):  # type: ignore
 
     def compose(self) -> ComposeResult:
         try:
-            from textual.containers import Container, Horizontal
-            from textual.widgets import Button, DataTable, Footer, Header, Static
+            from textual.containers import Container
+            from textual.widgets import DataTable, Footer, Header, Static
 
             yield Header(show_clock=True)
             with Container(id="picker-container"):
                 yield Static(
-                    "[bold cyan]BPMN Agent Session Hub[/bold cyan]\n"
-                    "Select a session to resume or start a new interactive session:",
+                    "[bold cyan]BPMN Agent Session Hub[/bold cyan]  (Enter: Open/Resume, n: New Session, d: Detail, m: Merge)",
                     id="picker-title",
                 )
                 yield DataTable(id="sessions-table", cursor_type="row")
-                with Horizontal(id="picker-actions"):
-                    yield Button("+ Start New Session [n]", id="btn-new", variant="success")
-                    yield Button("Resume Selected [Enter]", id="btn-resume", variant="primary")
-                    yield Button("View Details [d]", id="btn-detail")
-                    yield Button("Merge [m]", id="btn-merge")
-                    yield Button("Refresh [r]", id="btn-refresh")
-                    yield Button("Quit [q]", id="btn-quit")
             yield Footer()
         except ImportError:
             pass

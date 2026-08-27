@@ -29,6 +29,7 @@ class StartScreen(Screen):  # type: ignore
     """Screen for launching a new workflow run from a template."""
 
     BINDINGS: ClassVar[list[BindingType]] = [
+        ("ctrl+s", "launch", "Launch"),
         ("escape", "go_back", "Back"),
         ("b", "go_back", "Back"),
     ]
@@ -39,12 +40,12 @@ class StartScreen(Screen):  # type: ignore
 
     def compose(self) -> ComposeResult:
         try:
-            from textual.containers import Container, Horizontal, VerticalScroll
-            from textual.widgets import Button, Footer, Header, Input, Label, Select, Static, TextArea
+            from textual.containers import Container, VerticalScroll
+            from textual.widgets import Footer, Header, Input, Label, Select, Static, TextArea
 
             yield Header(show_clock=True)
             with Container(id="start-container"):
-                yield Static("[b]Start New Workflow Run[/b]", id="start-header")
+                yield Static("[b]Start New Workflow Run[/b]  (Ctrl+S: Launch, b/Esc: Back)", id="start-header")
                 with VerticalScroll(id="start-form"):
                     yield Label("Select BPMN Template:")
                     yield Select([], id="select-template", prompt="Choose a template...")
@@ -57,9 +58,6 @@ class StartScreen(Screen):  # type: ignore
                     yield Label("Additional Variables (JSON, optional):")
                     yield Input("{}", id="input-extra-vars")
 
-                with Horizontal(id="start-actions"):
-                    yield Button("Launch Workflow", id="btn-launch", variant="success")
-                    yield Button("Cancel [b/Esc]", id="btn-cancel")
             yield Footer()
         except ImportError:
             pass

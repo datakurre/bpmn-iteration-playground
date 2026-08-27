@@ -2,6 +2,7 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -20,6 +21,14 @@ from graph_agent.api.routers import (
     workflow,
 )
 from graph_agent.api.security import OriginHostGuardMiddleware
+from graph_agent.daemon import (
+    RUNTIME_SCHEMA_VERSION,
+    RuntimeInfo,
+    is_daemon_alive,
+    read_runtime_file,
+    remove_runtime_file,
+    write_runtime_file,
+)
 from graph_agent.element_templates_registry import ElementTemplatesRegistry
 from graph_agent.logging_config import RequestLoggingMiddleware, configure_logging
 from graph_agent.persistence import WorkflowStore
@@ -29,6 +38,30 @@ from graph_agent.workflow_service import WorkflowService
 
 logger = logging.getLogger("bpmn.api")
 configure_logging()
+
+
+def _register_runtime_if_needed(workspace: Workspace) -> bool:
+    try:
+        existing = read_runtime_file(workspace)
+        if existing is not None and existing.pid != os.getpid() and is_daemon_alive(existing, check_http=True):
+            return False
+        port = int(os.getenv("PORT", "8080"))
+        host = os.getenv("HOST", "127.0.0.1")
+        url_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+        token = os.getenv("ADMIN_TOKEN", "")
+        info = RuntimeInfo(
+            schema=RUNTIME_SCHEMA_VERSION,
+            pid=os.getpid(),
+            port=port,
+            url=f"http://{url_host}:{port}",
+            token=token,
+            started_at=datetime.now(UTC).isoformat(),
+        )
+        write_runtime_file(workspace, info)
+        return True
+    except Exception as exc:
+        logger.warning(f"Could not register runtime info: {exc}")
+    return False
 
 
 def _mount_static_files(app: FastAPI) -> None:
@@ -88,6 +121,8 @@ def create_app(service: WorkflowService | None = None, workspace: Workspace | No
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         configure_logging(os.getenv("LOG_LEVEL", "INFO"))
+        runtime_written = _register_runtime_if_needed(_workspace)
+
         try:
             svc = get_service()
             recovered = await svc.recover_orphaned_workflows()
@@ -105,6 +140,9 @@ def create_app(service: WorkflowService | None = None, workspace: Workspace | No
         try:
             yield
         finally:
+            if runtime_written:
+                with suppress(Exception):
+                    remove_runtime_file(_workspace)
             with suppress(Exception):
                 await get_service().shutdown()
             with suppress(Exception):

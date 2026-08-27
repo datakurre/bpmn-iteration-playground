@@ -53,7 +53,7 @@ class RunDetailScreen(Screen):  # type: ignore
     def compose(self) -> ComposeResult:
         try:
             from textual.containers import Container, Horizontal, VerticalScroll
-            from textual.widgets import Button, DataTable, Footer, Header, RichLog, Static, TabbedContent, TabPane
+            from textual.widgets import DataTable, Footer, Header, RichLog, Static, TabbedContent, TabPane
 
             yield Header(show_clock=True)
             with Container(id="detail-container"):
@@ -70,14 +70,6 @@ class RunDetailScreen(Screen):  # type: ignore
                         yield Static("{}", id="detail-variables-json")
                     with TabPane("Savepoints", id="tab-savepoints"):
                         yield DataTable(id="detail-savepoints-table", cursor_type="row")
-
-                with Horizontal(id="detail-actions"):
-                    yield Button("Back [b/Esc]", id="btn-back")
-                    yield Button("Refresh [r]", id="btn-refresh")
-                    yield Button("Retry Failed [t]", id="btn-retry", variant="warning")
-                    yield Button("Merge [m]", id="btn-merge")
-                    yield Button("Cancel [c]", id="btn-cancel", variant="error")
-                    yield Button("Web UI [w]", id="btn-browser")
             yield Footer()
         except ImportError:
             pass

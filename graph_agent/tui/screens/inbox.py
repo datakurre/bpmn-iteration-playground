@@ -41,20 +41,16 @@ class InboxScreen(Screen):  # type: ignore
 
     def compose(self) -> ComposeResult:
         try:
-            from textual.containers import Container, Horizontal
-            from textual.widgets import Button, DataTable, Footer, Header, Static
+            from textual.containers import Container
+            from textual.widgets import DataTable, Footer, Header, Static
 
             yield Header(show_clock=True)
             with Container(id="inbox-container"):
                 yield Static(
-                    "[b]Inbox: Action Items Across All Runs[/b]  (Enter: Open Form / Retry Merge, b/Esc: Back, r: Refresh)",
+                    "[b]Inbox: Action Items Across All Runs[/b]  (Enter: Open / Action, b/Esc: Back, r: Refresh)",
                     id="inbox-title",
                 )
                 yield DataTable(id="inbox-table", cursor_type="row")
-                with Horizontal(id="inbox-actions"):
-                    yield Button("Open / Action [Enter]", id="btn-action", variant="primary")
-                    yield Button("Back [b/Esc]", id="btn-back")
-                    yield Button("Refresh [r]", id="btn-refresh")
             yield Footer()
         except ImportError:
             pass

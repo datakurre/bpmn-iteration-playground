@@ -31,9 +31,10 @@ class FormScreen(Screen):  # type: ignore
     """Renders FormJS form components natively, or falls back to browser deep link for complex forms."""
 
     BINDINGS: ClassVar[list[BindingType]] = [
+        ("ctrl+s", "submit_form", "Submit Form"),
+        ("o", "open_in_browser", "Web Form"),
         ("escape", "go_back", "Back"),
         ("b", "go_back", "Back"),
-        ("o", "open_in_browser", "Open in Browser"),
     ]
 
     def __init__(
@@ -52,18 +53,17 @@ class FormScreen(Screen):  # type: ignore
 
     def compose(self) -> ComposeResult:
         try:
-            from textual.containers import Container, Horizontal, VerticalScroll
-            from textual.widgets import Button, Footer, Header, Static
+            from textual.containers import Container, VerticalScroll
+            from textual.widgets import Footer, Header, Static
 
             yield Header(show_clock=True)
             with Container(id="form-container"):
-                yield Static(f"[b]Human Task Form: {self.workflow_id[:8]}[/b]", id="form-header")
+                yield Static(
+                    f"[b]Human Task Form: {self.workflow_id[:8]}[/b]  (Ctrl+S: Submit, o: Browser, b/Esc: Back)",
+                    id="form-header",
+                )
                 with VerticalScroll(id="form-fields-container"):
                     yield Static("Loading form fields...", id="form-loading")
-                with Horizontal(id="form-actions"):
-                    yield Button("Submit Form", id="btn-submit", variant="primary")
-                    yield Button("Open in Browser [o]", id="btn-browser")
-                    yield Button("Cancel [b/Esc]", id="btn-cancel")
             yield Footer()
         except ImportError:
             pass

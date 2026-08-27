@@ -141,6 +141,22 @@ def test_cli_serve_binds_free_port_writes_runtime_and_cleans_up(tmp_path: Path, 
     assert not workspace.runtime_file.exists()
 
 
+def test_cli_serve_0000_host_maps_runtime_url_to_127_0_0_1(tmp_path: Path, _restore_admin_token_env: None) -> None:
+    workspace = Workspace.discover(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_run(sockets: list[object] | None = None) -> None:
+        captured["info"] = read_runtime_file(workspace)
+
+    with patch("graph_agent.cli.uvicorn.Server") as mock_server_cls:
+        mock_server_cls.return_value.run.side_effect = fake_run
+        main(["serve", "--host", "0.0.0.0", "--no-tui", "--workspace", str(tmp_path)])
+
+    info = captured["info"]
+    assert isinstance(info, RuntimeInfo)
+    assert info.url.startswith("http://127.0.0.1:")
+
+
 def test_cli_serve_defaults_log_file_under_agents_logs(
     tmp_path: Path, _restore_admin_token_env: None, _restore_log_file_env: None
 ) -> None:

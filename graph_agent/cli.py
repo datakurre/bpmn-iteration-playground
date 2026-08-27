@@ -112,7 +112,8 @@ def _cmd_serve(workspace_root: Path | None, host: str, port: int, reload: bool) 
     bound_port = sock.getsockname()[1]
     token = generate_token()
     os.environ["ADMIN_TOKEN"] = token
-    url = f"http://{host}:{bound_port}"
+    url_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    url = f"http://{url_host}:{bound_port}"
 
     info = RuntimeInfo(
         schema=RUNTIME_SCHEMA_VERSION,
@@ -607,9 +608,11 @@ def add_engine_flags(p: argparse.ArgumentParser) -> None:
 def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
     parser = argparse.ArgumentParser(prog="graph-agent", description="Run and manage the Graph agent.")
     add_engine_flags(parser)
+    default_host = os.getenv("HOST", "127.0.0.1")
+    default_port = int(os.getenv("PORT", "0"))
     parser.add_argument("--workspace", type=Path, default=None, help="Workspace root (default: discovered)")
-    parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
-    parser.add_argument("--port", type=int, default=0, help="Bind port (default: 0, a free port)")
+    parser.add_argument("--host", default=default_host, help=f"Bind host (default: {default_host})")
+    parser.add_argument("--port", type=int, default=default_port, help=f"Bind port (default: {default_port or '0, a free port'})")
     parser.add_argument("--no-tui", action="store_true", help="Run daemon headlessly without TUI")
     sub = parser.add_subparsers(dest="command")
 
@@ -625,8 +628,8 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0915
     p_serve = sub.add_parser("serve", help="Run the web server (default when no command is given)")
     add_workspace_flag(p_serve)
     add_engine_flags(p_serve)
-    p_serve.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
-    p_serve.add_argument("--port", type=int, default=0, help="Bind port (default: 0, a free port)")
+    p_serve.add_argument("--host", default=default_host, help=f"Bind host (default: {default_host})")
+    p_serve.add_argument("--port", type=int, default=default_port, help=f"Bind port (default: {default_port or '0, a free port'})")
     p_serve.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
     p_serve.add_argument(
         "--no-tui", action="store_true", help="Run daemon headlessly without TUI (foreground, blocking)"

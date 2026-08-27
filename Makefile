@@ -1,13 +1,14 @@
-.PHONY: help watch run start demo test lint typecheck install setup clean pack screenshots docs docs-serve submodules submodule submodule-update vendor-build
+.PHONY: help watch run start demo test lint typecheck install setup clean clear-log truncate-log pack screenshots docs docs-serve submodules submodule submodule-update vendor-build
 
-HOST ?= 127.0.0.1
-PORT ?= 8000
+HOST ?= 0.0.0.0
+PORT ?= 8080
 UV ?= uv
 WATCH_LOG ?= watch.log
 
 help:
 	@echo "Available commands:"
 	@echo "  make watch            - Run FastAPI server with auto-reload (tees console to \$$(WATCH_LOG))"
+	@echo "  make clear-log        - Truncate \$$(WATCH_LOG) in-place without restarting the server"
 	@echo "  make run              - Run FastAPI server"
 	@echo "  make demo             - Run server with mock Pi demo agent (no API key required)"
 	@echo "  make lint             - Run mypy (--strict) and tsc typecheckers"
@@ -23,6 +24,11 @@ help:
 	@echo "  make vendor-build     - Build vendored element-templates submodules (dist/ is gitignored)"
 	@echo "  make setup            - Install dependencies, initialize submodules, and build vendored packages"
 	@echo "  make clean            - Remove Python and pytest cache files"
+
+clear-log:
+	: > $(WATCH_LOG)
+
+truncate-log: clear-log
 
 watch:
 	$(UV) run uvicorn graph_agent.api.server:app --reload --host $(HOST) --port $(PORT) 2>&1 | tee $(WATCH_LOG)

@@ -30,30 +30,22 @@ Screen {
     color: $text;
 }
 
-#runs-container, #inbox-container, #detail-container, #form-container, #start-container, #log-container {
+#runs-container, #inbox-container, #detail-container, #form-container, #start-container, #log-container, #picker-container {
     padding: 1 2;
     height: 100%;
 }
 
-#runs-title, #inbox-title, #detail-header, #form-header, #start-header, #log-header {
+#runs-title, #inbox-title, #detail-header, #form-header, #start-header, #log-header, #picker-title {
     margin-bottom: 1;
     color: $accent;
+    text-style: bold;
 }
 
-#runs-table, #inbox-table, #detail-tasks-table, #detail-savepoints-table {
+#runs-table, #inbox-table, #detail-tasks-table, #detail-savepoints-table, #sessions-table {
     height: 1fr;
-    border: solid $accent;
+    border: round $primary;
     margin-bottom: 1;
-}
-
-#runs-actions, #inbox-actions, #detail-actions, #form-actions, #start-actions, #log-actions {
-    height: 3;
-    dock: bottom;
-    align: center middle;
-}
-
-#runs-actions Button, #inbox-actions Button, #detail-actions Button, #form-actions Button, #start-actions Button, #log-actions Button {
-    margin-right: 2;
+    background: $surface-darken-1;
 }
 
 #detail-meta {
@@ -61,6 +53,7 @@ Screen {
     margin-bottom: 1;
     background: $panel;
     padding: 0 1;
+    border: round $primary;
 }
 
 .form-field-block {
@@ -69,7 +62,7 @@ Screen {
 
 #tail-rich-log {
     height: 1fr;
-    border: solid $accent;
+    border: round $primary;
     background: $surface-darken-1;
 }
 """

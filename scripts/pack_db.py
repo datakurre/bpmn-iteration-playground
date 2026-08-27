@@ -5,7 +5,7 @@ import urllib.request
 
 
 def main() -> None:
-    port = os.getenv("PORT", "8000")
+    port = os.getenv("PORT", "8080")
     url = f"http://127.0.0.1:{port}/api/history/pack"
     try:
         req = urllib.request.Request(url, data=b"", method="POST")

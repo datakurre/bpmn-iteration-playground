@@ -48,24 +48,16 @@ class RunsScreen(Screen):  # type: ignore
 
     def compose(self) -> ComposeResult:
         try:
-            from textual.containers import Container, Horizontal
-            from textual.widgets import Button, DataTable, Footer, Header, Static
+            from textual.containers import Container
+            from textual.widgets import DataTable, Footer, Header, Static
 
             yield Header(show_clock=True)
             with Container(id="runs-container"):
                 yield Static(
-                    "[b]Workflow Runs[/b]  (Enter/d: Detail, i: Inbox, s: Start, e: Editor, r: Refresh, m: Merge, c: Cancel)",
+                    "[b]Workflow Runs[/b]  (Enter/d: Detail, s: Start, i: Inbox, m: Merge, c: Cancel)",
                     id="runs-title",
                 )
                 yield DataTable(id="runs-table", cursor_type="row")
-                with Horizontal(id="runs-actions"):
-                    yield Button("View Detail [d]", id="btn-detail", variant="primary")
-                    yield Button("Inbox [i]", id="btn-inbox")
-                    yield Button("Start New [s]", id="btn-start", variant="success")
-                    yield Button("Editor [e]", id="btn-editor")
-                    yield Button("Refresh [r]", id="btn-refresh")
-                    yield Button("Merge [m]", id="btn-merge")
-                    yield Button("Cancel [c]", id="btn-cancel", variant="error")
             yield Footer()
         except ImportError:
             pass

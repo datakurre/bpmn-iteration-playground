@@ -36,16 +36,13 @@ class LogScreen(Screen):  # type: ignore
 
     def compose(self) -> ComposeResult:
         try:
-            from textual.containers import Container, Horizontal
-            from textual.widgets import Button, Footer, Header, RichLog, Static
+            from textual.containers import Container
+            from textual.widgets import Footer, Header, RichLog, Static
 
             yield Header(show_clock=True)
             with Container(id="log-container"):
-                yield Static("[b]Workspace Daemon & Activity Logs[/b]  (Auto-tailing)", id="log-header")
+                yield Static("[b]Workspace Daemon & Activity Logs[/b]  (Auto-tailing, b/Esc: Back, r: Refresh)", id="log-header")
                 yield RichLog(id="tail-rich-log", highlight=True, markup=True)
-                with Horizontal(id="log-actions"):
-                    yield Button("Back [b/Esc]", id="btn-back")
-                    yield Button("Refresh [r]", id="btn-refresh")
             yield Footer()
         except ImportError:
             pass

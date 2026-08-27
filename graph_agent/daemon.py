@@ -145,9 +145,13 @@ def is_daemon_alive(info: RuntimeInfo, *, check_http: bool = True) -> bool:
     if not check_http:
         return True
     try:
+        url = info.url
+        if "://0.0.0.0:" in url:
+            url = url.replace("://0.0.0.0:", "://127.0.0.1:")
+        headers = {"X-Admin-Token": info.token} if info.token else {}
         resp = httpx.get(
-            f"{info.url}/health",
-            headers={"X-Admin-Token": info.token},
+            f"{url}/health",
+            headers=headers,
             timeout=_HEALTH_CHECK_TIMEOUT_SECONDS,
         )
     except httpx.HTTPError:

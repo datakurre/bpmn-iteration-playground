@@ -31,11 +31,12 @@ class SessionChatScreen(Screen):  # type: ignore
 
     BINDINGS: ClassVar[list[BindingType]] = [
         ("escape", "go_back", "Back"),
-        ("ctrl+d", "open_diff", "Diff Viewer"),
-        ("ctrl+p", "open_palette", "Command Palette"),
-        ("ctrl+e", "open_editor", "Web Modeler"),
+        ("ctrl+d", "open_diff", "Diff"),
+        ("ctrl+p", "open_palette", "Commands"),
+        ("ctrl+e", "open_editor", "Modeler"),
+        ("w", "open_browser", "Web UI"),
         ("m", "merge_session", "Merge"),
-        ("t", "retry_failed", "Retry Task"),
+        ("t", "retry_failed", "Retry"),
         ("r", "refresh_session", "Refresh"),
     ]
 
@@ -52,7 +53,7 @@ class SessionChatScreen(Screen):  # type: ignore
 
     #chat-scroll {
         height: 1fr;
-        border: solid $accent;
+        border: round $primary;
         background: $surface-darken-1;
         padding: 1;
         overflow-y: scroll;
@@ -256,6 +257,8 @@ class SessionChatScreen(Screen):  # type: ignore
             self.action_open_palette()
         elif cmd in ("editor", "modeler", "e"):
             self.action_open_editor()
+        elif cmd in ("web", "browser", "w"):
+            self.action_open_browser()
         elif cmd in ("retry", "t"):
             self.run_worker(self.action_retry_failed())
         elif cmd in ("merge", "m"):
@@ -265,8 +268,19 @@ class SessionChatScreen(Screen):  # type: ignore
                 import asyncio
 
                 self._bg_task = asyncio.create_task(self.action_merge_session())
+        elif cmd in ("help", "?"):
+            self.notify(
+                "Slash commands: /diff, /retry, /merge, /web, /editor, /palette, /status",
+                severity="information",
+            )
+        elif cmd == "status":
+            st = self.run_state.get("status", "unknown")
+            self.notify(f"Session {self.workflow_id[:8]}: {st}", severity="information")
         else:
-            self.notify(f"Unknown command: /{cmd}. Valid: /diff, /palette, /editor, /retry, /merge", severity="warning")
+            self.notify(
+                f"Unknown command: /{cmd}. Valid: /diff, /retry, /merge, /web, /editor, /palette, /help",
+                severity="warning",
+            )
 
     def action_open_diff(self) -> None:
         from graph_agent.tui.screens.diff_modal import DiffModalScreen
@@ -282,9 +296,17 @@ class SessionChatScreen(Screen):  # type: ignore
         import webbrowser
 
         client = getattr(self.app, "client", None)
-        url = f"{client.base_url}/editor" if client else "http://127.0.0.1:8000/editor"
+        url = f"{client.base_url}/editor" if client else "http://127.0.0.1:8080/editor"
         webbrowser.open(url)
         self.notify(f"Opened {url} in browser", severity="information")
+
+    def action_open_browser(self) -> None:
+        import webbrowser
+
+        client = getattr(self.app, "client", None)
+        url = f"{client.base_url}/instance/{self.workflow_id}" if client else f"http://127.0.0.1:8080/instance/{self.workflow_id}"
+        webbrowser.open(url)
+        self.notify("Opened Web Studio in browser", severity="information")
 
     async def action_merge_session(self) -> None:
         client = getattr(self.app, "client", None)

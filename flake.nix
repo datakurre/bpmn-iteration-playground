@@ -148,6 +148,7 @@
           };
           shellHook = ''
             export PI_EXECUTABLE="''${PWD}/node_modules/.bin/pi"
+            export PATH="''${PWD}/.venv/bin:''${PWD}/node_modules/.bin:''${PATH}"
           '';
         };
       });
@@ -156,9 +157,6 @@
         graph-agent = self.packages.${pkgs.stdenv.hostPlatform.system}.graph-agent;
         pi-bpmn-json-form-builder =
           self.packages.${pkgs.stdenv.hostPlatform.system}.pi-bpmn-json-form-builder;
-        pi-text-analysis = self.packages.${pkgs.stdenv.hostPlatform.system}.pi-text-analysis;
-        pi-contract-review = self.packages.${pkgs.stdenv.hostPlatform.system}.pi-contract-review;
-        pi-beamer-author = self.packages.${pkgs.stdenv.hostPlatform.system}.pi-beamer-author;
       });
 
       formatter = forAllSystems (pkgs: pkgs.nixfmt-tree);
