@@ -413,3 +413,24 @@ def test_session_crud_operations() -> None:
     store.clear()
     assert len(store.list_sessions()) == 0
     store.close()
+
+
+def test_reindex_and_purge_instances() -> None:
+    store = WorkflowStore(":memory:")
+    store.save("wf-1", {"workflow_id": "wf-1", "process_id": "p1", "status": "completed", "tasks": []})
+    store.save("wf-2", {"workflow_id": "wf-2", "process_id": "p2", "status": "running", "tasks": []})
+    store.save("wf-3", {"workflow_id": "wf-3", "process_id": "p3", "status": "cancelled", "tasks": []})
+
+    # Reindex
+    result = store.reindex()
+    assert result["reindexed"] == 3
+    assert len(store.list()) == 3
+
+    # Purge completed and cancelled
+    purged = store.purge_instances(["completed", "cancelled"])
+    assert purged == 2
+    remaining = store.list()
+    assert len(remaining) == 1
+    assert remaining[0][0] == "wf-2"
+    store.close()
+

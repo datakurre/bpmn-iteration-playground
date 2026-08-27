@@ -1,7 +1,5 @@
 import { $, escapeHtml, renderList } from "../lib/dom";
 import "../lib/accordion";
-import { withDocumentContentFallback } from "../lib/form-data-fallback";
-import type { FormInstance } from "../types/globals";
 
 interface TaskSummary {
   id: string;
@@ -35,7 +33,6 @@ interface PendingInstanceSummary {
 
 let current: WorkflowState | null = null;
 let reviewTask: TaskSummary | undefined;
-let formViewer: FormInstance | null = null;
 
 function copyDashboardData(): void {
   if (current?.data) {
@@ -135,17 +132,17 @@ async function poll(): Promise<void> {
 
 async function loadForm(): Promise<void> {
   if (!current || !reviewTask) return;
-  const r = await fetch(`/workflow/${current.workflow_id}/form/${reviewTask.id}`);
-  if (!r.ok) return;
-  const schema = await r.json();
   $("review")?.classList.remove("hidden");
-  if (!formViewer) {
-    const FormCtor = (window.FormJS || window.FormViewer)?.Form;
-    if (!FormCtor) return;
-    formViewer = new FormCtor({ container: "#fields" });
+  const fields = $("fields");
+  if (fields) {
+    fields.innerHTML = `
+      <div class="p-2 rounded bg-card border border-line text-xs">
+        <div class="font-semibold text-ink mb-1">${escapeHtml(reviewTask.name || reviewTask.bpmn_id)}</div>
+        <p class="text-muted text-[11px] mb-2">Review checkpoint ready for decision.</p>
+        <input type="text" id="dashboard-decision-input" class="w-full border border-line rounded p-1.5 bg-bg text-ink text-xs focus:outline-none focus:border-accent" value="approved" placeholder="decision note">
+      </div>
+    `;
   }
-  const initialData = withDocumentContentFallback(current.data);
-  await formViewer.importSchema(schema, initialData);
 }
 
 const startBtn = $("start") as HTMLButtonElement | null;
@@ -184,13 +181,13 @@ if (startBtn) {
 const submitBtn = $("submit");
 if (submitBtn) {
   submitBtn.onclick = async () => {
-    if (!formViewer || !reviewTask || !current) return;
-    const { data, errors } = formViewer._getState();
-    if (Object.keys(errors).length > 0) return;
+    if (!reviewTask || !current) return;
+    const decisionInput = $("dashboard-decision-input") as HTMLInputElement | null;
+    const decision = decisionInput?.value.trim() || "approved";
     const r = await fetch(`/workflow/${current.workflow_id}/submit-task/${reviewTask.id}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ variables: data }),
+      body: JSON.stringify({ variables: { decision, approved: true } }),
     });
     if (r.ok) {
       $("review")?.classList.add("hidden");

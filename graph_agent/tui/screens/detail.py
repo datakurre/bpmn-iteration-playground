@@ -77,6 +77,7 @@ class RunDetailScreen(Screen):  # type: ignore
 
     async def on_mount(self) -> None:
         import contextlib
+
         from textual.widgets import DataTable
 
         with contextlib.suppress(Exception):

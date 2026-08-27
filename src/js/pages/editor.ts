@@ -1,4 +1,4 @@
-import { $ } from "../lib/dom";
+import { $, escapeHtml } from "../lib/dom";
 import { initResizer } from "../lib/resizer";
 import { fitDiagram, wireZoomControls } from "../lib/bpmn-viewer-controls";
 import type { BpmnDiagramInstance } from "../lib/bpmn-types";
@@ -108,12 +108,87 @@ async function init(): Promise<void> {
     if (errors?.length) console.warn("Element template errors:", errors);
   });
 
+  modeler.on("commandStack.changed", () => {
+    updateSubprocessTree();
+  });
+
   await modeler.importXML(blankBPMN);
   fitDiagram(modeler);
+  updateSubprocessTree();
   void loadTemplatesList();
   void loadElementTemplates();
   setupResizer();
   setupShortcuts();
+}
+
+function updateSubprocessTree(): void {
+  if (!modeler) return;
+  const bar = $("subprocess-tree-bar");
+  const chips = $("subprocess-chips");
+  if (!bar || !chips) return;
+
+  try {
+    const elementRegistry = modeler.get("elementRegistry") as {
+      filter: (predicate: (element: { type: string; id: string; businessObject: { calledElement?: string; name?: string } }) => boolean) => Array<{ id: string; businessObject: { calledElement?: string; name?: string } }>;
+    };
+    const callActivities = elementRegistry.filter((element) => element.type === "bpmn:CallActivity");
+    if (callActivities.length === 0) {
+      bar.classList.add("hidden");
+      return;
+    }
+
+    bar.classList.remove("hidden");
+    const seen = new Set<string>();
+    const html: string[] = [];
+
+    callActivities.forEach((el: { id: string; businessObject: { calledElement?: string; name?: string } }) => {
+      const bo = el.businessObject;
+      const calledElement = bo.calledElement || bo.name || el.id;
+      if (seen.has(calledElement)) return;
+      seen.add(calledElement);
+
+      const label = bo.name ? `${bo.name} → ${calledElement}` : calledElement;
+      html.push(`
+        <button class="badge bg-card border border-accent/40 text-ink hover:text-accent hover:border-accent transition-colors flex items-center gap-1 cursor-pointer py-1 px-2 text-xs" data-open-sub="${escapeHtml(calledElement)}" title="Load '${escapeHtml(calledElement)}' into modeler">
+          <span>🔄 ${escapeHtml(label)}</span>
+        </button>
+      `);
+    });
+
+    chips.innerHTML = html.join("");
+    chips.querySelectorAll<HTMLButtonElement>("[data-open-sub]").forEach((btn) => {
+      btn.onclick = () => {
+        const subName = btn.dataset.openSub;
+        if (subName) {
+          void loadTemplateByName(subName);
+        }
+      };
+    });
+  } catch {
+    // elementRegistry not ready or parsing error
+  }
+}
+
+async function loadTemplateByName(name: string): Promise<void> {
+  if (!modeler) return;
+  const nameInput = $("workflow-name") as HTMLInputElement | null;
+  const select = $("template-select") as HTMLSelectElement | null;
+  try {
+    const res = await fetch(`/api/templates/${encodeURIComponent(name)}/xml`);
+    if (res.ok) {
+      const xml = await res.text();
+      await modeler.importXML(xml);
+      if (nameInput) nameInput.value = name;
+      if (select) select.value = name;
+      fitDiagram(modeler);
+      updateSubprocessTree();
+    } else {
+      alert(`Could not find child template '${name}'. You can create and save it with that name.`);
+      if (nameInput) nameInput.value = name;
+    }
+  } catch (e) {
+    alert("Failed to load subprocess template: " + e);
+  }
 }
 
 async function loadElementTemplates(): Promise<void> {
@@ -158,19 +233,10 @@ if (loadBtn) {
       await modeler.importXML(blankBPMN);
       if (nameInput) nameInput.value = "new_workflow";
       fitDiagram(modeler);
+      updateSubprocessTree();
       return;
     }
-    try {
-      const res = await fetch(`/api/templates/${selected}/xml`);
-      if (res.ok) {
-        const xml = await res.text();
-        await modeler.importXML(xml);
-        if (nameInput) nameInput.value = selected;
-        fitDiagram(modeler);
-      }
-    } catch (e) {
-      alert("Failed to load template: " + e);
-    }
+    await loadTemplateByName(selected);
   };
 }
 
@@ -183,6 +249,7 @@ if (newBtn) {
       const nameInput = $("workflow-name") as HTMLInputElement | null;
       if (nameInput) nameInput.value = "new_workflow";
       fitDiagram(modeler);
+      updateSubprocessTree();
     }
   };
 }

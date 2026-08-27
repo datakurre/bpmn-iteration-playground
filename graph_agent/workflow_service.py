@@ -5,6 +5,7 @@ import contextlib
 import inspect
 import logging
 import os
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -455,6 +456,12 @@ class WorkflowService:
         count = self.store.clear()
         self._locks.clear()
         return count
+
+    async def reindex(self) -> dict[str, int]:
+        return await asyncio.to_thread(self.store.reindex)
+
+    async def purge_instances(self, statuses: Sequence[str] | None = None) -> int:
+        return await asyncio.to_thread(self.store.purge_instances, statuses)
 
     async def cancel(self, workflow_id: str) -> dict[str, Any]:
         async with self._lock(workflow_id):

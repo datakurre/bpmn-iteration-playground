@@ -84,7 +84,4 @@ copyFileSync(
 mkdirSync("graph_agent/static/vendor/bpmn-js", { recursive: true });
 cpSync("node_modules/bpmn-js/dist/assets", "graph_agent/static/vendor/bpmn-js/assets", { recursive: true });
 
-mkdirSync("graph_agent/static/vendor/form-js/assets", { recursive: true });
-cpSync("node_modules/@bpmn-io/form-js/dist/assets", "graph_agent/static/vendor/form-js/assets", { recursive: true });
-copyFileSync("node_modules/@bpmn-io/form-js/dist/form-viewer.umd.js", "graph_agent/static/vendor/form-js/form-viewer.umd.js");
 

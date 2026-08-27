@@ -76,6 +76,29 @@ if (packBtn) {
   };
 }
 
+const purgeBtn = $("purge-terminal") as HTMLButtonElement | null;
+if (purgeBtn) {
+  purgeBtn.onclick = async () => {
+    if (confirm("Purge all completed and cancelled workflow instances from ZODB?")) {
+      purgeBtn.disabled = true;
+      try {
+        const res = await fetch("/api/history/purge?status=completed,cancelled", { method: "POST" });
+        if (res.ok) {
+          const data = await res.json();
+          const statusEl = $("pack-status");
+          if (statusEl) {
+            statusEl.classList.remove("hidden");
+            statusEl.textContent = `Purged ${data.purged} completed/cancelled workflow instances.`;
+          }
+          loadHistory();
+        }
+      } finally {
+        purgeBtn.disabled = false;
+      }
+    }
+  };
+}
+
 if (clearBtn) {
   clearBtn.onclick = async () => {
     if (confirm("Delete all historical workflow instances?")) {

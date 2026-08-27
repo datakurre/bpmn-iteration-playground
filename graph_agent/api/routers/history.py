@@ -81,6 +81,29 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:
             raise HTTPException(400, "confirm=DELETE_ALL is required")
         return {"deleted": await get_service().clear_instances()}
 
+    @router.post(
+        "/api/history/purge",
+        tags=["History"],
+        summary="Bulk purge historical instances by status",
+    )
+    async def purge_history_instances(
+        status: str | None = None,
+        role: Role = require_role(Role.ADMIN, Role.OPERATOR),
+    ) -> dict[str, Any]:
+        statuses = [s.strip() for s in status.split(",")] if status else ["completed", "cancelled", "failed"]
+        purged = await get_service().purge_instances(statuses)
+        return {"purged": purged, "statuses": statuses}
+
+    @router.post(
+        "/api/history/reindex",
+        tags=["History"],
+        summary="Reindex metadata from ZODB workflow records",
+    )
+    async def reindex_history_metadata(
+        role: Role = require_role(Role.ADMIN),
+    ) -> dict[str, Any]:
+        return await get_service().reindex()
+
     @router.get(
         "/api/history/sessions",
         response_model=list[dict[str, Any]],

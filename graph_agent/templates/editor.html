@@ -73,6 +73,15 @@
       </div>
     </section>
 
+    <!-- Subprocess & Process Tree Bar -->
+    <div id="subprocess-tree-bar" class="hidden mb-2 p-2 bg-panel border border-line rounded-md shadow-sm flex items-center justify-between gap-2 flex-wrap text-xs">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="text-accent font-bold uppercase tracking-wider text-[10.5px]">Referenced Subprocesses:</span>
+        <div id="subprocess-chips" class="flex items-center gap-1.5 flex-wrap"></div>
+      </div>
+      <div class="text-muted text-[11px]">Click a subprocess to open and edit its BPMN diagram</div>
+    </div>
+
     <div id="save-msg" class="hidden mb-2 p-2 rounded-md text-xs"></div>
 
     <div class="flex flex-1 min-h-0 relative bg-white rounded-lg overflow-hidden border border-line shadow-2xl">

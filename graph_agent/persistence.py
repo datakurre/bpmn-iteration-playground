@@ -4,7 +4,7 @@ import os
 import tempfile
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from functools import wraps
 from pathlib import Path
@@ -1175,6 +1175,56 @@ class WorkflowStore:
             if "sessions" in root:
                 root["sessions"].clear()
             return count
+
+    @_retry_on_conflict()
+    def reindex(self) -> dict[str, int]:
+        with self.db.transaction() as connection:
+            root = connection.root()
+            workflows = root["workflows"]
+            metadata = root["metadata"]
+            metadata.clear()
+            reindexed = 0
+            for wid, wf in workflows.items():
+                record = wf.to_dict() if hasattr(wf, "to_dict") else dict(wf)
+                tasks = getattr(wf, "tasks", record.get("tasks", []))
+                meta = WorkflowMetadata(
+                    workflow_id=wid,
+                    status=record.get("status", "unknown"),
+                    process_id=record.get("process_id", "workflow"),
+                    bpmn_path=record.get("bpmn_path", ""),
+                    task_count=len(tasks),
+                    save_point_count=len(record.get("save_points", [])),
+                    parent_workflow_id=record.get("parent_workflow_id"),
+                    created_at=record.get("created_at"),
+                    updated_at=record.get("updated_at"),
+                )
+                metadata[wid] = meta
+                reindexed += 1
+            return {"reindexed": reindexed}
+
+    @_retry_on_conflict()
+    def purge_instances(self, status_in: Sequence[str] | None = None) -> int:
+        status_filter = set(status_in or ["completed", "cancelled", "failed"])
+        purged = 0
+        with self.db.transaction() as connection:
+            root = connection.root()
+            workflows = root["workflows"]
+            for wid in list(workflows.keys()):
+                wf = workflows[wid]
+                status = wf.get("status") if isinstance(wf, dict) else getattr(wf, "status", None)
+                if status in status_filter:
+                    points = getattr(wf, "save_points", wf.get("save_points", []) if isinstance(wf, dict) else []) or []
+                    for p in points:
+                        p_id = p.get("id") if isinstance(p, dict) else getattr(p, "id", None)
+                        if p_id and p_id in root["save_points"]:
+                            del root["save_points"][p_id]
+                    del workflows[wid]
+                    if wid in root["metadata"]:
+                        del root["metadata"][wid]
+                    if wid in root["projects"]:
+                        del root["projects"][wid]
+                    purged += 1
+        return purged
 
     @_retry_on_conflict()
     def update(self, workflow_id: str, **changes: Any) -> dict[str, Any]:

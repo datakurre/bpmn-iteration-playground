@@ -292,3 +292,47 @@ async def test_data_table_out_of_bounds_click_safe(tmp_path: Path) -> None:
         )
         # Must not raise IndexError
         await table._on_click(event)
+
+
+@pytest.mark.anyio
+async def test_tui_screens_pilot(mock_daemon: tuple[Workspace, WorkflowService, Any]) -> None:
+    ws, _service, asgi_app = mock_daemon
+    transport = ASGITransport(app=asgi_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as http_client:
+        client = DaemonClient(base_url="http://test", token="test-token", workspace=ws, http_client=http_client)
+        app = GraphAgentApp(client=client, workspace=ws)
+        async with app.run_test() as pilot:
+            from graph_agent.tui.screens.command_palette import CommandPaletteModal
+            from graph_agent.tui.screens.detail import RunDetailScreen
+            from graph_agent.tui.screens.diff_modal import DiffModalScreen
+            from graph_agent.tui.screens.session_chat import SessionChatScreen
+
+            await pilot.press("r")
+            await pilot.pause(0.05)
+
+            # Test Detail Screen
+            detail = RunDetailScreen(workflow_id="wf-test")
+            app.push_screen(detail)
+            await pilot.pause(0.05)
+            await detail.action_refresh_detail()
+            await pilot.press("escape")
+
+            # Test Session Chat Screen
+            chat = SessionChatScreen(workflow_id="wf-test")
+            app.push_screen(chat)
+            await pilot.pause(0.05)
+            await chat.action_refresh_session()
+            await pilot.press("escape")
+
+            # Test Command Palette
+            palette = CommandPaletteModal()
+            app.push_screen(palette)
+            await pilot.pause(0.05)
+            await pilot.press("escape")
+
+            # Test Diff Modal
+            diff_m = DiffModalScreen(workflow_id="wf-test")
+            app.push_screen(diff_m)
+            await pilot.pause(0.05)
+            await pilot.press("escape")
+

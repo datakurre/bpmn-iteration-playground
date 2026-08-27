@@ -67,18 +67,10 @@ def _register_runtime_if_needed(workspace: Workspace) -> bool:
 def _mount_static_files(app: FastAPI) -> None:
     app_static = Path(__file__).resolve().parents[1] / "static"
 
-    # Specific static mounts must precede the general /static prefix mount.
-    # Check graph_agent/static/vendor first (self-contained package), fallback to node_modules (dev repo).
-    form_assets = app_static / "vendor" / "form-js"
-    if not form_assets.is_dir():
-        form_assets = Path(__file__).resolve().parents[2] / "node_modules" / "@bpmn-io" / "form-js" / "dist"
-
     bpmn_assets = app_static / "vendor" / "bpmn-js"
     if not bpmn_assets.is_dir():
         bpmn_assets = Path(__file__).resolve().parents[2] / "node_modules" / "bpmn-js" / "dist"
 
-    if form_assets.is_dir():
-        app.mount("/static/form-js", StaticFiles(directory=form_assets), name="form-static")
     if app_static.is_dir():
         app.mount("/static/app", StaticFiles(directory=app_static), name="app-static")
     if bpmn_assets.is_dir():

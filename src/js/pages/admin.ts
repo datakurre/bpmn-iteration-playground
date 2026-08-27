@@ -95,6 +95,50 @@ if (packBtn) {
   };
 }
 
+const purgeTerminalBtn = $("purge-terminal") as HTMLButtonElement | null;
+if (purgeTerminalBtn) {
+  purgeTerminalBtn.onclick = async () => {
+    if (confirm("Purge all completed and cancelled workflow instances?")) {
+      purgeTerminalBtn.disabled = true;
+      try {
+        const res = await fetch("/api/history/purge?status=completed,cancelled", { method: "POST" });
+        if (res.ok) {
+          const data = await res.json();
+          const statusEl = $("pack-status");
+          if (statusEl) {
+            statusEl.classList.remove("hidden");
+            statusEl.textContent = `Purged ${data.purged} completed/cancelled workflow instances.`;
+          }
+          load();
+        }
+      } finally {
+        purgeTerminalBtn.disabled = false;
+      }
+    }
+  };
+}
+
+const reindexBtn = $("reindex") as HTMLButtonElement | null;
+if (reindexBtn) {
+  reindexBtn.onclick = async () => {
+    reindexBtn.disabled = true;
+    try {
+      const res = await fetch("/api/history/reindex", { method: "POST" });
+      if (res.ok) {
+        const data = await res.json();
+        const statusEl = $("pack-status");
+        if (statusEl) {
+          statusEl.classList.remove("hidden");
+          statusEl.textContent = `Reindexed ${data.reindexed} workflow instances metadata in ZODB.`;
+        }
+        load();
+      }
+    } finally {
+      reindexBtn.disabled = false;
+    }
+  };
+}
+
 if (clearBtn) {
   clearBtn.onclick = async () => {
     if (confirm("Type DELETE_ALL in the next prompt to clear the database.")) {

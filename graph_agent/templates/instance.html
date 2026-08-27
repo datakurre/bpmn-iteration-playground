@@ -6,18 +6,18 @@
 <link rel="stylesheet" href="/static/assets/diagram-js.css">
 <link rel="stylesheet" href="/static/assets/bpmn-font/css/bpmn.css">
 <link rel="stylesheet" href="/static/assets/bpmn-js.css">
-<link rel="stylesheet" href="/static/form-js/assets/form-js.css">
-<link rel="stylesheet" href="/static/form-js/assets/form-js-base.css">
-<link rel="stylesheet" href="/static/app/form-js-dark.css">
 <link rel="stylesheet" href="/static/app/diagram-js-minimap.css">
-<script src="/static/form-js/form-viewer.umd.js"></script>
 {% endblock %}
 
 {% block content %}
 <main class="max-w-[1600px] mx-auto px-5 py-4 pb-6">
   <header class="relative z-50 flex justify-between gap-3 items-center border-b border-line pb-3 mb-3">
     <div class="min-w-0 flex-1 pr-2">
-      <div class="text-[10px] font-bold text-accent tracking-widest uppercase">Persisted Instance View</div>
+      <div class="flex items-center gap-2 text-[10px] font-bold text-accent tracking-widest uppercase">
+        <span>Persisted Instance View</span>
+        <span class="text-muted">·</span>
+        <span id="process-breadcrumb" class="font-mono text-muted flex items-center gap-1.5 overflow-hidden text-ellipsis"></span>
+      </div>
       <h1 id="title" class="text-base sm:text-xl md:text-2xl font-bold tracking-tight text-ink mt-0.5 mb-0.5 truncate">{{ workflow_id }}</h1>
     </div>
     <!-- Desktop Nav -->
@@ -48,7 +48,18 @@
     </div>
   </header>
 
-  <div id="main-layout" class="flex flex-col xl:flex-row gap-3.5 xl:h-[calc(100vh-130px)] h-auto min-h-[580px]">
+  <!-- Process Tree Navigator for Subprocesses / CallActivities -->
+  <div id="process-tree-bar" class="hidden mb-3 p-2 bg-panel border border-line rounded-lg shadow-sm flex items-center justify-between gap-2 flex-wrap">
+    <div class="flex items-center gap-2 text-xs">
+      <span class="text-accent font-bold uppercase tracking-wider text-[10px]">Process Hierarchy:</span>
+      <div id="process-tree-nodes" class="flex items-center gap-1.5 flex-wrap"></div>
+    </div>
+    <div class="flex items-center gap-2">
+      <button id="btn-view-root" class="btn btn-secondary text-[11px] px-2 py-0.5 hidden">⬑ Root Process</button>
+    </div>
+  </div>
+
+  <div id="main-layout" class="flex flex-col xl:flex-row gap-3.5 xl:h-[calc(100vh-140px)] h-auto min-h-[580px]">
     <!-- Column 1: BPMN Canvas (Spacious & Interactive) -->
     <div id="canvas-container" class="w-full xl:flex-1 min-w-0 h-[480px] min-h-[260px] xl:h-full relative bg-white rounded-lg overflow-hidden border border-line shadow-2xl shrink-0">
       <button id="toggle-sidebar" class="absolute top-3 left-3 z-30 bg-panel-header/90 border border-line-highlight text-ink px-2.5 py-1 text-xs font-semibold rounded-md backdrop-blur-md shadow-md hover:bg-card-hover hover:text-accent transition-colors" title="Toggle Panels (Alt+S)">◧ Toggle Panels</button>
@@ -86,19 +97,23 @@
         </div>
 
         <div class="flex-1 min-h-0 overflow-y-auto p-3 pb-12 flex flex-col gap-3">
-          <!-- Review Checkpoint (Appears when user task is READY) -->
+          <!-- Human Task / Review Checkpoint -->
           <div id="review-card" class="acc-card highlight hidden shrink-0">
             <div class="acc-header" role="button" tabindex="0" aria-expanded="true" onclick="toggleAcc(this)" onkeydown="handleAccKey(event, this)">
               <div class="acc-title">
                 <svg class="acc-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                <span class="text-amber">⚠️ Checkpoint</span>
+                <span class="text-amber">⚠️ Human Gate Checkpoint</span>
               </div>
               <span class="badge waiting_human shrink-0 text-[9.5px]">Action Needed</span>
             </div>
             <div class="acc-body pb-3">
-              <p class="text-muted text-xs mb-2">Complete this persisted user task to continue process execution.</p>
-              <div id="fields" class="pb-1"></div>
-              <button id="submit" class="btn w-full mt-2.5">Submit Decision</button>
+              <div id="review-task-title" class="font-semibold text-ink text-xs mb-1"></div>
+              <p id="review-task-desc" class="text-muted text-xs mb-2">Complete or approve this checkpoint to advance the graph.</p>
+              <div id="review-fields" class="flex flex-col gap-2 pb-1 text-xs"></div>
+              <div class="flex gap-2 mt-3">
+                <button id="btn-approve" class="btn btn-primary flex-1 text-xs py-1.5">✓ Approve / Submit</button>
+                <button id="btn-reject" class="btn btn-danger text-xs px-3 py-1.5">✕ Reject</button>
+              </div>
             </div>
           </div>
 

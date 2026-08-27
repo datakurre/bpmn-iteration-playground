@@ -2,12 +2,9 @@ import "../lib/accordion";
 import { $, escapeHtml } from "../lib/dom";
 import { initResizer } from "../lib/resizer";
 import { fitDiagram, wireZoomControls } from "../lib/bpmn-viewer-controls";
-import { withDocumentContentFallback } from "../lib/form-data-fallback";
 import { createBackoffScheduler } from "../lib/websocket";
 import { buildPurgeAllRequest, buildPurgeRequest, describePurge, describePurgeAll } from "../lib/savepoint-purge";
 import type { BpmnDiagramInstance } from "../lib/bpmn-types";
-import type { FormInstance } from "../types/globals";
-
 
 interface JobStatus {
   status: string;
@@ -52,6 +49,7 @@ interface WorkflowState {
   workflow_id: string;
   parent_workflow_id?: string;
   process_id: string;
+  bpmn_path?: string;
   status: string;
   tasks: TaskSummary[];
   jobs?: Record<string, JobStatus>;
@@ -64,7 +62,6 @@ const id = window.__WORKFLOW_ID__ ?? "";
 let state: WorkflowState | null = null;
 let reviewTask: TaskSummary | undefined;
 let viewer: BpmnDiagramInstance | null = null;
-let formViewer: FormInstance | null = null;
 let ws: WebSocket | null = null;
 
 function copyData(): void {
@@ -408,10 +405,12 @@ function renderState(next: WorkflowState): void {
   reviewTask = next.tasks.find((t) => t.state === "READY" && (t.type === "UserTask" || !t.type));
   if (reviewTask) {
     $("review-card")?.classList.remove("hidden");
-    void loadForm();
+    void loadReviewTask();
   } else {
     $("review-card")?.classList.add("hidden");
   }
+
+  void loadProcessHierarchy(next);
 
   if (viewer) {
     const canvas = viewer.get("canvas");
@@ -537,34 +536,148 @@ async function refresh(): Promise<void> {
   }
 }
 
-async function loadForm(): Promise<void> {
-  if (!reviewTask) return;
-  const response = await fetch(`/instance/${id}/form/${reviewTask.id}`);
-  if (!response.ok) return;
-  const schema = await response.json();
-  if (!formViewer) {
-    const FormCtor = (window.FormJS || window.FormViewer)?.Form;
-    if (!FormCtor) return;
-    formViewer = new FormCtor({ container: "#fields" });
+async function loadProcessHierarchy(current: WorkflowState): Promise<void> {
+  const treeBar = $("process-tree-bar");
+  const treeNodes = $("process-tree-nodes");
+  const breadcrumb = $("process-breadcrumb");
+  const btnViewRoot = $("btn-view-root") as HTMLButtonElement | null;
+  if (!treeBar || !treeNodes) return;
+
+  if (breadcrumb) {
+    breadcrumb.textContent = `${current.process_id} (${current.workflow_id.slice(0, 8)})`;
   }
-  const initialData = withDocumentContentFallback(state?.data);
-  await formViewer.importSchema(schema, initialData);
+
+  try {
+    const res = await fetch("/api/history/instances");
+    if (!res.ok) return;
+    const allInstances: WorkflowState[] = await res.json();
+    
+    // Find ancestors (if this is a child)
+    const ancestors: WorkflowState[] = [];
+    let parentId = current.parent_workflow_id;
+    while (parentId) {
+      const parent = allInstances.find((i) => i.workflow_id === parentId);
+      if (parent) {
+        ancestors.unshift(parent);
+        parentId = parent.parent_workflow_id;
+      } else {
+        break;
+      }
+    }
+
+    // Find direct children
+    const children = allInstances.filter((i) => i.parent_workflow_id === current.workflow_id);
+
+    if (ancestors.length > 0 || children.length > 0) {
+      treeBar.classList.remove("hidden");
+      const nodes: string[] = [];
+
+      ancestors.forEach((anc) => {
+        nodes.push(`
+          <a href="/instance/${encodeURIComponent(anc.workflow_id)}" class="badge bg-panel-header border border-line text-ink hover:text-accent hover:border-accent transition-colors no-underline">
+            📦 ${escapeHtml(anc.process_id)} <span class="text-muted text-[9.5px]">(${escapeHtml(anc.workflow_id.slice(0, 6))})</span>
+          </a>
+          <span class="text-muted text-[10px]">❯</span>
+        `);
+      });
+
+      nodes.push(`
+        <span class="badge bg-accent-dim border border-accent-border text-accent font-semibold">
+          ● ${escapeHtml(current.process_id)} <span class="opacity-75 text-[9.5px]">(${escapeHtml(current.workflow_id.slice(0, 6))})</span>
+        </span>
+      `);
+
+      if (children.length > 0) {
+        children.forEach((ch) => {
+          nodes.push(`
+            <span class="text-muted text-[10px]">❯</span>
+            <a href="/instance/${encodeURIComponent(ch.workflow_id)}" class="badge bg-panel-header border border-line text-ink hover:text-accent hover:border-accent transition-colors no-underline">
+              🔄 ${escapeHtml(ch.process_id)} <span class="badge ${escapeHtml(ch.status)} ml-1 text-[8.5px]">${escapeHtml(ch.status)}</span>
+            </a>
+          `);
+        });
+      }
+
+      treeNodes.innerHTML = nodes.join("");
+
+      if (btnViewRoot && ancestors.length > 0) {
+        const rootItem = ancestors[0];
+        if (rootItem) {
+          btnViewRoot.classList.remove("hidden");
+          btnViewRoot.onclick = () => {
+            location.href = `/instance/${encodeURIComponent(rootItem.workflow_id)}`;
+          };
+        }
+      }
+    } else {
+      treeBar.classList.add("hidden");
+    }
+  } catch {
+    // Process hierarchy discovery is best-effort
+  }
 }
 
-const submitBtn = $("submit");
-if (submitBtn) {
-  submitBtn.onclick = async () => {
-    if (!formViewer || !reviewTask) return;
-    const { data, errors } = formViewer._getState();
-    if (Object.keys(errors).length > 0) return;
+async function loadReviewTask(): Promise<void> {
+  if (!reviewTask) return;
+  const titleEl = $("review-task-title");
+  const descEl = $("review-task-desc");
+  const fieldsEl = $("review-fields");
+  if (titleEl) titleEl.textContent = reviewTask.name || reviewTask.bpmn_id;
+  if (descEl) descEl.textContent = `User Task "${reviewTask.name || reviewTask.bpmn_id}" is waiting for gate decision or review input.`;
+
+  if (fieldsEl) {
+    const data = state?.data || {};
+    fieldsEl.innerHTML = `
+      <div class="mb-2">
+        <label class="block text-muted text-[10px] uppercase font-bold tracking-wider mb-1">Decision / Notes</label>
+        <input type="text" id="input-review-decision" value="approved" class="w-full border border-line rounded bg-card text-ink p-1.5 text-xs focus:outline-none focus:border-accent" placeholder="decision or status note">
+      </div>
+      <div>
+        <label class="block text-muted text-[10px] uppercase font-bold tracking-wider mb-1">Workflow Variables Context</label>
+        <pre class="p-2 rounded bg-[var(--color-code-bg)] border border-line-subtle text-[10.5px] font-mono whitespace-pre-wrap max-h-32 overflow-y-auto">${escapeHtml(JSON.stringify(data, null, 2))}</pre>
+      </div>
+    `;
+  }
+}
+
+const approveBtn = $("btn-approve") as HTMLButtonElement | null;
+if (approveBtn) {
+  approveBtn.onclick = async () => {
+    if (!reviewTask) return;
+    approveBtn.disabled = true;
+    const inputDecision = $("input-review-decision") as HTMLInputElement | null;
+    const decision = inputDecision?.value.trim() || "approved";
     const response = await fetch(`/instance/${id}/submit-task/${reviewTask.id}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ variables: data }),
+      body: JSON.stringify({ variables: { decision, approved: true, review_status: "approved" } }),
     });
     if (response.ok) {
       $("review-card")?.classList.add("hidden");
       renderState(await response.json());
+    } else {
+      approveBtn.disabled = false;
+    }
+  };
+}
+
+const rejectBtn = $("btn-reject") as HTMLButtonElement | null;
+if (rejectBtn) {
+  rejectBtn.onclick = async () => {
+    if (!reviewTask) return;
+    rejectBtn.disabled = true;
+    const inputDecision = $("input-review-decision") as HTMLInputElement | null;
+    const decision = inputDecision?.value.trim() || "rejected";
+    const response = await fetch(`/instance/${id}/submit-task/${reviewTask.id}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ variables: { decision, approved: false, review_status: "rejected" } }),
+    });
+    if (response.ok) {
+      $("review-card")?.classList.add("hidden");
+      renderState(await response.json());
+    } else {
+      rejectBtn.disabled = false;
     }
   };
 }
@@ -584,3 +697,4 @@ window.addEventListener("keydown", (e) => {
 });
 
 void load();
+

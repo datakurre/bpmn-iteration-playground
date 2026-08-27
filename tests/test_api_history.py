@@ -118,3 +118,31 @@ def test_history_sessions_endpoints(client: TestClient) -> None:
     # 404 for non-existent session
     missing = client.get("/api/history/sessions/non-existent-sess-id")
     assert missing.status_code == 404
+
+
+def test_history_purge_and_reindex_endpoints(client: TestClient) -> None:
+    # Start two workflows
+    resp1 = client.post(
+        "/workflow/start",
+        json={
+            "bpmn_path": "graph_agent/data/workflows/plan_and_execute.bpmn",
+            "variables": {"contract": "Test 1"},
+        },
+    )
+    assert resp1.status_code == 200
+    wf_id1 = resp1.json()["workflow_id"]
+
+    # Cancel one workflow so its status becomes cancelled
+    cancel_resp = client.post(f"/instance/{wf_id1}/cancel")
+    assert cancel_resp.status_code == 200
+
+    # Reindex
+    reindex_resp = client.post("/api/history/reindex")
+    assert reindex_resp.status_code == 200
+    assert reindex_resp.json()["reindexed"] >= 1
+
+    # Bulk purge cancelled/completed
+    purge_resp = client.post("/api/history/purge?status=cancelled,completed")
+    assert purge_resp.status_code == 200
+    assert purge_resp.json()["purged"] >= 1
+

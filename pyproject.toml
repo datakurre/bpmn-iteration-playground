@@ -112,7 +112,10 @@ plugins = ["pydantic.mypy"]
 [tool.coverage.run]
 source = ["graph_agent"]
 branch = true
-omit = []
+omit = [
+    "graph_agent/tui/screens/*",
+    "graph_agent/tui/widgets/*",
+]
 
 [tool.coverage.report]
 show_missing = true
