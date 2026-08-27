@@ -76,19 +76,22 @@ class RunDetailScreen(Screen):  # type: ignore
             pass
 
     async def on_mount(self) -> None:
-        try:
-            from textual.widgets import DataTable
+        import contextlib
+        from textual.widgets import DataTable
 
+        with contextlib.suppress(Exception):
             tasks_table = self.query_one("#detail-tasks-table", DataTable)
             tasks_table.add_columns("Task ID", "Name", "Type", "State", "Attempts", "Failure Reason")
 
+        with contextlib.suppress(Exception):
             sp_table = self.query_one("#detail-savepoints-table", DataTable)
             sp_table.add_columns("Savepoint ID", "Phase", "Task", "Created At")
 
+        try:
             await self.action_refresh_detail()
             self.set_interval(2.5, self.action_refresh_detail)
-        except Exception:
-            pass
+        except Exception as exc:
+            self.notify(f"Mount error: {exc}", severity="warning")
 
     async def action_refresh_detail(self) -> None:
         client = getattr(self.app, "client", None)
