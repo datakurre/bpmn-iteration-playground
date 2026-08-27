@@ -95,4 +95,5 @@ setup: install submodules vendor-build
 
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-	rm -rf .pytest_cache site
+	find . -type f -name "*.py[cod]" -delete 2>/dev/null || true
+	rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage coverage coverage.xml site dist build *.egg-info

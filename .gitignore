@@ -7,6 +7,8 @@ devenv.local.yaml
 
 # Pre-commit & Tooling
 .pre-commit-config.yaml
+.claude/
+.pi/
 
 # Environment & Data
 .env
@@ -15,30 +17,37 @@ devenv.local.yaml
 # not the ZODB storage directory this is meant to ignore.
 /data/
 *.db
+*.db.*
 *.zodb
+*.zodb.*
+Data.fs*
 # This repo's own checkout is also a valid `graph-agent` workspace (running `graph-agent serve` or the
 # tests from here creates .agents/ at the repo root the same way it would in any project).
 /.agents/
 
-# Python
+# Python, Type Checking & Linting
 __pycache__/
 *.py[cod]
+*$py.class
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 coverage.xml
 coverage/
+dist/
+build/
+*.egg-info/
 
-# Node
+# Node & Frontend
 node_modules/
 
-
-# Temporary & Verification Outputs
+# Temporary, Logs & Verification Outputs
 *.log
 scratch/
 plans/
 todos/
-.mypy_cache/
 site/
 result
 result-*
