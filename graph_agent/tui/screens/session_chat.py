@@ -34,6 +34,7 @@ class SessionChatScreen(Screen):  # type: ignore
         ("ctrl+d", "open_diff", "Diff"),
         ("ctrl+p", "open_palette", "Commands"),
         ("ctrl+e", "open_editor", "Modeler"),
+        ("ctrl+s", "take_screenshot", "Screenshot"),
         ("w", "open_browser", "Web UI"),
         ("m", "merge_session", "Merge"),
         ("c", "cancel_session", "Cancel"),
@@ -59,6 +60,15 @@ class SessionChatScreen(Screen):  # type: ignore
         background: $surface-darken-1;
         padding: 1;
         overflow-y: scroll;
+    }
+
+    .chat-welcome-banner {
+        background: $panel;
+        color: $text;
+        border: round $primary;
+        padding: 1 2;
+        margin-bottom: 1;
+        text-align: center;
     }
     """
 
@@ -90,7 +100,24 @@ class SessionChatScreen(Screen):  # type: ignore
 
     async def on_mount(self) -> None:
         await self.action_refresh_session()
+        self.focus_prompt()
         self.set_interval(2.0, self.action_refresh_session)
+
+    def focus_prompt(self) -> None:
+        with contextlib.suppress(Exception):
+            from graph_agent.tui.widgets.prompt_input import PromptBar
+
+            self.query_one("#chat-prompt-bar", PromptBar).focus_input()
+
+    def action_take_screenshot(self) -> None:
+        if hasattr(self.app, "action_take_screenshot"):
+            self.app.action_take_screenshot()
+        else:
+            try:
+                path = self.app.save_screenshot()
+                self.notify(f"Screenshot saved to {path}", severity="information")
+            except Exception as exc:
+                self.notify(f"Screenshot failed: {exc}", severity="error")
 
     async def action_refresh_session(self) -> None:
         client = getattr(self.app, "client", None)
@@ -113,6 +140,7 @@ class SessionChatScreen(Screen):  # type: ignore
 
     async def _render_chat_updates(self) -> None:
         from textual.containers import VerticalScroll
+        from textual.widgets import Static
 
         from graph_agent.tui.widgets.chat_message import (
             PlannerMessageCard,
@@ -125,6 +153,18 @@ class SessionChatScreen(Screen):  # type: ignore
         data = self.run_state.get("data", {})
         tasks = self.run_state.get("tasks", [])
         jobs = self.run_state.get("jobs", {})
+
+        # 0. Initial welcome banner when waiting for prompt
+        if "__WELCOME_RENDERED__" not in self.displayed_task_ids and not data.get("user_prompt"):
+            self.displayed_task_ids.add("__WELCOME_RENDERED__")
+            await scroll.mount(
+                Static(
+                    "💬 [b text-accent]Interactive Agent Session Ready[/b]\n"
+                    "[dim]Type your goal or task in the input bar below and press Enter to formulate a plan.[/dim]\n"
+                    "[dim text-muted]Commands: /diff · /retry · /cancel · /purge · /web · /help[/dim]",
+                    classes="chat-welcome-banner",
+                )
+            )
 
         # 1. Render initial user prompt if present and not yet displayed
         if "user_prompt" in data and "__USER_PROMPT_RENDERED__" not in self.displayed_task_ids:
@@ -261,6 +301,8 @@ class SessionChatScreen(Screen):  # type: ignore
             self.action_open_editor()
         elif cmd in ("web", "browser", "w"):
             self.action_open_browser()
+        elif cmd in ("screenshot", "s"):
+            self.action_take_screenshot()
         elif cmd in ("retry", "t"):
             self.run_worker(self.action_retry_failed())
         elif cmd in ("cancel", "stop", "c"):
@@ -276,7 +318,7 @@ class SessionChatScreen(Screen):  # type: ignore
                 self._bg_task = asyncio.create_task(self.action_merge_session())
         elif cmd in ("help", "?"):
             self.notify(
-                "Slash commands: /diff, /retry, /cancel, /purge, /merge, /web, /editor, /palette, /status",
+                "Slash commands: /diff, /retry, /cancel, /purge, /merge, /web, /editor, /palette, /screenshot, /status",
                 severity="information",
             )
         elif cmd == "status":

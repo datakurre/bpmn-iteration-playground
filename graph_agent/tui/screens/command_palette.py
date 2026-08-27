@@ -59,6 +59,7 @@ class CommandPaletteModal(ModalScreen):  # type: ignore
         ("new_session", "Start New Session (Launch fresh interactive BPMN loop)"),
         ("open_diff", "View Git Worktree Diff (Inspect file changes)"),
         ("open_editor", "Open BPMN Web Modeler (Open browser editor)"),
+        ("take_screenshot", "Capture Screen (Save SVG screenshot)"),
         ("goto_inbox", "Workflow Inbox (Pending human tasks & deferred merges)"),
         ("goto_runs", "All Workflow Runs (Detailed technical list)"),
         ("goto_logs", "Daemon Activity Logs (Structured logging tail)"),
@@ -132,6 +133,15 @@ class CommandPaletteModal(ModalScreen):  # type: ignore
             url = f"{client.base_url}/editor" if client else "http://127.0.0.1:8000/editor"
             webbrowser.open(url)
             self.notify(f"Opened {url} in browser", severity="information")
+        elif cmd_id == "take_screenshot":
+            if hasattr(self.app, "action_take_screenshot"):
+                self.app.action_take_screenshot()
+            else:
+                try:
+                    path = self.app.save_screenshot()
+                    self.notify(f"Screenshot saved to {path}", severity="information")
+                except Exception as exc:
+                    self.notify(f"Screenshot failed: {exc}", severity="error")
         elif cmd_id == "goto_inbox":
             from graph_agent.tui.screens.inbox import InboxScreen
 

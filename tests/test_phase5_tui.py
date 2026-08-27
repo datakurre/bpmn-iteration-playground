@@ -322,6 +322,19 @@ async def test_tui_screens_pilot(mock_daemon: tuple[Workspace, WorkflowService, 
             app.push_screen(chat)
             await pilot.pause(0.05)
             await chat.action_refresh_session()
+            chat.action_take_screenshot()
+
+            # Test prompt bar typing & submitting
+            from textual.widgets import Input
+
+            from graph_agent.tui.widgets.prompt_input import PromptBar
+
+            prompt_bar = chat.query_one("#chat-prompt-bar", PromptBar)
+            inp = prompt_bar.query_one("#prompt-input", Input)
+            inp.value = "Create hello world"
+            prompt_bar.on_input_submitted(Input.Submitted(inp, "Create hello world"))
+            inp.value = "/help"
+            prompt_bar.on_input_submitted(Input.Submitted(inp, "/help"))
             await pilot.press("escape")
 
             # Test Command Palette
@@ -335,4 +348,8 @@ async def test_tui_screens_pilot(mock_daemon: tuple[Workspace, WorkflowService, 
             app.push_screen(diff_m)
             await pilot.pause(0.05)
             await pilot.press("escape")
+
+            # Test App Screenshot
+            app.action_take_screenshot()
+
 

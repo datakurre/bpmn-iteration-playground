@@ -80,6 +80,7 @@ class GraphAgentApp(App):  # type: ignore
         ("2", "goto_inbox", "Inbox"),
         ("3", "goto_runs", "Runs"),
         ("4", "goto_logs", "Logs"),
+        ("ctrl+s", "take_screenshot", "Screenshot"),
         ("ctrl+p", "open_palette", "Commands"),
         ("ctrl+n", "new_session", "New Session"),
         ("q", "quit", "Quit"),
@@ -94,6 +95,15 @@ class GraphAgentApp(App):  # type: ignore
         super().__init__(**kwargs)
         self.client = client
         self.workspace = workspace
+
+    def action_take_screenshot(self) -> None:
+        import time
+        try:
+            filename = f"screenshot_{int(time.time())}.svg"
+            path = self.save_screenshot(filename)
+            self.notify(f"Screenshot saved to {path}", severity="information")
+        except Exception as exc:
+            self.notify(f"Screenshot failed: {exc}", severity="error")
 
     def on_mount(self) -> None:
         from graph_agent.tui.screens.session_picker import SessionPickerScreen
