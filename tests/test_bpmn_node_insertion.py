@@ -155,3 +155,56 @@ def test_result_is_valid_spiffworkflow() -> None:
         runner = WorkflowRunner()
         workflow, _ = runner.load_workflow(str(bpmn_path))
         assert "Task_New" in workflow.spec.task_specs
+
+
+def test_insert_nodes_rejects_xxe() -> None:
+    """insert_nodes rejects XML with XXE entities."""
+    xxe_xml = '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe "file:///etc/passwd">]><definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"/>'
+    spec = InsertionSpec(after="x", nodes=[BpmnNode("T", "T", "serviceTask")])
+    with pytest.raises(ValueError):
+        insert_nodes(xxe_xml, spec)
+
+
+def test_insert_handles_whitespace_in_flow_refs() -> None:
+    """Insertion works when <incoming>/<outgoing> have whitespace around flow IDs."""
+    base = """<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  id="Definitions_1">
+  <bpmn:process id="Process_1" isExecutable="true">
+    <bpmn:startEvent id="StartEvent_1">
+      <bpmn:outgoing>
+        Flow_1
+      </bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:userTask id="Task_A" name="Task A">
+      <bpmn:incoming>
+        Flow_1
+      </bpmn:incoming>
+      <bpmn:outgoing>
+        Flow_2
+      </bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:endEvent id="EndEvent_1">
+      <bpmn:incoming>
+        Flow_2
+      </bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="StartEvent_1" targetRef="Task_A" />
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_A" targetRef="EndEvent_1" />
+  </bpmn:process>
+</bpmn:definitions>
+"""
+    spec = InsertionSpec(
+        after="Task_A",
+        nodes=[BpmnNode("Task_New", "New", "serviceTask")],
+    )
+    result = insert_nodes(base, spec)
+    validation = validate_bpmn(result)
+    assert validation.valid
+    assert "Task_New" in validation.task_ids
+    tree = etree.fromstring(result.encode("utf-8"))
+    task_a = tree.find(".//*[@id='Task_A']")
+    assert task_a is not None
+    outgoings = [(elem.text or "").strip() for elem in task_a.findall(f"{{{BPMN_NS}}}outgoing")]
+    assert "Flow_2" not in outgoings
+

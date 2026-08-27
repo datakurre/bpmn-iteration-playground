@@ -95,6 +95,13 @@ def test_validate_extensions_warns_unknown_output_source() -> None:
     assert any("nonexistent_output_key" in w or "unknown source" in w for w in warnings)
 
 
+def test_validate_extensions_literal_output_no_warning() -> None:
+    """An outputParameter with a literal constant string produces no warning."""
+    xml = bpmn_with_camunda_service_task(output_params={"custom_var": "completed"})
+    warnings = validate_extensions(xml)
+    assert not any("unknown source" in w for w in warnings)
+
+
 def test_xxe_xml_fails_validation() -> None:
     """XML containing entity definitions / XXE attacks fails validation safely."""
     xxe_xml = """<?xml version="1.0" encoding="UTF-8"?>

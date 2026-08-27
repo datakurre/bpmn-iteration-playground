@@ -111,7 +111,10 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
         role: Role = require_role(Role.ADMIN, Role.OPERATOR),
     ) -> dict[str, Any]:
         body = await request.body()
-        new_xml = body.decode("utf-8")
+        try:
+            new_xml = body.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(400, detail="Request body is not valid UTF-8") from exc
         try:
             return await get_service().replace_spec(workflow_id, new_xml)
         except WorkflowNotFoundError as exc:
@@ -129,7 +132,10 @@ def build_router(get_service: Callable[[], WorkflowService]) -> APIRouter:  # no
         role: Role = require_role(Role.ADMIN, Role.OPERATOR, Role.VIEWER),
     ) -> dict[str, Any]:
         body = await request.body()
-        new_xml = body.decode("utf-8")
+        try:
+            new_xml = body.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(400, detail="Request body is not valid UTF-8") from exc
         try:
             return await get_service().validate_spec_replacement(workflow_id, new_xml)
         except WorkflowNotFoundError as exc:

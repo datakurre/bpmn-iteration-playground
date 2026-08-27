@@ -4,7 +4,7 @@ import re
 import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from lxml import etree
 from SpiffWorkflow.bpmn.parser.BpmnParser import BpmnParser
@@ -12,9 +12,6 @@ from SpiffWorkflow.bpmn.workflow import BpmnWorkflow
 from SpiffWorkflow.task import TaskState
 
 from graph_agent.xml_utils import safe_fromstring_xml
-
-if TYPE_CHECKING:
-    from graph_agent.engine import WorkflowRunner
 
 BPMN_NS = "http://www.omg.org/spec/BPMN/20100524/MODEL"
 CAMUNDA_NS = "http://camunda.org/schema/1.0/bpmn"
@@ -174,16 +171,13 @@ def _validate_service_task(task: ET.Element[Any], ns: dict[str, str]) -> tuple[l
         val = (out.text or out.get("value") or "").strip()
         if not val:
             continue
-        source_key = (
-            val[2:-1].strip()
-            if val.startswith("${") and val.endswith("}")
-            else val
-        )
-        root_key = source_key.split(".")[0]
-        if root_key not in KNOWN_OUTPUT_SOURCES:
-            warnings.append(
-                f"outputParameter '{param_name}' in task '{task_id}' references unknown source key '{source_key}'"
-            )
+        if val.startswith("${") and val.endswith("}"):
+            source_key = val[2:-1].strip()
+            root_key = source_key.split(".")[0]
+            if root_key not in KNOWN_OUTPUT_SOURCES:
+                warnings.append(
+                    f"outputParameter '{param_name}' in task '{task_id}' references unknown source key '{source_key}'"
+                )
 
     return warnings, errors
 
@@ -466,20 +460,10 @@ def _repoint_tasks(
                 f"not found in new BPMN spec. Cannot migrate."
             )
 
-        # Drop predicted children so SpiffWorkflow re-predicts from new outputs
-        for child in list(task.children):
-            if (
-                child.state in (TaskState.FUTURE, TaskState.MAYBE, TaskState.LIKELY)
-                and not child.triggered
-                and child.id in workflow.tasks
-            ):
-                workflow._remove_task(child.id)
-
 
 def replace_spec(
     workflow: BpmnWorkflow,
     new_xml: str,
-    runner: WorkflowRunner | None = None,
 ) -> tuple[BpmnWorkflow, list[str]]:
     """Replace a workflow's BPMN spec, preserving execution state.
 
@@ -514,16 +498,26 @@ def replace_spec(
     for sub in new_subprocess_specs.values():
         new_task_specs.update(sub.task_specs)
 
-    # 6. Repoint runtime tasks and drop predicted children
+    # 6. Purge all predicted (future) tasks across the workflow
+    for task_id in list(workflow.tasks):
+        task = workflow.tasks.get(task_id)
+        if (
+            task is not None
+            and task.state in (TaskState.FUTURE, TaskState.MAYBE, TaskState.LIKELY)
+            and not getattr(task, "triggered", False)
+        ):
+            workflow._remove_task(task_id)
+
+    # 7. Repoint runtime tasks
     warnings: list[str] = []
     _repoint_tasks(workflow, new_task_specs, warnings)
 
-    # 7. Update workflow references
+    # 8. Update workflow references
     workflow.spec = new_spec
     workflow.subprocess_specs = new_subprocess_specs
     workflow._bpmn_xml = new_xml
 
-    # 8. Re-predict future tasks from active tasks
+    # 9. Re-predict future tasks from active tasks
     workflow._predict()
 
     return workflow, warnings
@@ -673,6 +667,7 @@ def insert_nodes(base_xml: str, spec: InsertionSpec) -> str:
 
     xml_bytes = base_xml.encode("utf-8") if isinstance(base_xml, str) else base_xml
     try:
+        safe_fromstring_xml(base_xml)
         root = etree.fromstring(xml_bytes)
     except Exception as exc:
         raise ValueError(f"Failed to parse base BPMN XML: {exc}") from exc
@@ -701,12 +696,12 @@ def insert_nodes(base_xml: str, spec: InsertionSpec) -> str:
 
     # Clean up incoming/outgoing tags referring to orig_flow_id if present
     for out_elem in node_elem.findall("bpmn:outgoing", ns):
-        if out_elem.text == orig_flow_id:
+        if (out_elem.text or "").strip() == orig_flow_id:
             node_elem.remove(out_elem)
 
     if target_node_elem is not None:
         for in_elem in target_node_elem.findall("bpmn:incoming", ns):
-            if in_elem.text == orig_flow_id:
+            if (in_elem.text or "").strip() == orig_flow_id:
                 target_node_elem.remove(in_elem)
 
     _splice_nodes(

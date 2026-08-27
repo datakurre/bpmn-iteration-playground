@@ -220,3 +220,118 @@ async def test_put_spec_creates_savepoint(tmp_path: Path) -> None:
             assert any(sp.get("phase") == "spec_replaced" for sp in sp_data)
     finally:
         store.close()
+
+
+@pytest.mark.anyio
+async def test_put_spec_during_waiting_pi_returns_409(tmp_path: Path) -> None:
+    """PUT while status is 'waiting_pi' or 'retry_requested' (active agent turn) returns 409."""
+    db_path = str(tmp_path / "test.db")
+    store = WorkflowStore(db_path)
+    try:
+        service = WorkflowService(store)
+        app = create_app(service)
+
+        v1_xml = linear_bpmn("Process_1", [("Task_1", "userTask", {})])
+        bpmn_file = _write_bpmn(tmp_path, "v1.bpmn", v1_xml)
+        instance = await service.start(bpmn_file, {})
+        wf_id = instance["workflow_id"]
+
+        with TestClient(app) as client:
+            # Simulate active agent turn
+            service.store.update(wf_id, status="waiting_pi")
+            resp = client.put(
+                f"/instance/{wf_id}/spec",
+                content=v1_xml,
+                headers={"Content-Type": "application/xml"},
+            )
+            assert resp.status_code == 409
+            assert "mid-execution" in resp.json()["detail"]
+
+            # Simulate retry_requested
+            service.store.update(wf_id, status="retry_requested")
+            resp2 = client.put(
+                f"/instance/{wf_id}/spec",
+                content=v1_xml,
+                headers={"Content-Type": "application/xml"},
+            )
+            assert resp2.status_code == 409
+            assert "mid-execution" in resp2.json()["detail"]
+    finally:
+        store.close()
+
+
+@pytest.mark.anyio
+async def test_put_spec_updates_task_snapshot(tmp_path: Path) -> None:
+    """After spec replacement, GET /instance/{id} returns updated task snapshot and status."""
+    db_path = str(tmp_path / "test.db")
+    store = WorkflowStore(db_path)
+    try:
+        service = WorkflowService(store)
+        app = create_app(service)
+
+        v1_xml = linear_bpmn("Process_1", [("UserTask_1", "userTask", {})])
+        bpmn_file = _write_bpmn(tmp_path, "v1.bpmn", v1_xml)
+        instance = await service.start(bpmn_file, {})
+        wf_id = instance["workflow_id"]
+
+        v2_xml = linear_bpmn(
+            "Process_1",
+            [
+                ("UserTask_1", "userTask", {}),
+                ("Task_New", "serviceTask", {"harness_type": "pi_agent", "agent_role": "executor"}),
+            ],
+        )
+
+        with TestClient(app) as client:
+            resp = client.put(
+                f"/instance/{wf_id}/spec",
+                content=v2_xml,
+                headers={"Content-Type": "application/xml"},
+            )
+            assert resp.status_code == 200
+
+            # Complete UserTask_1 so Task_New becomes ready
+            user_task = next(t for t in instance["tasks"] if t["bpmn_id"] == "UserTask_1")
+            await service.submit_task(wf_id, user_task["id"], {})
+
+            state = service.state(wf_id)
+            bpmn_ids = [t["bpmn_id"] for t in state["tasks"]]
+            assert "Task_New" in bpmn_ids
+    finally:
+        store.close()
+
+
+@pytest.mark.anyio
+async def test_spec_invalid_utf8_returns_400(tmp_path: Path) -> None:
+    """Non-UTF-8 bytes in spec PUT and validate endpoints return 400."""
+    db_path = str(tmp_path / "test.db")
+    store = WorkflowStore(db_path)
+    try:
+        service = WorkflowService(store)
+        app = create_app(service)
+
+        v1_xml = linear_bpmn("Process_1", [("Task_1", "userTask", {})])
+        bpmn_file = _write_bpmn(tmp_path, "v1.bpmn", v1_xml)
+        instance = await service.start(bpmn_file, {})
+        wf_id = instance["workflow_id"]
+
+        invalid_bytes = b"\xff\xfe\xfa\x80"
+        with TestClient(app) as client:
+            resp_put = client.put(
+                f"/instance/{wf_id}/spec",
+                content=invalid_bytes,
+                headers={"Content-Type": "application/xml"},
+            )
+            assert resp_put.status_code == 400
+            assert "UTF-8" in resp_put.json()["detail"]
+
+            resp_val = client.post(
+                f"/instance/{wf_id}/spec/validate",
+                content=invalid_bytes,
+                headers={"Content-Type": "application/xml"},
+            )
+            assert resp_val.status_code == 400
+            assert "UTF-8" in resp_val.json()["detail"]
+    finally:
+        store.close()
+

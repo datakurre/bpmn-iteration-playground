@@ -475,7 +475,55 @@ class WorkflowService:
             raise ValueError("No BPMN XML available for this workflow instance")
         return self.runner.extract_bpmn_xml(workflow)
 
-    async def replace_spec(self, workflow_id: str, new_xml: str) -> dict[str, Any]:
+    async def _replace_spec_unlocked(
+        self, workflow_id: str, new_xml: str, *, allow_mid_execution: bool = False
+    ) -> dict[str, Any]:
+        record = self._record(workflow_id)
+        status = record.get("status")
+        if not allow_mid_execution and status in ("running", "waiting_pi", "retry_requested"):
+            raise ValueError(
+                "Workflow is mid-execution (running agent turn); wait for completion"
+            )
+
+        from graph_agent.bpmn_utils import replace_spec as do_replace
+
+        workflow = record.get("workflow")
+        if workflow is None:
+            raise ValueError("Workflow object not available for this instance")
+
+        workflow, warnings = do_replace(workflow, new_xml)
+
+        # Save with updated spec
+        record["workflow"] = workflow
+        record["tasks"] = self.runner.task_snapshot(workflow)
+        record["status"] = self._status(workflow)
+
+        # Create a savepoint at the migration point
+        await self._add_save_point(
+            workflow_id,
+            record,
+            workflow,
+            task=None,
+            phase="spec_replaced",
+            resume_action="continue",
+        )
+        await asyncio.to_thread(self.store.save, workflow_id, record)
+
+        self.events.emit(
+            "spec_replaced",
+            workflow_id,
+            data={"warnings": warnings},
+        )
+
+        return {
+            "workflow_id": workflow_id,
+            "status": record.get("status", "unknown"),
+            "warnings": warnings,
+        }
+
+    async def replace_spec(
+        self, workflow_id: str, new_xml: str, *, allow_mid_execution: bool = False
+    ) -> dict[str, Any]:
         """Replace a workflow's BPMN spec with new XML.
 
         Must be called when the workflow is in a stable state
@@ -483,41 +531,9 @@ class WorkflowService:
         Cannot be called while an agent turn is in progress.
         """
         async with self._lock(workflow_id):
-            record = self._record(workflow_id)
-            status = record.get("status")
-            if status == "running":
-                raise ValueError(
-                    "Workflow is mid-execution (running agent turn); wait for completion"
-                )
-
-            from graph_agent.bpmn_utils import replace_spec as do_replace
-
-            workflow = record.get("workflow")
-            if workflow is None:
-                raise ValueError("Workflow object not available for this instance")
-
-            workflow, warnings = do_replace(workflow, new_xml, self.runner)
-
-            # Save with updated spec
-            record["workflow"] = workflow
-            await asyncio.to_thread(self.store.save, workflow_id, record)
-
-            # Create a savepoint at the migration point
-            await self._add_save_point(
-                workflow_id,
-                record,
-                workflow,
-                task=None,
-                phase="spec_replaced",
-                resume_action="continue",
+            return await self._replace_spec_unlocked(
+                workflow_id, new_xml, allow_mid_execution=allow_mid_execution
             )
-            await asyncio.to_thread(self.store.save, workflow_id, record)
-
-            return {
-                "workflow_id": workflow_id,
-                "status": record.get("status", "unknown"),
-                "warnings": warnings,
-            }
 
     async def validate_spec_replacement(
         self, workflow_id: str, new_xml: str
@@ -593,46 +609,51 @@ class WorkflowService:
             "removed_tasks": removed_tasks,
         }
 
-    async def extend_graph(self, workflow_id: str, request: Any) -> dict[str, Any]:
+    async def extend_graph(
+        self, workflow_id: str, request: Any, *, allow_mid_execution: bool = False
+    ) -> dict[str, Any]:
         """Insert nodes into a running workflow's graph and apply the change.
 
         Combines insert_nodes() + replace_spec() in one atomic operation.
         """
-        # 1. Get current spec XML
-        current_xml = self.get_spec_xml(workflow_id)
+        async with self._lock(workflow_id):
+            # 1. Get current spec XML
+            current_xml = self.get_spec_xml(workflow_id)
 
-        # 2. Build InsertionSpec from request
-        from graph_agent.bpmn_utils import BpmnNode, InsertionSpec, insert_nodes
+            # 2. Build InsertionSpec from request
+            from graph_agent.bpmn_utils import BpmnNode, InsertionSpec, insert_nodes
 
-        nodes_list = getattr(request, "nodes", [])
-        after_target = getattr(request, "after", "")
-        after_flow = getattr(request, "after_flow", None)
+            nodes_list = getattr(request, "nodes", [])
+            after_target = getattr(request, "after", "")
+            after_flow = getattr(request, "after_flow", None)
 
-        insertion = InsertionSpec(
-            after=after_target,
-            nodes=[
-                BpmnNode(
-                    bpmn_id=n.bpmn_id,
-                    name=n.name,
-                    element_type=n.element_type,
-                    properties=n.properties,
-                    input_params=n.input_params,
-                    output_params=n.output_params,
-                    form_fields=n.form_fields,
-                )
-                for n in nodes_list
-            ],
-            after_flow=after_flow,
-        )
+            insertion = InsertionSpec(
+                after=after_target,
+                nodes=[
+                    BpmnNode(
+                        bpmn_id=n.bpmn_id,
+                        name=n.name,
+                        element_type=n.element_type,
+                        properties=n.properties,
+                        input_params=n.input_params,
+                        output_params=n.output_params,
+                        form_fields=n.form_fields,
+                    )
+                    for n in nodes_list
+                ],
+                after_flow=after_flow,
+            )
 
-        # 3. Insert nodes into XML
-        new_xml = insert_nodes(current_xml, insertion)
+            # 3. Insert nodes into XML
+            new_xml = insert_nodes(current_xml, insertion)
 
-        # 4. Apply spec replacement
-        result = await self.replace_spec(workflow_id, new_xml)
-        result["inserted_nodes"] = [n.bpmn_id for n in nodes_list]
-        result["spec_xml"] = new_xml
-        return result
+            # 4. Apply spec replacement
+            result = await self._replace_spec_unlocked(
+                workflow_id, new_xml, allow_mid_execution=allow_mid_execution
+            )
+            result["inserted_nodes"] = [n.bpmn_id for n in nodes_list]
+            result["spec_xml"] = new_xml
+            return result
 
     async def diagram(self, workflow_id: str) -> str:
         record = self._record(workflow_id)

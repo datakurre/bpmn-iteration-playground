@@ -23,11 +23,10 @@ def _init_workflow(xml: str, process_id: str = "Process_1") -> BpmnWorkflow:
 
 def test_replace_spec_same_graph() -> None:
     """Replacing with identical BPMN is a no-op — workflow continues."""
-    runner = WorkflowRunner()
     xml = linear_bpmn("Process_1", [("Task_1", "userTask", {})])
     wf = _init_workflow(xml)
 
-    wf_after, warnings = replace_spec(wf, xml, runner)
+    wf_after, warnings = replace_spec(wf, xml)
     assert wf_after is wf
     assert warnings == []
 
@@ -175,7 +174,7 @@ def test_replace_spec_updates_bpmn_xml() -> None:
     wf = _init_workflow(v1)
 
     v2 = linear_bpmn("Process_1", [("Task_1", "userTask", {}), ("Task_2", "userTask", {})])
-    replace_spec(wf, v2, runner)
+    replace_spec(wf, v2)
 
     extracted = runner.extract_bpmn_xml(wf)
     assert "Task_2" in extracted
@@ -188,3 +187,38 @@ def test_replace_spec_invalid_xml_fails() -> None:
 
     with pytest.raises(ValueError, match="Invalid BPMN XML"):
         replace_spec(wf, "<not valid xml")
+
+
+def test_replace_spec_cleans_predicted_chain() -> None:
+    """Predicted grandchild tasks don't survive spec replacement as orphans."""
+    three_task_xml = linear_bpmn(
+        "Process_1",
+        [
+            ("Task_A", "userTask", {}),
+            ("Task_B", "userTask", {}),
+            ("Task_C", "userTask", {}),
+        ],
+    )
+    wf = _init_workflow(three_task_xml)
+
+    # Count future tasks before replacement
+    future_before = [
+        t
+        for t in wf.tasks.values()
+        if t.state in (TaskState.FUTURE, TaskState.MAYBE, TaskState.LIKELY)
+    ]
+    assert len(future_before) > 0
+
+    # Replace with same spec
+    wf, _warnings = replace_spec(wf, three_task_xml)
+
+    # No orphaned future tasks pointing at old spec objects
+    for task in wf.tasks.values():
+        if task.state in (TaskState.FUTURE, TaskState.MAYBE, TaskState.LIKELY):
+            assert (
+                task.task_spec in wf.spec.task_specs.values()
+                or any(
+                    task.task_spec in s.task_specs.values()
+                    for s in wf.subprocess_specs.values()
+                )
+            ), f"Orphaned future task {task.task_spec.name} references old spec"
