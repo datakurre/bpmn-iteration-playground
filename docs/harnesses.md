@@ -48,6 +48,32 @@ harness (`activity.end`'s content carries the signaled answer, which
 `engine.ts` maps the same way a harness result would be). A user task has no
 job type, so it is never routed through `createHarnesses()`.
 
+## Variables across a callActivity
+
+`link.ts` splices a called graph (`craft_graph`, called by `session-skeleton.bpmn`'s
+`craft`) into the *same* `<bpmn:definitions>` as the session, but bpmn-elements
+still runs it as a genuinely separate process instance with its own,
+isolated `Environment` -- a `callActivity`'s called process does not inherit
+the caller's variables the way one process's own activities share them with
+each other. Strict Zeebe semantics would want `zeebe:ioMapping` on the
+`callActivity` itself to bridge that; this project takes a simpler path that
+matches its own design instead: `link.ts` already treats a linked graph as
+part of *one* self-contained session, not a boundary meant to hide
+variables, so `engine.ts` maintains its own `sharedOutput` pool -- every
+resolved harness or user-task output is written there as well as to
+`environment.output`, and every activity's scope reads it back, regardless
+of which linked process it runs in. `session-skeleton.bpmn`'s `craft` needs
+no `zeebe:ioMapping` of its own for `intent` to reach `draft_fragment` inside
+`craft_graph`, or for `approval`/`extend_status` to be visible back in
+`session` once it returns.
+
+The tradeoff: variables are session-wide, not scoped per called process, so
+two linked graphs sharing a variable name would collide. `sharedOutput`
+itself is never persisted (it is rebuilt from the union of every linked
+process's own `environment.output` on `resumeGraph`, via
+`collectSharedOutput()` in `engine.ts`), so this only ever needs to be
+correct within one run.
+
 ## Retries
 
 `zeebe:taskDefinition retries="n"` sets how many times an activity's harness

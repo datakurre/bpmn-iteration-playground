@@ -115,7 +115,12 @@ async function callWithRetries(call: () => Promise<HarnessResult>, attempts: num
 
 type RegisteredActivity = ActivityLike & Record<string, unknown>;
 
-function makeExtension(options: RunnerOptions, activities: ActivityOutcome[], byId: Map<string, RegisteredActivity>) {
+function makeExtension(
+  options: RunnerOptions,
+  activities: ActivityOutcome[],
+  byId: Map<string, RegisteredActivity>,
+  sharedOutput: Record<string, unknown>,
+) {
   return function harnessExtension(activity: RegisteredActivity): void {
     // Multi-instance activities carry their collection in a zeebe: extension the
     // engine does not read; translate it before anything tries to run the loop.
@@ -159,10 +164,10 @@ function makeExtension(options: RunnerOptions, activities: ActivityOutcome[], by
             properties,
             input: resolveInput(
               activity,
-              { ...variables, ...environment.output, ...(executionMessage.content ?? {}) },
+              { ...variables, ...sharedOutput, ...environment.output, ...(executionMessage.content ?? {}) },
               feelIn,
             ),
-            variables: { ...variables, ...environment.output },
+            variables: { ...variables, ...sharedOutput, ...environment.output },
             ...(options.signal ? { signal: options.signal } : {}),
           };
 
@@ -174,9 +179,19 @@ function makeExtension(options: RunnerOptions, activities: ActivityOutcome[], by
               // It has to go to `environment.output`, not `environment.variables`:
               // Environment.clone() copies `variables` by value, so every activity
               // gets its own snapshot and a write there is invisible to the rest of
-              // the run. `output` is passed through by reference and is shared.
+              // the run. `output` is passed through by reference and is shared --
+              // but only *within* the process that activity belongs to: a
+              // callActivity's called process is a genuinely separate bpmn-elements
+              // process instance with its own Environment, which does not inherit
+              // this one's `output`. `sharedOutput` is this project's own bridge
+              // across that boundary: every resolved output goes there too, and
+              // every activity's scope reads it back, regardless of which linked
+              // process it runs in. See docs/harnesses.md.
               for (const [key, value] of Object.entries(resolveOutput(activity, result, feelIn))) {
-                if (value !== undefined) environment.output[key] = value;
+                if (value !== undefined) {
+                  environment.output[key] = value;
+                  sharedOutput[key] = value;
+                }
               }
               activities.push({
                 activityId: activity.id,
@@ -201,6 +216,7 @@ function engineOptions(
   options: RunnerOptions,
   activities: ActivityOutcome[],
   byId: Map<string, RegisteredActivity>,
+  sharedOutput: Record<string, unknown>,
 ): Record<string, unknown> {
   return {
     name: options.name ?? "graph-agent",
@@ -211,7 +227,7 @@ function engineOptions(
     expressions: camundaExpressions(
       options.onExpressionWarning ? { onWarning: options.onExpressionWarning } : {},
     ),
-    extensions: { harness: makeExtension(options, activities, byId) },
+    extensions: { harness: makeExtension(options, activities, byId, sharedOutput) },
   };
 }
 
@@ -238,15 +254,46 @@ function signalPostponed(engine: EngineInstance, activityId: string, message: un
  * `await_intent` publishes `session_done` this way, and without it `gw_more`
  * never sees a true `session_done` and loops forever.
  */
-function applyUnharnessedOutput(activity: RegisteredActivity | undefined, signaled: unknown): void {
+function applyUnharnessedOutput(
+  activity: RegisteredActivity | undefined,
+  signaled: unknown,
+  sharedOutput: Record<string, unknown>,
+): void {
   if (!activity || harnessOf(activity)) return;
   const outputs = ioMapping(activity).output;
   if (outputs.length === 0) return;
   const scope = signaled && typeof signaled === "object" ? signaled : {};
   const environment = (activity as unknown as { environment: { output: Record<string, unknown> } }).environment;
   for (const [key, value] of Object.entries(resolveOutput(activity, scope, feelIn))) {
-    if (value !== undefined) environment.output[key] = value;
+    if (value !== undefined) {
+      environment.output[key] = value;
+      sharedOutput[key] = value;
+    }
   }
+}
+
+/**
+ * Rebuilds `sharedOutput` for a resumed run.
+ *
+ * `sharedOutput` itself is never persisted -- it lives only in `drive()`'s
+ * closure -- but everything ever written to it was *also* written to
+ * whichever process's own `environment.output` produced it, and
+ * `engine.getState()` does capture that, once per still-running process
+ * (`definitions[].execution.processes[]`, one entry per linked process a
+ * callActivity has parked inside as well as the top-level one). Recovery
+ * just re-unions them.
+ */
+function collectSharedOutput(state: EngineState): Record<string, unknown> {
+  const shared: Record<string, unknown> = {};
+  const definitions = (state.definitions ?? []) as Array<{
+    execution?: { processes?: Array<{ environment?: { output?: Record<string, unknown> } }> };
+  }>;
+  for (const definition of definitions) {
+    for (const process of definition.execution?.processes ?? []) {
+      Object.assign(shared, process.environment?.output ?? {});
+    }
+  }
+  return shared;
 }
 
 /** Ids the token is currently resting on (waiting activities and running ones). */
@@ -263,6 +310,7 @@ async function drive(
   options: RunnerOptions,
   activities: ActivityOutcome[],
   byId: Map<string, RegisteredActivity>,
+  sharedOutput: Record<string, unknown>,
   start: (listener: EventEmitter) => Promise<unknown>,
 ): Promise<RunResult> {
   const visited = new Set<string>();
@@ -270,7 +318,7 @@ async function drive(
 
   listener.on("activity.end", (api: { id: string; content?: { output?: unknown } }) => {
     visited.add(api.id);
-    applyUnharnessedOutput(byId.get(api.id), api.content?.output);
+    applyUnharnessedOutput(byId.get(api.id), api.content?.output, sharedOutput);
     void options.onTokens?.(postponedIds(engine), [...visited]);
   });
   listener.on("activity.wait", (api: { id: string; signal?: (message?: unknown) => void }) => {
@@ -316,14 +364,14 @@ async function drive(
     return {
       outcome,
       state: await engine.getState(),
-      variables: { ...engine.environment.variables, ...engine.environment.output },
+      variables: { ...engine.environment.variables, ...engine.environment.output, ...sharedOutput },
       activities,
     };
   } catch (error) {
     return {
       outcome: "error",
       state: await engine.getState(),
-      variables: { ...engine.environment.variables, ...engine.environment.output },
+      variables: { ...engine.environment.variables, ...engine.environment.output, ...sharedOutput },
       activities,
       error: error instanceof Error ? error : new Error(String(error)),
     };
@@ -334,9 +382,10 @@ async function drive(
 export async function runGraph(xml: string, options: RunnerOptions): Promise<RunResult> {
   const activities: ActivityOutcome[] = [];
   const byId = new Map<string, RegisteredActivity>();
+  const sharedOutput: Record<string, unknown> = {};
   const sourceContext = await toSourceContext(xml);
-  const engine = new EngineCtor({ ...engineOptions(options, activities, byId), sourceContext });
-  return drive(engine, options, activities, byId, (listener) => engine.execute({ listener }));
+  const engine = new EngineCtor({ ...engineOptions(options, activities, byId, sharedOutput), sourceContext });
+  return drive(engine, options, activities, byId, sharedOutput, (listener) => engine.execute({ listener }));
 }
 
 /**
@@ -346,10 +395,11 @@ export async function runGraph(xml: string, options: RunnerOptions): Promise<Run
 export async function resumeGraph(state: EngineState, xml: string, options: RunnerOptions): Promise<RunResult> {
   const activities: ActivityOutcome[] = [];
   const byId = new Map<string, RegisteredActivity>();
+  const sharedOutput = collectSharedOutput(state);
   const engine = await recoverWithGraph(EngineCtor, state, xml, {
     ...(options.name === undefined ? {} : { name: options.name }),
     ...(options.variables ? { variables: options.variables } : {}),
-    engineOptions: engineOptions(options, activities, byId),
+    engineOptions: engineOptions(options, activities, byId, sharedOutput),
   });
-  return drive(engine, options, activities, byId, (listener) => engine.resume({ listener }));
+  return drive(engine, options, activities, byId, sharedOutput, (listener) => engine.resume({ listener }));
 }
