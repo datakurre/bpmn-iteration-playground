@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Defs_craft_graph" targetNamespace="http://graph-agent/bpmn">
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_craft_graph" targetNamespace="http://graph-agent/bpmn">
   <bpmn:process id="craft_graph" name="Craft a graph extension" isExecutable="true">
     <bpmn:documentation>Turning a prompt into new graph.
 
@@ -11,22 +11,54 @@ auditable as the work the extension goes on to do.
 The splice must be additive with stable ids: bpmn-engine replays recovered child
 state by element id, so a fragment that renames or removes a live element cannot
 be recovered. graph:extend rejects those before they are applied.</bpmn:documentation>
+    <bpmn:extensionElements>
+      <zeebe:userTaskForm id="craft_review_form">{
+  "$schema": "https://unpkg.com/@bpmn-io/form-js@1/dist/assets/form-json-schema/schema.json",
+  "components": [
+    {
+      "label": "Apply this extension?",
+      "type": "radio",
+      "key": "approval",
+      "id": "approval",
+      "values": [
+        {
+          "label": "Apply",
+          "value": "apply"
+        },
+        {
+          "label": "Reject",
+          "value": "reject"
+        }
+      ]
+    },
+    {
+      "label": "Notes for the agent",
+      "type": "textarea",
+      "key": "notes",
+      "id": "notes"
+    }
+  ],
+  "type": "default",
+  "id": "craft_review_form",
+  "schemaVersion": 18
+}</zeebe:userTaskForm>
+    </bpmn:extensionElements>
     <bpmn:startEvent id="craft_start" name="Intent">
       <bpmn:outgoing>to_draft</bpmn:outgoing>
     </bpmn:startEvent>
     <bpmn:sequenceFlow id="to_draft" sourceRef="craft_start" targetRef="draft_fragment" />
     <bpmn:serviceTask id="draft_fragment" name="Draft BPMN fragment">
       <bpmn:extensionElements>
-        <camunda:properties>
-          <camunda:property name="harness" value="agent:turn" />
-          <camunda:property name="agent_role" value="graph_architect" />
-        </camunda:properties>
-        <camunda:inputOutput>
-          <camunda:inputParameter name="intent">${intent}</camunda:inputParameter>
-          <camunda:inputParameter name="current_graph">${current_graph}</camunda:inputParameter>
-          <camunda:inputParameter name="lint_feedback">${lint_feedback}</camunda:inputParameter>
-          <camunda:outputParameter name="fragment">${fragment}</camunda:outputParameter>
-        </camunda:inputOutput>
+        <zeebe:taskDefinition type="agent:turn" />
+        <zeebe:taskHeaders>
+          <zeebe:header key="agent_role" value="graph_architect" />
+        </zeebe:taskHeaders>
+        <zeebe:ioMapping>
+          <zeebe:input source="=intent" target="intent" />
+          <zeebe:input source="=current_graph" target="current_graph" />
+          <zeebe:input source="=lint_feedback" target="lint_feedback" />
+          <zeebe:output source="=fragment" target="fragment" />
+        </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>to_draft</bpmn:incoming>
       <bpmn:incoming>lint_retry</bpmn:incoming>
@@ -35,9 +67,7 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
     <bpmn:sequenceFlow id="to_layout" sourceRef="draft_fragment" targetRef="layout_fragment" />
     <bpmn:serviceTask id="layout_fragment" name="Auto-layout">
       <bpmn:extensionElements>
-        <camunda:properties>
-          <camunda:property name="harness" value="graph:layout" />
-        </camunda:properties>
+        <zeebe:taskDefinition type="graph:layout" />
       </bpmn:extensionElements>
       <bpmn:incoming>to_layout</bpmn:incoming>
       <bpmn:outgoing>to_lint</bpmn:outgoing>
@@ -45,13 +75,11 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
     <bpmn:sequenceFlow id="to_lint" sourceRef="layout_fragment" targetRef="lint_fragment" />
     <bpmn:serviceTask id="lint_fragment" name="Lint and check splice">
       <bpmn:extensionElements>
-        <camunda:properties>
-          <camunda:property name="harness" value="graph:lint" />
-        </camunda:properties>
-        <camunda:inputOutput>
-          <camunda:outputParameter name="lint_status">${status}</camunda:outputParameter>
-          <camunda:outputParameter name="lint_feedback">${summary}</camunda:outputParameter>
-        </camunda:inputOutput>
+        <zeebe:taskDefinition type="graph:lint" />
+        <zeebe:ioMapping>
+          <zeebe:output source="=status" target="lint_status" />
+          <zeebe:output source="=summary" target="lint_feedback" />
+        </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>to_lint</bpmn:incoming>
       <bpmn:outgoing>to_gw_lint</bpmn:outgoing>
@@ -63,23 +91,18 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
       <bpmn:outgoing>lint_retry</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="lint_ok" name="valid" sourceRef="gw_lint" targetRef="review_fragment">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${lint_status = "success"}</bpmn:conditionExpression>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=lint_status = "success"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="lint_retry" name="redraft" sourceRef="gw_lint" targetRef="draft_fragment">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${lint_status != "success"}</bpmn:conditionExpression>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=lint_status != "success"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:userTask id="review_fragment" name="Review extension">
       <bpmn:extensionElements>
-        <camunda:formData>
-          <camunda:formField id="approval" label="Apply this extension?" type="enum" defaultValue="apply">
-            <camunda:value id="apply" name="Apply" />
-            <camunda:value id="reject" name="Reject" />
-          </camunda:formField>
-          <camunda:formField id="notes" label="Notes for the agent" type="textarea" />
-        </camunda:formData>
-        <camunda:inputOutput>
-          <camunda:outputParameter name="approval">${approval}</camunda:outputParameter>
-        </camunda:inputOutput>
+        <zeebe:userTask />
+        <zeebe:formDefinition formId="craft_review_form" />
+        <zeebe:ioMapping>
+          <zeebe:output source="=approval" target="approval" />
+        </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>lint_ok</bpmn:incoming>
       <bpmn:outgoing>to_gw_approve</bpmn:outgoing>
@@ -91,20 +114,18 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
       <bpmn:outgoing>rejected</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="approved" name="apply" sourceRef="gw_approve" targetRef="apply_extension">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${approval = "apply"}</bpmn:conditionExpression>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=approval = "apply"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="rejected" name="reject" sourceRef="gw_approve" targetRef="craft_rejected">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${approval != "apply"}</bpmn:conditionExpression>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=approval != "apply"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:serviceTask id="apply_extension" name="Splice into the session graph">
       <bpmn:extensionElements>
-        <camunda:properties>
-          <camunda:property name="harness" value="graph:extend" />
-        </camunda:properties>
-        <camunda:inputOutput>
-          <camunda:inputParameter name="fragment">${fragment}</camunda:inputParameter>
-          <camunda:outputParameter name="extend_status">${status}</camunda:outputParameter>
-        </camunda:inputOutput>
+        <zeebe:taskDefinition type="graph:extend" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=fragment" target="fragment" />
+          <zeebe:output source="=status" target="extend_status" />
+        </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>approved</bpmn:incoming>
       <bpmn:outgoing>to_applied</bpmn:outgoing>

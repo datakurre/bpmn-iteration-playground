@@ -1,50 +1,46 @@
 [
   {
-    "$schema": "https://unpkg.com/@camunda/element-templates-json-schema/resources/schema.json",
-    "name": "Pi Agent Task",
-    "id": "playground.pi-agent-task",
+    "$schema": "https://unpkg.com/@camunda/zeebe-element-templates-json-schema/resources/schema.json",
+    "name": "Pi Agent Turn",
+    "id": "graph-agent.pi-agent-turn",
     "version": 1,
-    "description": "Service task executed by the Pi coding agent harness (app/adapters/pi_client.py).",
+    "description": "One LLM turn, run by Pi. The BPMN token moves once per turn.",
     "appliesTo": ["bpmn:ServiceTask"],
+    "elementType": { "value": "bpmn:ServiceTask" },
     "properties": [
       {
-        "label": "Harness type",
         "type": "Hidden",
-        "value": "pi_agent",
-        "editable": false,
-        "binding": { "type": "camunda:property", "name": "harness_type" }
+        "value": "agent:turn",
+        "binding": { "type": "zeebe:taskDefinition", "property": "type" }
       },
       {
         "label": "Agent role",
-        "description": "Role/prompt variant Pi runs for this task, e.g. planner, implementer, reviewer, assistant.",
+        "description": "Prompt variant Pi runs for this task, e.g. planner, implementer, reviewer.",
         "type": "String",
         "value": "assistant",
-        "editable": true,
-        "binding": { "type": "camunda:property", "name": "agent_role" }
+        "binding": { "type": "zeebe:taskHeader", "key": "agent_role" }
       },
       {
-        "label": "Instructions (input)",
-        "description": "Process variable mapped in as the task's free-form instructions.",
+        "label": "Instructions",
+        "description": "FEEL expression for the free-form instructions this turn receives.",
         "type": "String",
-        "value": "${instructions}",
-        "editable": true,
-        "binding": { "type": "camunda:inputParameter", "name": "instructions" }
+        "feel": "required",
+        "value": "=intent",
+        "binding": { "type": "zeebe:input", "name": "instructions" }
       },
       {
-        "label": "Status (output)",
-        "description": "Process variable to publish the harness result's `status` field to.",
+        "label": "Stop reason",
+        "description": "Process variable the turn's stop reason is published to.",
         "type": "String",
-        "value": "status",
-        "editable": true,
-        "binding": { "type": "camunda:outputParameter", "source": "${status}" }
+        "value": "stop_reason",
+        "binding": { "type": "zeebe:output", "source": "=stop_reason" }
       },
       {
-        "label": "Summary (output)",
-        "description": "Process variable to publish the harness result's `summary` field to.",
+        "label": "Summary",
+        "description": "Process variable the turn's summary is published to.",
         "type": "String",
         "value": "summary",
-        "editable": true,
-        "binding": { "type": "camunda:outputParameter", "source": "${summary}" }
+        "binding": { "type": "zeebe:output", "source": "=summary" }
       }
     ]
   }

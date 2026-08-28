@@ -1,23 +1,29 @@
-// Minimal shape of a moddle JSON descriptor (e.g. camunda-bpmn-moddle's
-// resources/camunda.json), typed only for the surface camunda-with-icon-moddle.ts
-// actually reads/mutates.
+// Minimal shape of a moddle JSON descriptor (e.g. zeebe-bpmn-moddle's
+// resources/zeebe.json), typed only for the surface the editor bundle touches.
+// Not every type in a descriptor declares properties, so that field is optional.
 
 export interface ModdlePropertyDescriptor {
   name: string;
-  isAttr?: boolean;
   type: string;
+  isAttr?: boolean;
+  isMany?: boolean;
+  isBody?: boolean;
+  [key: string]: unknown;
 }
 
 export interface ModdleTypeDescriptor {
   name: string;
-  isAbstract?: boolean;
+  properties?: ModdlePropertyDescriptor[];
+  superClass?: string[];
   extends?: string[];
-  properties: ModdlePropertyDescriptor[];
+  isAbstract?: boolean;
+  [key: string]: unknown;
 }
 
 export interface ModdleDescriptor {
-  name: string;
-  uri: string;
-  prefix: string;
+  name?: string;
+  uri?: string;
+  prefix?: string;
   types: ModdleTypeDescriptor[];
+  [key: string]: unknown;
 }

@@ -1,0 +1,33 @@
+[
+  {
+    "$schema": "https://unpkg.com/@camunda/zeebe-element-templates-json-schema/resources/schema.json",
+    "name": "Extend Session Graph",
+    "id": "graph-agent.graph-extend",
+    "version": 1,
+    "description": "Splice a fragment into the running session graph. Additive with stable ids only: recovery replays child state by element id.",
+    "appliesTo": ["bpmn:ServiceTask"],
+    "elementType": { "value": "bpmn:ServiceTask" },
+    "properties": [
+      {
+        "type": "Hidden",
+        "value": "graph:extend",
+        "binding": { "type": "zeebe:taskDefinition", "property": "type" }
+      },
+      {
+        "label": "Fragment",
+        "description": "FEEL expression yielding the BPMN fragment to splice in.",
+        "type": "String",
+        "feel": "required",
+        "value": "=fragment",
+        "binding": { "type": "zeebe:input", "name": "fragment" }
+      },
+      {
+        "label": "Result",
+        "description": "Process variable the splice status is published to.",
+        "type": "String",
+        "value": "extend_status",
+        "binding": { "type": "zeebe:output", "source": "=status" }
+      }
+    ]
+  }
+]

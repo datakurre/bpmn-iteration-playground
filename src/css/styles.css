@@ -455,3 +455,15 @@
     cursor: not-allowed !important;
   }
 }
+
+@layer components {
+  /* Session view: where the BPMN token is standing right now, and where it has been. */
+  .djs-element.ga-token .djs-visual > :nth-child(1) {
+    stroke: var(--color-accent) !important;
+    stroke-width: 3px !important;
+  }
+
+  .djs-element.ga-visited .djs-visual > :nth-child(1) {
+    stroke: var(--color-sky) !important;
+  }
+}

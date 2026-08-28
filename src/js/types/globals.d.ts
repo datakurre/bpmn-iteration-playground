@@ -30,7 +30,7 @@ declare global {
     minimapModule?: unknown;
     BpmnPropertiesPanelModule?: unknown;
     BpmnPropertiesProviderModule?: unknown;
-    camundaModdleDescriptor?: ModdleDescriptor;
+    zeebeModdleDescriptor?: ModdleDescriptor;
     AutoLayout?: { layoutProcess(xml: string): Promise<string> };
     FormJS?: FormJSNamespace;
     FormViewer?: FormJSNamespace;
@@ -43,7 +43,6 @@ declare global {
     ElementTemplateChooserModule?: unknown;
     ElementTemplateIconRendererModule?: unknown;
     ElementTemplatesExtendModule?: unknown;
-    camundaWithIconModdle?: ModdleDescriptor;
   }
 }
 

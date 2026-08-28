@@ -11,7 +11,7 @@ interface TemplateSummary {
 let modeler: BpmnDiagramInstance | null = null;
 
 const blankBPMN = `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="new_process" name="New Process" isExecutable="true">
     <bpmn:startEvent id="StartEvent_1" name="Start">
       <bpmn:outgoing>Flow_1</bpmn:outgoing>
@@ -19,10 +19,10 @@ const blankBPMN = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:sequenceFlow id="Flow_1" sourceRef="StartEvent_1" targetRef="ServiceTask_1" />
     <bpmn:serviceTask id="ServiceTask_1" name="AI Task">
       <bpmn:extensionElements>
-        <camunda:properties>
-          <camunda:property name="harness_type" value="pi_agent" />
-          <camunda:property name="agent_role" value="assistant" />
-        </camunda:properties>
+        <zeebe:taskDefinition type="agent:turn" />
+        <zeebe:properties>
+          <zeebe:property name="agent_role" value="assistant" />
+        </zeebe:properties>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_1</bpmn:incoming>
       <bpmn:outgoing>Flow_2</bpmn:outgoing>
@@ -75,10 +75,10 @@ async function init(): Promise<void> {
     additionalModules: [
       window.BpmnPropertiesPanelModule,
       window.BpmnPropertiesProviderModule,
-      // ElementTemplatesPropertiesProviderModule (the Operaton/Camunda 7 element-templates
-      // fork) already includes the Camunda-platform property groups itself, so it replaces
-      // CamundaPlatformPropertiesProviderModule rather than sitting alongside it -- both
-      // registered together crash on render (duplicate group registration).
+      // The Cloud element-templates provider already includes the Zeebe property
+      // groups itself, so it replaces ZeebePropertiesProviderModule rather than
+      // sitting alongside it -- both registered together crash on render with a
+      // duplicate group registration.
       window.ElementTemplatesPropertiesProviderModule,
       window.minimapModule,
       window.CreateAppendAnythingModule,
@@ -90,7 +90,7 @@ async function init(): Promise<void> {
       window.ElementTemplatesExtendModule,
     ].filter(Boolean),
     moddleExtensions: {
-      camunda: window.camundaWithIconModdle || window.camundaModdleDescriptor || {},
+      zeebe: window.zeebeModdleDescriptor || {},
     },
     linting: window.BpmnlintRecommendedConfig
       ? {

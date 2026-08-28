@@ -26,7 +26,7 @@ declare module "bpmn-moddle" {
   }
 }
 
-declare module "camunda-bpmn-moddle/resources/camunda.json" {
+declare module "zeebe-bpmn-moddle/resources/zeebe.json" {
   const descriptor: Record<string, unknown>;
   export default descriptor;
 }

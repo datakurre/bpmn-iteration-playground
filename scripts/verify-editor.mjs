@@ -1,11 +1,10 @@
 /**
- * Browser check for the ported editor.
+ * Browser check for the editor.
  *
- * The port's real risk is not "does the page load" but the element-templates
- * properties panel: the Operaton fork ships rollup output importing
- * @bpmn-io/properties-panel and preact as bare specifiers, and if those resolve
- * to a second copy the panel throws inside `useService` the moment a templated
- * element is selected. That only shows up in a browser, so this drives one.
+ * The properties panel is where the Camunda 8 element templates actually get
+ * exercised: the Cloud provider has to load the templates, render a group for a
+ * selected element, and survive applying one. None of that shows up outside a
+ * browser, so this drives one.
  *
  * Usage: node scripts/verify-editor.mjs [workspaceDir]
  */
@@ -79,18 +78,31 @@ try {
   if (groups < 1) failures.push(`properties panel rendered no groups (${groups})`);
 
   // 4. applying a template must not throw
-  await page.evaluate(() => {
+  const applied = await page.evaluate(() => {
     const modeler = window.__modeler;
     const registry = modeler.get("elementRegistry");
     const templates = modeler.get("elementTemplates");
-    const all = templates.getAll();
-    const piTemplate = all.find((t) => t.id === "playground.pi-agent-task");
-    if (piTemplate) templates.applyTemplate(registry.get("ServiceTask_1"), piTemplate);
+    const piTemplate = templates.getAll().find((t) => t.id === "graph-agent.pi-agent-turn");
+    if (!piTemplate) return null;
+    templates.applyTemplate(registry.get("ServiceTask_1"), piTemplate);
+    const bo = registry.get("ServiceTask_1").businessObject;
+    const values = bo.extensionElements?.values ?? [];
+    return {
+      template: bo.get("zeebe:modelerTemplate"),
+      jobType: values.find((v) => v.$type === "zeebe:TaskDefinition")?.type,
+    };
   });
+  if (!applied) failures.push("the Pi Agent Turn template was not loaded by the modeler");
+  else {
+    if (applied.template !== "graph-agent.pi-agent-turn")
+      failures.push(`zeebe:modelerTemplate not set (got ${applied.template})`);
+    if (applied.jobType !== "agent:turn")
+      failures.push(`applying the template did not bind zeebe:taskDefinition type (got ${applied.jobType})`);
+  }
   await page.waitForTimeout(500);
 
-  const useServiceCrash = consoleErrors.filter((e) => /useService|context|preact/i.test(e));
-  if (useServiceCrash.length) failures.push(`properties-panel errors: ${useServiceCrash.join(" | ")}`);
+  // Anything the panel throws while rendering a templated element.
+  if (consoleErrors.length) failures.push(`console errors: ${consoleErrors.join(" | ")}`);
   if (missingResources.length) failures.push(`unresolved resources: ${missingResources.join(" | ")}`);
 } catch (error) {
   failures.push(`threw: ${error.message}`);
@@ -112,4 +124,4 @@ if (failures.length) {
   for (const f of failures) console.error("  -", f);
   process.exit(1);
 }
-console.log("\nOK  editor renders, templates load, properties panel survives selection + apply");
+console.log("\nOK  editor renders, Camunda 8 templates load, properties panel renders and applies one");

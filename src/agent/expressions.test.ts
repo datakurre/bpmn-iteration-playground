@@ -30,34 +30,34 @@ describe("feelContext", () => {
 
 describe("camundaExpressions", () => {
   it("resolves a bare variable reference", () => {
-    expect(evaluate("${goal}", { goal: "ship it" })).toBe("ship it");
+    expect(evaluate("=goal", { goal: "ship it" })).toBe("ship it");
   });
 
   it("still routes engine-internal references to the default handler", () => {
     expect(evaluate("${environment.variables.count}", { count: 7 })).toBe(7);
   });
 
-  it("evaluates FEEL comparisons on gateway conditions", () => {
-    expect(evaluate('${status = "success"}', { status: "success" })).toBe(true);
-    expect(evaluate('${status = "success"}', { status: "failed" })).toBe(false);
-    expect(evaluate('${status != "success"}', { status: "failed" })).toBe(true);
+  it("evaluates Camunda 8 style FEEL conditions", () => {
+    expect(evaluate('=status = "success"', { status: "success" })).toBe(true);
+    expect(evaluate('=status = "success"', { status: "failed" })).toBe(false);
+    expect(evaluate('=status != "success"', { status: "failed" })).toBe(true);
   });
 
   it("handles boolean combinations, ranges and if/then/else", () => {
-    expect(evaluate('${status = "success" and retries < 3}', { status: "success", retries: 1 })).toBe(true);
-    expect(evaluate('${status = "success" and retries < 3}', { status: "success", retries: 5 })).toBe(false);
-    expect(evaluate("${retries in [1..3]}", { retries: 2 })).toBe(true);
-    expect(evaluate('${if turns > 5 then "long" else "short"}', { turns: 9 })).toBe("long");
+    expect(evaluate('=status = "success" and retries < 3', { status: "success", retries: 1 })).toBe(true);
+    expect(evaluate('=status = "success" and retries < 3', { status: "success", retries: 5 })).toBe(false);
+    expect(evaluate("=retries in [1..3]", { retries: 2 })).toBe(true);
+    expect(evaluate('=if turns > 5 then "long" else "short"', { turns: 9 })).toBe("long");
   });
 
   it("is total: an unknown name yields false rather than throwing", () => {
-    expect(evaluate('${missing = "x"}', {})).toBe(false);
+    expect(evaluate('=missing = "x"', {})).toBe(false);
   });
 
   it("reports unknown variables as warnings, since that is usually a modelling bug", () => {
     const onWarning = vi.fn();
     const warned = camundaExpressions({ onWarning });
-    warned.resolveExpression('${missing = "x"}', scope({}));
+    warned.resolveExpression('=missing = "x"', scope({}));
     expect(onWarning).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/missing/) }));
   });
 
