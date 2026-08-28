@@ -6,11 +6,15 @@
  * say "take this branch when the turn succeeded" without dropping into a
  * `language="javascript"` script.
  *
- * Rather than invent an expression language, this delegates to FEEL (the DMN
- * expression language, and the one bpmn.io tooling speaks) via `feelin`:
+ * Graphs here are Camunda 8 flavoured, so expressions are FEEL and are written
+ * the way Camunda 8 writes them -- a leading `=`, no `${}` wrapper:
  *
- *     <conditionExpression>${status = "success"}</conditionExpression>
- *     <conditionExpression>${status = "success" and retries < 3}</conditionExpression>
+ *     <conditionExpression>=status = "success"</conditionExpression>
+ *     <conditionExpression>=status = "success" and retries &lt; 3</conditionExpression>
+ *
+ * `${...}` is still recognised, because bpmn-elements uses that form internally
+ * for its own references (`${environment.services.x}`), and because a diagram
+ * carried over from Camunda 7 should not silently evaluate to a literal string.
  *
  * FEEL is a total expression language with no function definition and no
  * assignment. It does, however, *invoke* functions it finds in its context, and
@@ -21,7 +25,7 @@
  *
  * Note for anyone porting the archived Python diagrams: FEEL uses `=` for
  * equality and double-quoted strings, so `status == 'success'` becomes
- * `status = "success"`.
+ * `=status = "success"`.
  */
 import { Environment } from "bpmn-elements";
 import { evaluate as feelEvaluate } from "feelin";
@@ -54,6 +58,26 @@ const ENGINE_ROOTS = /^(environment|content|properties|fields)\b/;
 
 export function isEngineExpression(body: string): boolean {
   return ENGINE_ROOTS.test(body.trim());
+}
+
+/**
+ * Camunda 8 writes an expression as `=<feel>`. Recognising it matters twice
+ * over: bpmn-elements asks `isExpression` before it will evaluate a condition at
+ * all, and a condition it does not recognise is treated as a non-empty literal,
+ * which is truthy -- so an unrecognised gateway condition silently takes every
+ * branch.
+ */
+export function isFeelExpression(text: unknown): boolean {
+  return typeof text === "string" && text.trimStart().startsWith("=");
+}
+
+/** The FEEL body of an expression in either supported spelling, if it is one. */
+export function expressionBody(text: string): string | null {
+  const wrapped = /^\s*\$\{([\s\S]+)\}\s*$/.exec(text ?? "");
+  if (wrapped) return wrapped[1] as string;
+  const trimmed = (text ?? "").trimStart();
+  if (trimmed.startsWith("=")) return trimmed.slice(1);
+  return null;
 }
 
 /**
@@ -140,15 +164,16 @@ export function camundaExpressions(options: CamundaExpressionOptions = {}): Expr
     .expressions;
 
   return {
-    isExpression: base.isExpression?.bind(base) as ExpressionsHandler["isExpression"],
-    hasExpression: base.hasExpression?.bind(base) as ExpressionsHandler["hasExpression"],
+    isExpression(text: string): boolean {
+      return isFeelExpression(text) || Boolean(base.isExpression?.(text));
+    },
+    hasExpression(text: string): boolean {
+      return isFeelExpression(text) || Boolean(base.hasExpression?.(text));
+    },
     resolveExpression(expression: string, context?: unknown, fnContext?: unknown): unknown {
-      const whole = /^\s*\$\{([\s\S]+)\}\s*$/.exec(expression ?? "");
-      if (whole) {
-        const body = whole[1] as string;
-        if (!isEngineExpression(body)) {
-          return evaluateFeel(body, context, options.onWarning);
-        }
+      const body = expressionBody(expression);
+      if (body !== null && !isEngineExpression(body)) {
+        return evaluateFeel(body, context, options.onWarning);
       }
       // Interpolated strings and engine-internal references.
       return base.resolveExpression(expression, context, fnContext);

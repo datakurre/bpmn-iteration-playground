@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Defs_pi_default_loop" targetNamespace="http://graph-agent/bpmn">
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_pi_default_loop" targetNamespace="http://graph-agent/bpmn">
   <bpmn:process id="pi_default_loop" name="Pi default agent loop" isExecutable="true">
     <bpmn:documentation>Pi's built-in agent loop, drawn.
 
@@ -23,12 +23,10 @@ drain that decides between another turn and stopping.</bpmn:documentation>
       <bpmn:documentation>Drains the steering queue and appends those messages before the next
 provider request, matching the top of runLoop's inner while.</bpmn:documentation>
       <bpmn:extensionElements>
-        <camunda:properties>
-          <camunda:property name="harness" value="agent:steer" />
-        </camunda:properties>
-        <camunda:inputOutput>
-          <camunda:outputParameter name="injected">${injected}</camunda:outputParameter>
-        </camunda:inputOutput>
+        <zeebe:taskDefinition type="agent:steer" />
+        <zeebe:ioMapping>
+          <zeebe:output source="=injected" target="injected" />
+        </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>to_inject</bpmn:incoming>
       <bpmn:incoming>next_turn</bpmn:incoming>
@@ -40,13 +38,11 @@ provider request, matching the top of runLoop's inner while.</bpmn:documentation
       <bpmn:documentation>Exactly one assistant response. Pi streams it; the token does not move
 until the response is complete.</bpmn:documentation>
       <bpmn:extensionElements>
-        <camunda:properties>
-          <camunda:property name="harness" value="agent:turn" />
-        </camunda:properties>
-        <camunda:inputOutput>
-          <camunda:outputParameter name="stop_reason">${stop_reason}</camunda:outputParameter>
-          <camunda:outputParameter name="tool_calls">${tool_calls}</camunda:outputParameter>
-        </camunda:inputOutput>
+        <zeebe:taskDefinition type="agent:turn" />
+        <zeebe:ioMapping>
+          <zeebe:output source="=stop_reason" target="stop_reason" />
+          <zeebe:output source="=tool_calls" target="tool_calls" />
+        </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>to_turn</bpmn:incoming>
       <bpmn:outgoing>to_gw_failed</bpmn:outgoing>
@@ -58,10 +54,10 @@ until the response is complete.</bpmn:documentation>
       <bpmn:outgoing>turn_ok</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="turn_failed" name="error / aborted" sourceRef="gw_failed" targetRef="end_error">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${stop_reason = "error" or stop_reason = "aborted"}</bpmn:conditionExpression>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=stop_reason = "error" or stop_reason = "aborted"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="turn_ok" name="ok" sourceRef="gw_failed" targetRef="gw_tools">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${stop_reason != "error" and stop_reason != "aborted"}</bpmn:conditionExpression>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=stop_reason != "error" and stop_reason != "aborted"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:exclusiveGateway id="gw_tools" name="Tool calls?">
       <bpmn:incoming>turn_ok</bpmn:incoming>
@@ -69,10 +65,10 @@ until the response is complete.</bpmn:documentation>
       <bpmn:outgoing>no_tools</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="has_tools" name="yes" sourceRef="gw_tools" targetRef="gw_truncated">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${count(tool_calls) &gt; 0}</bpmn:conditionExpression>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=count(tool_calls) &gt; 0</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="no_tools" name="no" sourceRef="gw_tools" targetRef="drain_followup">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${count(tool_calls) = 0}</bpmn:conditionExpression>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=count(tool_calls) = 0</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:exclusiveGateway id="gw_truncated" name="Response truncated?">
       <bpmn:incoming>has_tools</bpmn:incoming>
@@ -80,19 +76,17 @@ until the response is complete.</bpmn:documentation>
       <bpmn:outgoing>not_truncated</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="truncated" name="hit token limit" sourceRef="gw_truncated" targetRef="fail_tool_batch">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${stop_reason = "length"}</bpmn:conditionExpression>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=stop_reason = "length"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="not_truncated" name="complete" sourceRef="gw_truncated" targetRef="tool_batch">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${stop_reason != "length"}</bpmn:conditionExpression>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=stop_reason != "length"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:serviceTask id="fail_tool_batch" name="Fail truncated tool calls">
       <bpmn:documentation>A "length" stop means the arguments of every tool call in the message may
 be cut off. None are safe to execute, so each is failed with an error result
 and the model is invited to re-issue them.</bpmn:documentation>
       <bpmn:extensionElements>
-        <camunda:properties>
-          <camunda:property name="harness" value="agent:fail-truncated-tools" />
-        </camunda:properties>
+        <zeebe:taskDefinition type="agent:fail-truncated-tools" />
       </bpmn:extensionElements>
       <bpmn:incoming>truncated</bpmn:incoming>
       <bpmn:outgoing>failed_to_prepare</bpmn:outgoing>
@@ -104,7 +98,7 @@ Pi's toolExecution setting; the default there is parallel.</bpmn:documentation>
       <bpmn:incoming>not_truncated</bpmn:incoming>
       <bpmn:outgoing>batch_done</bpmn:outgoing>
       <bpmn:multiInstanceLoopCharacteristics>
-        <bpmn:loopCardinality xsi:type="bpmn:tFormalExpression">${count(tool_calls)}</bpmn:loopCardinality>
+        <bpmn:loopCardinality xsi:type="bpmn:tFormalExpression">=count(tool_calls)</bpmn:loopCardinality>
       </bpmn:multiInstanceLoopCharacteristics>
       <bpmn:startEvent id="tool_start" name="Start">
         <bpmn:outgoing>to_tool</bpmn:outgoing>
@@ -112,9 +106,7 @@ Pi's toolExecution setting; the default there is parallel.</bpmn:documentation>
       <bpmn:sequenceFlow id="to_tool" sourceRef="tool_start" targetRef="run_tool" />
       <bpmn:serviceTask id="run_tool" name="Run tool">
         <bpmn:extensionElements>
-          <camunda:properties>
-            <camunda:property name="harness" value="agent:tool" />
-          </camunda:properties>
+          <zeebe:taskDefinition type="agent:tool" />
         </bpmn:extensionElements>
         <bpmn:incoming>to_tool</bpmn:incoming>
         <bpmn:outgoing>tool_done</bpmn:outgoing>
@@ -133,22 +125,20 @@ terminate, so this is an all, not an any.</bpmn:documentation>
       <bpmn:outgoing>batch_continues</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="batch_terminates" name="all terminate" sourceRef="gw_terminate" targetRef="end_stopped">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${batch_terminate = true}</bpmn:conditionExpression>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=batch_terminate = true</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="batch_continues" name="continue" sourceRef="gw_terminate" targetRef="prepare_next_turn">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${batch_terminate != true}</bpmn:conditionExpression>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=batch_terminate != true</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:serviceTask id="prepare_next_turn" name="Prepare next turn">
       <bpmn:documentation>Pi's prepareNextTurn hook: swap context, model or thinking level before the
 next provider request. This is also where compaction belongs -- under BPMN
 control it is a visible step rather than an invisible transformContext.</bpmn:documentation>
       <bpmn:extensionElements>
-        <camunda:properties>
-          <camunda:property name="harness" value="agent:prepare-next-turn" />
-        </camunda:properties>
-        <camunda:inputOutput>
-          <camunda:outputParameter name="should_stop">${should_stop}</camunda:outputParameter>
-        </camunda:inputOutput>
+        <zeebe:taskDefinition type="agent:prepare-next-turn" />
+        <zeebe:ioMapping>
+          <zeebe:output source="=should_stop" target="should_stop" />
+        </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>batch_continues</bpmn:incoming>
       <bpmn:incoming>failed_to_prepare</bpmn:incoming>
@@ -161,21 +151,19 @@ control it is a visible step rather than an invisible transformContext.</bpmn:do
       <bpmn:outgoing>next_turn</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="stop_now" name="yes" sourceRef="gw_should_stop" targetRef="end_stopped">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${should_stop = true}</bpmn:conditionExpression>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=should_stop = true</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="next_turn" name="another turn" sourceRef="gw_should_stop" targetRef="inject_pending">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${should_stop != true}</bpmn:conditionExpression>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=should_stop != true</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:serviceTask id="drain_followup" name="Drain follow-up queue">
       <bpmn:documentation>The agent would stop here. runLoop's outer while asks for queued follow-up
 messages; if any arrive the inner loop starts again.</bpmn:documentation>
       <bpmn:extensionElements>
-        <camunda:properties>
-          <camunda:property name="harness" value="agent:follow-up" />
-        </camunda:properties>
-        <camunda:inputOutput>
-          <camunda:outputParameter name="has_followup">${has_followup}</camunda:outputParameter>
-        </camunda:inputOutput>
+        <zeebe:taskDefinition type="agent:follow-up" />
+        <zeebe:ioMapping>
+          <zeebe:output source="=has_followup" target="has_followup" />
+        </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>no_tools</bpmn:incoming>
       <bpmn:outgoing>to_gw_followup</bpmn:outgoing>
@@ -187,10 +175,10 @@ messages; if any arrive the inner loop starts again.</bpmn:documentation>
       <bpmn:outgoing>no_followup</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="followup_again" name="yes" sourceRef="gw_followup" targetRef="inject_pending">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${has_followup = true}</bpmn:conditionExpression>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=has_followup = true</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="no_followup" name="no" sourceRef="gw_followup" targetRef="end_done">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${has_followup != true}</bpmn:conditionExpression>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=has_followup != true</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:endEvent id="end_done" name="Agent done">
       <bpmn:incoming>no_followup</bpmn:incoming>

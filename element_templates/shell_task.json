@@ -1,70 +1,37 @@
 [
   {
-    "$schema": "https://unpkg.com/@camunda/element-templates-json-schema/resources/schema.json",
-    "name": "Shell Task",
-    "id": "playground.shell-task",
+    "$schema": "https://unpkg.com/@camunda/zeebe-element-templates-json-schema/resources/schema.json",
+    "name": "Shell Command",
+    "id": "graph-agent.shell-task",
     "version": 1,
-    "description": "Service task executed by the deterministic shell harness (app/adapters/shell_adapter.py) -- a compiler, slicer, or CAM step rather than an LLM.",
+    "description": "A deterministic step: run a command and route on its exit status.",
     "appliesTo": ["bpmn:ServiceTask"],
+    "elementType": { "value": "bpmn:ServiceTask" },
     "properties": [
       {
-        "label": "Harness type",
         "type": "Hidden",
         "value": "shell",
-        "editable": false,
-        "binding": { "type": "camunda:property", "name": "harness_type" }
+        "binding": { "type": "zeebe:taskDefinition", "property": "type" }
       },
       {
         "label": "Command",
-        "description": "Command line to run. Split with shlex and executed directly unless Shell is enabled.",
+        "description": "Command line to run in the workspace.",
         "type": "String",
-        "editable": true,
-        "binding": { "type": "camunda:property", "name": "command" }
+        "binding": { "type": "zeebe:taskHeader", "key": "command" },
+        "constraints": { "notEmpty": true }
       },
       {
-        "label": "Shell",
-        "description": "Run Command through /bin/sh -c (needed for pipes/redirection).",
-        "type": "Dropdown",
-        "value": "false",
-        "choices": [
-          { "name": "false", "value": "false" },
-          { "name": "true", "value": "true" }
-        ],
-        "editable": true,
-        "binding": { "type": "camunda:property", "name": "shell" }
+        "label": "Fail on non-zero exit",
+        "type": "Boolean",
+        "value": true,
+        "binding": { "type": "zeebe:taskHeader", "key": "fail_on_error" }
       },
       {
-        "label": "Working directory",
-        "description": "Subdirectory of the workspace to run in. Defaults to the workspace root.",
+        "label": "Exit status",
+        "description": "Process variable the exit status is published to.",
         "type": "String",
-        "editable": true,
-        "binding": { "type": "camunda:property", "name": "workdir" }
-      },
-      {
-        "label": "Timeout (seconds)",
-        "type": "String",
-        "value": "900",
-        "editable": true,
-        "binding": { "type": "camunda:property", "name": "timeout" }
-      },
-      {
-        "label": "Fail on error",
-        "description": "Non-zero exit fails the turn. Disable when a non-zero exit is a routing outcome, not a breakage.",
-        "type": "Dropdown",
-        "value": "true",
-        "choices": [
-          { "name": "true", "value": "true" },
-          { "name": "false", "value": "false" }
-        ],
-        "editable": true,
-        "binding": { "type": "camunda:property", "name": "fail_on_error" }
-      },
-      {
-        "label": "Artifacts",
-        "description": "Glob patterns (JSON array or comma-separated) collected after the run.",
-        "type": "String",
-        "editable": true,
-        "binding": { "type": "camunda:property", "name": "artifacts" }
+        "value": "shell_status",
+        "binding": { "type": "zeebe:output", "source": "=status" }
       }
     ]
   }

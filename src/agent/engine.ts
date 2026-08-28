@@ -8,13 +8,13 @@
 import { Engine } from "bpmn-engine";
 import { EventEmitter } from "node:events";
 import {
-  camundaProperties,
+  activityProperties,
   harnessOf,
   resolveInput,
   resolveOutput,
   type ActivityLike,
-} from "./camunda7.ts";
-import { camundaExpressions } from "./expressions.ts";
+} from "./zeebe.ts";
+import { camundaExpressions, evaluateFeel } from "./expressions.ts";
 import {
   MODDLE_OPTIONS,
   recoverWithGraph,
@@ -84,15 +84,21 @@ export interface RunResult {
  * `harness` declaration turns into an actual call. Modelled on paed01's
  * "Extend service task behaviour" example.
  */
+/**
+ * zeebe:ioMapping sources are FEEL. The mapping module stays pure and takes an
+ * evaluator, so this is where it is supplied: a flat scope, since the source is
+ * evaluated against process variables (input) or the job result (output).
+ */
+const feelIn = (expression: string, scope: Record<string, unknown>): unknown =>
+  evaluateFeel(expression, { environment: { variables: scope, output: {} }, content: {} });
+
 function makeExtension(options: RunnerOptions, activities: ActivityOutcome[]) {
   return function harnessExtension(activity: ActivityLike & Record<string, unknown>): void {
     const harnessName = harnessOf(activity);
     if (!harnessName) return;
 
     const implementation = options.harnesses[harnessName];
-    const properties = camundaProperties(activity);
-    delete properties.harness;
-    delete properties.harness_type;
+    const properties = activityProperties(activity);
 
     const environment = (activity as unknown as { environment: { variables: Record<string, unknown>; output: Record<string, unknown> } })
       .environment;
@@ -116,11 +122,11 @@ function makeExtension(options: RunnerOptions, activities: ActivityOutcome[]) {
             ...(activity.name === undefined ? {} : { activityName: activity.name }),
             harness: harnessName,
             properties,
-            input: resolveInput(activity, {
-              ...variables,
-              ...environment.output,
-              ...(executionMessage.content ?? {}),
-            }),
+            input: resolveInput(
+              activity,
+              { ...variables, ...environment.output, ...(executionMessage.content ?? {}) },
+              feelIn,
+            ),
             variables: { ...variables, ...environment.output },
             ...(options.signal ? { signal: options.signal } : {}),
           };
@@ -134,7 +140,7 @@ function makeExtension(options: RunnerOptions, activities: ActivityOutcome[]) {
               // Environment.clone() copies `variables` by value, so every activity
               // gets its own snapshot and a write there is invisible to the rest of
               // the run. `output` is passed through by reference and is shared.
-              for (const [key, value] of Object.entries(resolveOutput(activity, result))) {
+              for (const [key, value] of Object.entries(resolveOutput(activity, result, feelIn))) {
                 if (value !== undefined) environment.output[key] = value;
               }
               activities.push({

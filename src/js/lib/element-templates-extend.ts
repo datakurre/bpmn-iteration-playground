@@ -27,7 +27,7 @@ export class TemplateElementFactory {
     const element = this.createShape(template);
     this.setModelerTemplate(element, template);
 
-    this.commandStack.execute("propertiesPanel.camunda.changeTemplate", {
+    this.commandStack.execute("propertiesPanel.zeebe.changeTemplate", {
       element,
       oldTemplate: null,
       newTemplate: template,
@@ -53,10 +53,10 @@ export class TemplateElementFactory {
   private setModelerTemplate(element: unknown, template: ElementTemplate): void {
     const { id, version, icon } = template;
     const businessObject = getBusinessObject(element);
-    businessObject.set("camunda:modelerTemplate", id);
-    businessObject.set("camunda:modelerTemplateVersion", version);
+    businessObject.set("zeebe:modelerTemplate", id);
+    businessObject.set("zeebe:modelerTemplateVersion", version);
     if (icon?.contents) {
-      businessObject.set("camunda:modelerTemplateIcon", icon.contents);
+      businessObject.set("zeebe:modelerTemplateIcon", icon.contents);
     }
   }
 }

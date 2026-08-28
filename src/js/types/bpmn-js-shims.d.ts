@@ -1,4 +1,4 @@
-// bpmn-js and its ecosystem (bpmn-js-properties-panel, camunda-bpmn-moddle,
+// bpmn-js and its ecosystem (bpmn-js-properties-panel, zeebe-bpmn-moddle,
 // bpmn-auto-layout, diagram-js-minimap) ship no type declarations at all, and no
 // `@types/*` package exists for them. These shims type only the surface this
 // project actually calls; everything else is intentionally `any` rather than
@@ -26,10 +26,10 @@ declare module "bpmn-js-properties-panel" {
   export const BpmnPropertiesProviderModule: unknown;
 }
 
-declare module "camunda-bpmn-moddle/resources/camunda.json" {
+declare module "zeebe-bpmn-moddle/resources/zeebe.json" {
   import type { ModdleDescriptor } from "../lib/moddle-types";
-  const camundaModdleDescriptor: ModdleDescriptor;
-  export default camundaModdleDescriptor;
+  const zeebeModdleDescriptor: ModdleDescriptor;
+  export default zeebeModdleDescriptor;
 }
 
 declare module "bpmn-auto-layout" {
@@ -82,13 +82,14 @@ declare module "bpmnlint/rules/*" {
   export default rule;
 }
 
-// vendor/operaton-element-templates, aliased over the package name it publishes
-// under (see scripts/build-assets.mjs). Typed against the actual named exports of
-// its dist/index.esm.js, not the upstream bpmn-js-element-templates API surface,
-// since this is the Operaton/Camunda 7 fork.
+// bpmn-js-element-templates ships no type declarations. Both engine flavours are
+// exported; this project uses the Cloud (Camunda 8 / zeebe) provider.
 declare module "bpmn-js-element-templates" {
   export const ElementTemplatesCoreModule: unknown;
   export const ElementTemplatesPropertiesProviderModule: unknown;
+  export const CloudElementTemplatesCoreModule: unknown;
+  export const CloudElementTemplatesPropertiesProviderModule: unknown;
+  export const CloudElementTemplatesValidator: unknown;
 }
 
 declare module "@bpmn-io/element-template-chooser" {

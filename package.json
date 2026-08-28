@@ -31,6 +31,8 @@
   "dependencies": {
     "@bpmn-io/element-template-chooser": "^3.0.0",
     "@bpmn-io/element-template-icon-renderer": "^1.0.0",
+    "@bpmn-io/element-templates-validator": "^2.26.0",
+    "@bpmn-io/feel-editor": "^2.7.1",
     "@bpmn-io/form-js": "^1.10.0",
     "@bpmn-io/properties-panel": "^3.49.2",
     "@earendil-works/pi-agent-core": "0.84.3",
@@ -42,15 +44,16 @@
     "bpmn-js": "^18.24.0",
     "bpmn-js-bpmnlint": "^0.24.0",
     "bpmn-js-create-append-anything": "^2.0.0",
+    "bpmn-js-element-templates": "^2.34.0",
     "bpmn-js-properties-panel": "^5.64.0",
     "bpmn-js-token-simulation": "^0.40.0",
     "bpmn-moddle": "^10.2.0",
     "bpmnlint": "^11.13.0",
-    "camunda-bpmn-moddle": "^7.0.1",
     "diagram-js-minimap": "^5.4.1",
     "feelin": "^7.0.1",
     "moddle-context-serializer": "^6.0.2",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "zeebe-bpmn-moddle": "^2.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.19.0",

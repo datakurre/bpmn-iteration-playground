@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Defs_session" targetNamespace="http://graph-agent/bpmn">
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_session" targetNamespace="http://graph-agent/bpmn">
   <bpmn:process id="session" name="Agent session" isExecutable="true">
     <bpmn:documentation>What a session looks like before it has done anything.
 
@@ -10,20 +10,40 @@ whatever that extension added, and come back for more.
 
 The definitions id must stay stable for the life of the session: recovery
 matches a snapshot to a graph on that id.</bpmn:documentation>
+    <bpmn:extensionElements>
+      <zeebe:userTaskForm id="session_intent_form">{
+  "$schema": "https://unpkg.com/@bpmn-io/form-js@1/dist/assets/form-json-schema/schema.json",
+  "components": [
+    {
+      "label": "Goal",
+      "type": "textarea",
+      "key": "intent",
+      "id": "intent"
+    },
+    {
+      "label": "Context or constraints",
+      "type": "textarea",
+      "key": "context",
+      "id": "context"
+    }
+  ],
+  "type": "default",
+  "id": "session_intent_form",
+  "schemaVersion": 18
+}</zeebe:userTaskForm>
+    </bpmn:extensionElements>
     <bpmn:startEvent id="session_start" name="Session start">
       <bpmn:outgoing>to_intent</bpmn:outgoing>
     </bpmn:startEvent>
     <bpmn:sequenceFlow id="to_intent" sourceRef="session_start" targetRef="await_intent" />
     <bpmn:userTask id="await_intent" name="What should the agent do?">
       <bpmn:extensionElements>
-        <camunda:formData>
-          <camunda:formField id="intent" label="Goal" type="textarea" />
-          <camunda:formField id="context" label="Context or constraints" type="textarea" />
-        </camunda:formData>
-        <camunda:inputOutput>
-          <camunda:outputParameter name="intent">${intent}</camunda:outputParameter>
-          <camunda:outputParameter name="context">${context}</camunda:outputParameter>
-        </camunda:inputOutput>
+        <zeebe:userTask />
+        <zeebe:formDefinition formId="session_intent_form" />
+        <zeebe:ioMapping>
+          <zeebe:output source="=intent" target="intent" />
+          <zeebe:output source="=context" target="context" />
+        </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>to_intent</bpmn:incoming>
       <bpmn:incoming>more_work</bpmn:incoming>
@@ -45,10 +65,10 @@ self-documenting artifact.</bpmn:documentation>
       <bpmn:outgoing>session_over</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="more_work" name="continue" sourceRef="gw_more" targetRef="await_intent">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${session_done != true}</bpmn:conditionExpression>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=session_done != true</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="session_over" name="done" sourceRef="gw_more" targetRef="session_end">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${session_done = true}</bpmn:conditionExpression>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=session_done = true</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:endEvent id="session_end" name="Session ended">
       <bpmn:incoming>session_over</bpmn:incoming>

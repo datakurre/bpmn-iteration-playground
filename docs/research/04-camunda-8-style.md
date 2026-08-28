@@ -157,6 +157,21 @@ Camunda 7 is end-of-life, with Operaton as its community continuation.
 
 ## 6. Recommendation
 
+> **Outcome: adopted.** The switch was carried out in the commit following this
+> document. Two things turned up during it that are worth recording:
+>
+> - **`zeebe-bpmn-moddle` already declares `modelerTemplateIcon`** on
+>   `TemplateSupported`. `camunda-bpmn-moddle` does not, which is why the Camunda 7
+>   build carried a patched copy of the descriptor. That shim is gone too.
+> - **`$schema` is load-bearing and fails quietly.**
+>   `@bpmn-io/element-templates-validator`'s `validateZeebe()` accepts a template
+>   whose `$schema` points at `@camunda/element-templates-json-schema`, but
+>   `bpmn-js-element-templates` rejects it with *"unsupported $schema attribute"*
+>   and loads **no** templates at all. It surfaces only as a console warning, so the
+>   editor just quietly has an empty template list. The correct value comes from
+>   `getZeebeSchemaPackage()` — `@camunda/zeebe-element-templates-json-schema` — and
+>   there is now a test asserting it, because schema validation alone did not catch it.
+
 **Switch, and switch now.** The editor-dependency simplification alone justifies
 it — deleting three submodules, a vendored build step, and the single most
 fragile piece of the whole port. The FEEL argument is already half-won, and the

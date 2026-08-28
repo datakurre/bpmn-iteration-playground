@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { runGraph, resumeGraph, type ActivityOutcome } from "./engine.ts";
 import { ok, type Harness, type HarnessContext } from "./harness.ts";
 
-const DEFS = 'id="Defs_t" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:camunda="http://camunda.org/schema/1.0/bpmn"';
+const DEFS = 'id="Defs_t" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"';
 
 /** start -> turn (harness) -> XOR on the harness's status -> done | failed */
 const routed = `<?xml version="1.0" encoding="UTF-8"?>
@@ -13,23 +13,23 @@ const routed = `<?xml version="1.0" encoding="UTF-8"?>
     <sequenceFlow id="f1" sourceRef="start" targetRef="turn" />
     <serviceTask id="turn" name="Agent turn">
       <extensionElements>
-        <camunda:properties>
-          <camunda:property name="harness" value="agent:turn" />
-          <camunda:property name="role" value="planner" />
-        </camunda:properties>
-        <camunda:inputOutput>
-          <camunda:inputParameter name="instructions">\${goal}</camunda:inputParameter>
-          <camunda:outputParameter name="agent_status">\${status}</camunda:outputParameter>
-        </camunda:inputOutput>
+        <zeebe:taskDefinition type="agent:turn" />
+        <zeebe:taskHeaders>
+          <zeebe:header key="role" value="planner" />
+        </zeebe:taskHeaders>
+        <zeebe:ioMapping>
+          <zeebe:input source="=goal" target="instructions" />
+          <zeebe:output source="=status" target="agent_status" />
+        </zeebe:ioMapping>
       </extensionElements>
     </serviceTask>
     <sequenceFlow id="f2" sourceRef="turn" targetRef="gw" />
     <exclusiveGateway id="gw" />
     <sequenceFlow id="f3" sourceRef="gw" targetRef="done">
-      <conditionExpression xsi:type="tFormalExpression">\${agent_status = "success"}</conditionExpression>
+      <conditionExpression xsi:type="tFormalExpression">=agent_status = "success"</conditionExpression>
     </sequenceFlow>
     <sequenceFlow id="f4" sourceRef="gw" targetRef="failed">
-      <conditionExpression xsi:type="tFormalExpression">\${agent_status != "success"}</conditionExpression>
+      <conditionExpression xsi:type="tFormalExpression">=agent_status != "success"</conditionExpression>
     </sequenceFlow>
     <endEvent id="done" />
     <endEvent id="failed" />
@@ -37,7 +37,7 @@ const routed = `<?xml version="1.0" encoding="UTF-8"?>
 </definitions>`;
 
 describe("runGraph", () => {
-  it("dispatches an activity to the harness named in camunda:properties", async () => {
+  it("dispatches an activity to the harness named by zeebe:taskDefinition", async () => {
     const seen: HarnessContext[] = [];
     const harness: Harness = async (context) => {
       seen.push(context);
@@ -54,13 +54,13 @@ describe("runGraph", () => {
     expect(seen[0]?.harness).toBe("agent:turn");
     expect(seen[0]?.activityId).toBe("turn");
     expect(seen[0]?.activityName).toBe("Agent turn");
-    // the harness selector itself is not leaked as ordinary metadata
+    // the job type lives in zeebe:taskDefinition, so headers carry only real metadata
     expect(seen[0]?.properties).toEqual({ role: "planner" });
-    // camunda:inputParameter resolved against process variables
+    // zeebe:input resolved against process variables
     expect(seen[0]?.input).toEqual({ instructions: "add a health check" });
   });
 
-  it("publishes camunda:outputParameter so the next gateway can route on it", async () => {
+  it("publishes zeebe:output so the next gateway can route on it", async () => {
     const result = await runGraph(routed, {
       harnesses: { "agent:turn": async () => ok("planned") },
       variables: { goal: "g" },
@@ -122,7 +122,7 @@ const parkingExtended = parking
   .replace('<sequenceFlow id="f2" sourceRef="gate" targetRef="end" />', '<sequenceFlow id="f2" sourceRef="gate" targetRef="added" />')
   .replace('<endEvent id="end" />', `<serviceTask id="added">
       <extensionElements>
-        <camunda:properties><camunda:property name="harness" value="agent:turn" /></camunda:properties>
+        <zeebe:taskDefinition type="agent:turn" />
       </extensionElements>
     </serviceTask>
     <sequenceFlow id="f3" sourceRef="added" targetRef="end" />

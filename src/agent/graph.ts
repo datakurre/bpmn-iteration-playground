@@ -8,9 +8,9 @@
 import { BpmnModdle } from "bpmn-moddle";
 import * as elements from "bpmn-elements";
 import { Serializer, TypeResolver } from "moddle-context-serializer";
-import camundaDescriptor from "camunda-bpmn-moddle/resources/camunda.json" with { type: "json" };
+import zeebeDescriptor from "zeebe-bpmn-moddle/resources/zeebe.json" with { type: "json" };
 
-export const MODDLE_OPTIONS = { camunda: camundaDescriptor };
+export const MODDLE_OPTIONS = { zeebe: zeebeDescriptor };
 
 // bpmn-elements exports a few event-definition objects that do not satisfy
 // TypeResolver's `NewableFunction` index signature, though the resolver accepts

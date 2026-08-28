@@ -1,6 +1,6 @@
 // Minimal shape of a bpmn-js element template JSON document, typed only for the
 // fields this project's own code and authored templates actually read/write.
-// See vendor/operaton-element-templates-json-schema for the full schema.
+// See @camunda/element-templates-json-schema for the full schema.
 
 export interface TemplateElementType {
   value?: string;

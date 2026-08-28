@@ -1,7 +1,7 @@
 # All dev targets. Under Nix, run them as:
 #   nix develop --command make <target>
 
-.PHONY: help setup install submodules submodule-update check-vendor-pins vendor-build \
+.PHONY: help setup install \
         build build-cli build-assets build-css dev run studio init \
         lint lint-templates lint-bpmn layout typecheck test test-watch test-coverage verify-editor clean
 
@@ -11,12 +11,8 @@ PORT ?= 0
 
 help:
 	@echo "Setup"
-	@echo "  make setup              - install deps, init submodules, build vendored packages"
+	@echo "  make setup              - install dependencies"
 	@echo "  make install            - npm install"
-	@echo "  make submodules         - initialize and checkout git submodules"
-	@echo "  make submodule-update   - update submodules to latest remote HEAD"
-	@echo "  make check-vendor-pins  - assert .gitmodules gitlinks match flake.lock revs"
-	@echo "  make vendor-build       - build the vendored element-templates submodules"
 	@echo ""
 	@echo "Build"
 	@echo "  make build              - build CLI, editor bundles and CSS"
@@ -47,29 +43,7 @@ help:
 install:
 	$(NPM) install
 
-submodules:
-	git submodule update --init --recursive
-
-submodule-update:
-	git submodule update --init --recursive --remote
-
-# The Nix build takes the vendored sources from flake inputs rather than git
-# submodules, because a plain `nix run .` does not fetch submodules. Both paths
-# must therefore point at the same commits; this target fails loudly if they drift.
-check-vendor-pins:
-	$(NODE) scripts/check-vendor-pins.mjs
-
-# vendor/operaton-element-templates depends on vendor/operaton-element-templates-validator
-# (via a `file:` dependency), which in turn depends on
-# vendor/operaton-element-templates-json-schema (also `file:`), so these must be
-# installed/built in dependency order. Each submodule's dist/ is gitignored in its own
-# repo (it is build output, not source), so this must be re-run after checkout.
-vendor-build: submodules
-	cd vendor/operaton-element-templates-json-schema && npm install && npm run build
-	cd vendor/operaton-element-templates-validator && npm install
-	cd vendor/operaton-element-templates && npm install
-
-setup: install submodules vendor-build
+setup: install
 
 # ---------------------------------------------------------------- build
 

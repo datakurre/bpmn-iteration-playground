@@ -14,7 +14,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { layoutProcess } from "bpmn-auto-layout";
 import { Linter } from "bpmnlint";
 import { BpmnModdle } from "bpmn-moddle";
-import camunda from "camunda-bpmn-moddle/resources/camunda.json" with { type: "json" };
+import zeebe from "zeebe-bpmn-moddle/resources/zeebe.json" with { type: "json" };
 import NodeResolver from "bpmnlint/lib/resolver/node-resolver.js";
 
 const CONFIG = {
@@ -43,7 +43,7 @@ async function layout(file) {
 }
 
 async function lint(file) {
-  const moddle = new BpmnModdle({ camunda });
+  const moddle = new BpmnModdle({ zeebe });
   const { rootElement } = await moddle.fromXML(readFileSync(file, "utf8"));
   const linter = new Linter({ config: CONFIG, resolver: new NodeResolver() });
   const reports = await linter.lint(rootElement);
