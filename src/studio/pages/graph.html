@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Session</title>
+  <title>Graphs</title>
   <script>
     if (localStorage.theme === 'dark') { document.documentElement.classList.add('dark'); }
     else { document.documentElement.classList.remove('dark'); }
@@ -14,6 +14,10 @@
   <link rel="stylesheet" href="/static/vendor/bpmn-js/assets/bpmn-font/css/bpmn.css">
   <link rel="stylesheet" href="/static/vendor/bpmn-js/assets/bpmn-js.css">
   <link rel="stylesheet" href="/static/diagram-js-minimap.css">
+  <link rel="stylesheet" href="/static/properties-panel.css">
+  <link rel="stylesheet" href="/static/bpmn-js-token-simulation.css">
+  <link rel="stylesheet" href="/static/bpmn-js-bpmnlint.css">
+  <link rel="stylesheet" href="/static/element-template-chooser.css">
 </head>
 <body class="bg-bg text-ink font-sans antialiased min-h-screen overflow-x-hidden">
 <main class="max-w-[1600px] mx-auto px-5 py-4 pb-6">
@@ -34,16 +38,27 @@
     </div>
   </header>
 
-  <div class="flex items-baseline gap-2 mb-3">
-    <h2 id="session-title" class="text-lg font-bold text-ink truncate">&hellip;</h2>
-    <span id="session-status"></span>
-    <span id="session-meta" class="text-muted text-xs"></span>
-  </div>
+  <div class="flex flex-col h-[calc(100vh-150px)] min-h-[520px]">
+    <section class="flex justify-between items-center gap-2.5 mb-2.5 flex-wrap bg-panel border border-line rounded-md px-2.5 py-1.5 shadow-md">
+      <div class="flex items-center gap-1.5 flex-wrap">
+        <label for="graph-select" class="text-muted text-xs font-semibold uppercase tracking-wide">Graph:</label>
+        <select id="graph-select" class="w-56 border border-line rounded-md bg-card text-ink px-2 py-1 text-xs focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent"></select>
+        <button id="new-btn" class="btn btn-secondary px-2.5 py-1 text-xs" title="Start a new graph">New</button>
+        <button id="layout-btn" class="btn btn-secondary px-2.5 py-1 text-xs" title="Auto-layout">Auto-layout</button>
+        <button id="undo-btn" class="btn btn-secondary px-2 py-1 text-xs" title="Undo (Ctrl+Z)">&#8617;</button>
+        <button id="redo-btn" class="btn btn-secondary px-2 py-1 text-xs" title="Redo (Ctrl+Y)">&#8618;</button>
+      </div>
+      <div class="flex items-center gap-1.5 flex-wrap">
+        <input type="text" id="graph-name" placeholder="graph_name" class="w-40 border border-line rounded-md bg-card text-ink px-2 py-1 text-xs focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent">
+        <button id="save-btn" class="btn px-3 py-1 text-xs" title="Save to your graph library (Ctrl+S)">Save</button>
+      </div>
+    </section>
 
-  <div class="flex flex-col lg:flex-row gap-3 h-[calc(100vh-190px)] min-h-[480px]">
-    <div class="flex-1 min-h-0 relative bg-white rounded-lg overflow-hidden border border-line shadow-2xl">
-      <div id="viewer" class="w-full h-full bg-white relative">
-        <div class="diagram-controls !left-4">
+    <div id="save-msg" class="hidden"></div>
+
+    <div class="flex flex-1 min-h-0 relative bg-white rounded-lg overflow-hidden border border-line shadow-2xl">
+      <div id="modeler" class="modeler-canvas flex-1 h-full min-w-[300px] relative bg-white">
+        <div class="diagram-controls !left-16">
           <button class="ctrl-btn" id="ctrl-zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
           <button class="ctrl-btn" id="ctrl-zoom-out" title="Zoom out" aria-label="Zoom out">-</button>
           <button class="ctrl-btn" id="ctrl-zoom-fit" title="Fit diagram" aria-label="Fit diagram">Fit</button>
@@ -51,21 +66,15 @@
           <button class="ctrl-btn" id="ctrl-minimap" title="Toggle minimap" aria-label="Toggle minimap">Map</button>
         </div>
       </div>
+      <div id="resizer" class="resizer-handle" title="Drag to resize the properties panel"></div>
+      <aside id="properties-container" class="properties-container w-[340px] min-w-[240px] max-w-[720px] h-full flex flex-col bg-panel border-l border-line overflow-hidden">
+        <div class="px-3 py-2 bg-panel-header border-b border-line text-[11.5px] font-bold tracking-wider uppercase text-ink shrink-0">Element properties</div>
+        <div id="properties-panel" class="flex-1 overflow-y-auto bg-card text-ink"></div>
+      </aside>
     </div>
-
-    <aside class="w-full lg:w-[420px] shrink-0 flex flex-col gap-3 min-h-0">
-      <section class="bg-panel border border-line rounded-lg overflow-hidden flex flex-col min-h-0 flex-1">
-        <h3 class="px-3 py-2 bg-panel-header border-b border-line text-[11.5px] font-bold tracking-wider uppercase">Turns</h3>
-        <div id="turns" class="flex-1 overflow-y-auto text-xs"></div>
-      </section>
-      <section class="bg-panel border border-line rounded-lg overflow-hidden">
-        <h3 class="px-3 py-2 bg-panel-header border-b border-line text-[11.5px] font-bold tracking-wider uppercase">Graph revisions</h3>
-        <div id="revisions" class="max-h-40 overflow-y-auto text-xs"></div>
-      </section>
-    </aside>
   </div>
 </main>
-<script src="/static/bpmn-viewer-bundle.js"></script>
-<script src="/static/pages/session.js" defer></script>
+<script src="/static/bpmn-modeler-bundle.js"></script>
+<script src="/static/pages/graph.js" defer></script>
 </body>
 </html>

@@ -1,8 +1,19 @@
 /** Wire types shared by the studio server and its browser pages. */
 
-export interface WorkflowSummary {
+/** The project the studio was launched in. The studio is scoped to it. */
+export interface ProjectInfo {
+  /** Absolute path of the project directory. */
+  id: string;
+  /** Last path segment, for display. */
+  name: string;
+}
+
+/** A graph in the shared, user-level library. */
+export interface GraphSummary {
   id: string;
   name: string;
+  /** `library` if user-editable, `bundled` if it ships with graph-agent. */
+  source: "library" | "bundled";
 }
 
 /** One BPMN activity that carried an agent turn, in execution order. */
@@ -10,17 +21,31 @@ export interface TurnRecord {
   index: number;
   activityId: string;
   activityName?: string;
+  /** The zeebe:taskDefinition job type that dispatched it. */
   harness?: string;
-  /** Assistant stop reason for `agent:turn` activities. */
   stopReason?: string;
   toolCalls?: string[];
   summary?: string;
   startedAt?: number;
   endedAt?: number;
   error?: string;
+  /** Token usage for the turn, so cache behaviour is visible per step. */
+  usage?: TurnUsage;
 }
 
-/** A saved version of the session graph. The session mutates, so this is a history. */
+/**
+ * Per-turn token usage. `cacheRead` is the number that matters here: a
+ * graph-coordinated run should be reusing one Pi session, so every turn after
+ * the first ought to read most of its prefix from cache.
+ */
+export interface TurnUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+/** A saved version of the session graph. Sessions mutate, so this is a history. */
 export interface GraphRevision {
   index: number;
   at: number;
@@ -30,6 +55,8 @@ export interface GraphRevision {
 
 export interface SessionSummary {
   id: string;
+  /** Absolute path of the project directory the session ran against. */
+  project: string;
   name?: string;
   status: "running" | "wait" | "timer" | "idle" | "completed" | "error";
   updatedAt: number;
@@ -39,7 +66,7 @@ export interface SessionSummary {
 export interface SessionDetail extends SessionSummary {
   /** Current BPMN XML: the graph as it now stands, splices included. */
   graph: string;
-  /** Activity ids the token is currently standing on (postponed/waiting). */
+  /** Activity ids the token is currently standing on. */
   tokens: string[];
   /** Activity ids already executed at least once. */
   visited: string[];
@@ -50,4 +77,5 @@ export interface SessionDetail extends SessionSummary {
 /** Pushed over the studio WebSocket when a session advances or its graph changes. */
 export type StudioEvent =
   | { type: "session_changed"; sessionId: string }
-  | { type: "sessions_changed" };
+  | { type: "sessions_changed" }
+  | { type: "graphs_changed" };

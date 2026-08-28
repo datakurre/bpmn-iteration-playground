@@ -59,14 +59,12 @@ self-documenting artifact.</bpmn:documentation>
       <bpmn:outgoing>to_gw_more</bpmn:outgoing>
     </bpmn:callActivity>
     <bpmn:sequenceFlow id="to_gw_more" sourceRef="craft" targetRef="gw_more" />
-    <bpmn:exclusiveGateway id="gw_more" name="More work?">
+    <bpmn:exclusiveGateway id="gw_more" name="More work?" default="more_work">
       <bpmn:incoming>to_gw_more</bpmn:incoming>
       <bpmn:outgoing>more_work</bpmn:outgoing>
       <bpmn:outgoing>session_over</bpmn:outgoing>
     </bpmn:exclusiveGateway>
-    <bpmn:sequenceFlow id="more_work" name="continue" sourceRef="gw_more" targetRef="await_intent">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=session_done != true</bpmn:conditionExpression>
-    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="more_work" name="continue" sourceRef="gw_more" targetRef="await_intent" />
     <bpmn:sequenceFlow id="session_over" name="done" sourceRef="gw_more" targetRef="session_end">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=session_done = true</bpmn:conditionExpression>
     </bpmn:sequenceFlow>

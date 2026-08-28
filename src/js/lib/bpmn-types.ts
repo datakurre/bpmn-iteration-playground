@@ -8,6 +8,19 @@ export interface BpmnCanvas {
   resized(): void;
   addMarker(elementId: string, marker: string): void;
   removeMarker(elementId: string, marker: string): void;
+  scrollToElement(element: BpmnElement, padding?: number | Record<string, number>): void;
+}
+
+/** A diagram element as bpmn-js hands it back from the registry. */
+export interface BpmnElement {
+  id: string;
+  type: string;
+  businessObject?: Record<string, unknown>;
+}
+
+export interface BpmnElementRegistry {
+  get(id: string): BpmnElement | undefined;
+  getAll(): BpmnElement[];
 }
 
 export interface BpmnZoomScroll {
@@ -42,6 +55,7 @@ export interface BpmnDiagramInstance {
   attachTo(element: HTMLElement): void;
   destroy(): void;
   get(name: "canvas"): BpmnCanvas;
+  get(name: "elementRegistry"): BpmnElementRegistry;
   get(name: "zoomScroll"): BpmnZoomScroll;
   get(name: "minimap"): BpmnMinimap;
   get(name: "commandStack"): BpmnCommandStack;

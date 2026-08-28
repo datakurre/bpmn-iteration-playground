@@ -85,7 +85,7 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
       <bpmn:outgoing>to_gw_lint</bpmn:outgoing>
     </bpmn:serviceTask>
     <bpmn:sequenceFlow id="to_gw_lint" sourceRef="lint_fragment" targetRef="gw_lint" />
-    <bpmn:exclusiveGateway id="gw_lint" name="Fragment valid?">
+    <bpmn:exclusiveGateway id="gw_lint" name="Fragment valid?" default="lint_retry">
       <bpmn:incoming>to_gw_lint</bpmn:incoming>
       <bpmn:outgoing>lint_ok</bpmn:outgoing>
       <bpmn:outgoing>lint_retry</bpmn:outgoing>
@@ -93,9 +93,7 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
     <bpmn:sequenceFlow id="lint_ok" name="valid" sourceRef="gw_lint" targetRef="review_fragment">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=lint_status = "success"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
-    <bpmn:sequenceFlow id="lint_retry" name="redraft" sourceRef="gw_lint" targetRef="draft_fragment">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=lint_status != "success"</bpmn:conditionExpression>
-    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="lint_retry" name="redraft" sourceRef="gw_lint" targetRef="draft_fragment" />
     <bpmn:userTask id="review_fragment" name="Review extension">
       <bpmn:extensionElements>
         <zeebe:userTask />
@@ -108,7 +106,7 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
       <bpmn:outgoing>to_gw_approve</bpmn:outgoing>
     </bpmn:userTask>
     <bpmn:sequenceFlow id="to_gw_approve" sourceRef="review_fragment" targetRef="gw_approve" />
-    <bpmn:exclusiveGateway id="gw_approve" name="Approved?">
+    <bpmn:exclusiveGateway id="gw_approve" name="Approved?" default="rejected">
       <bpmn:incoming>to_gw_approve</bpmn:incoming>
       <bpmn:outgoing>approved</bpmn:outgoing>
       <bpmn:outgoing>rejected</bpmn:outgoing>
@@ -116,9 +114,7 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
     <bpmn:sequenceFlow id="approved" name="apply" sourceRef="gw_approve" targetRef="apply_extension">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=approval = "apply"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
-    <bpmn:sequenceFlow id="rejected" name="reject" sourceRef="gw_approve" targetRef="craft_rejected">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=approval != "apply"</bpmn:conditionExpression>
-    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="rejected" name="reject" sourceRef="gw_approve" targetRef="craft_rejected" />
     <bpmn:serviceTask id="apply_extension" name="Splice into the session graph">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="graph:extend" />

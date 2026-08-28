@@ -1,5 +1,5 @@
 import { build } from "esbuild";
-import { readdirSync, copyFileSync, cpSync, mkdirSync } from "node:fs";
+import { readdirSync, copyFileSync, cpSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 const common = { bundle: true, minify: true, format: "iife" };
@@ -16,6 +16,10 @@ await build({
   outfile: "static/bpmn-modeler-bundle.js",
   loader: { ".json": "json" },
 });
+
+// Wipe generated pages first: renaming a page would otherwise leave the old one
+// served alongside the new one.
+rmSync("static/pages", { recursive: true, force: true });
 
 const pagesDir = "src/studio/pages";
 const pageEntries = readdirSync(pagesDir)
