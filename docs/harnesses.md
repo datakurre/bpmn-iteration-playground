@@ -39,6 +39,15 @@ by `createHarnesses()` in `src/agent/harnesses.ts`, and -- if the studio should
 offer it from the properties panel -- an element template under
 `element_templates/`.
 
+## User tasks
+
+A `zeebe:userTask`'s answered form also has its `zeebe:ioMapping` output
+applied -- `session-skeleton.bpmn`'s `await_intent` publishes `intent`,
+`context`, and `session_done` this way -- even though a user task has no
+harness (`activity.end`'s content carries the signaled answer, which
+`engine.ts` maps the same way a harness result would be). A user task has no
+job type, so it is never routed through `createHarnesses()`.
+
 ## Retries
 
 `zeebe:taskDefinition retries="n"` sets how many times an activity's harness

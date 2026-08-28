@@ -56,7 +56,7 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
         <zeebe:ioMapping>
           <zeebe:input source="=intent" target="prompt" />
           <zeebe:input source="=lint_feedback" target="lint_feedback" />
-          <zeebe:output source="=summary" target="fragment" />
+          <zeebe:output source="=text" target="fragment" />
         </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>to_draft</bpmn:incoming>
@@ -67,6 +67,10 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
     <bpmn:serviceTask id="layout_fragment" name="Auto-layout">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="graph:layout" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=fragment" target="fragment" />
+          <zeebe:output source="=fragment" target="fragment" />
+        </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>to_layout</bpmn:incoming>
       <bpmn:outgoing>to_lint</bpmn:outgoing>
@@ -76,6 +80,7 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="graph:lint" />
         <zeebe:ioMapping>
+          <zeebe:input source="=fragment" target="fragment" />
           <zeebe:output source="=status" target="lint_status" />
           <zeebe:output source="=summary" target="lint_feedback" />
           <zeebe:output source="=attempt" target="lint_attempts" />

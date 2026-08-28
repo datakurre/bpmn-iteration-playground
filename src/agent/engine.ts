@@ -11,6 +11,7 @@ import {
   activityProperties,
   applyZeebeLoop,
   harnessOf,
+  ioMapping,
   resolveInput,
   resolveOutput,
   retriesOf,
@@ -112,11 +113,17 @@ async function callWithRetries(call: () => Promise<HarnessResult>, attempts: num
   throw lastError;
 }
 
-function makeExtension(options: RunnerOptions, activities: ActivityOutcome[]) {
-  return function harnessExtension(activity: ActivityLike & Record<string, unknown>): void {
+type RegisteredActivity = ActivityLike & Record<string, unknown>;
+
+function makeExtension(options: RunnerOptions, activities: ActivityOutcome[], byId: Map<string, RegisteredActivity>) {
+  return function harnessExtension(activity: RegisteredActivity): void {
     // Multi-instance activities carry their collection in a zeebe: extension the
     // engine does not read; translate it before anything tries to run the loop.
     applyZeebeLoop(activity);
+    // Recorded for every activity, harness-backed or not: a userTask has no
+    // Service to hook zeebe:ioMapping through, so `drive()`'s activity.end
+    // listener applies its output mapping directly, and needs the definition.
+    byId.set(activity.id, activity);
 
     const harnessName = harnessOf(activity);
     if (!harnessName) return;
@@ -190,7 +197,11 @@ function makeExtension(options: RunnerOptions, activities: ActivityOutcome[]) {
   };
 }
 
-function engineOptions(options: RunnerOptions, activities: ActivityOutcome[]): Record<string, unknown> {
+function engineOptions(
+  options: RunnerOptions,
+  activities: ActivityOutcome[],
+  byId: Map<string, RegisteredActivity>,
+): Record<string, unknown> {
   return {
     name: options.name ?? "graph-agent",
     moddleOptions: MODDLE_OPTIONS,
@@ -200,7 +211,7 @@ function engineOptions(options: RunnerOptions, activities: ActivityOutcome[]): R
     expressions: camundaExpressions(
       options.onExpressionWarning ? { onWarning: options.onExpressionWarning } : {},
     ),
-    extensions: { harness: makeExtension(options, activities) },
+    extensions: { harness: makeExtension(options, activities, byId) },
   };
 }
 
@@ -218,6 +229,26 @@ function signalPostponed(engine: EngineInstance, activityId: string, message: un
   if (target?.signal) target.signal(message);
 }
 
+/**
+ * Applies `zeebe:ioMapping` output for an activity the harness Service wrapper
+ * never touched -- a `zeebe:userTask`, chiefly. bpmn-engine has no notion of
+ * Camunda IO outside that wrapper, so a user task's answered form (the
+ * `output` bpmn-elements attaches to its `activity.end` content) would
+ * otherwise never become a named process variable: `session-skeleton.bpmn`'s
+ * `await_intent` publishes `session_done` this way, and without it `gw_more`
+ * never sees a true `session_done` and loops forever.
+ */
+function applyUnharnessedOutput(activity: RegisteredActivity | undefined, signaled: unknown): void {
+  if (!activity || harnessOf(activity)) return;
+  const outputs = ioMapping(activity).output;
+  if (outputs.length === 0) return;
+  const scope = signaled && typeof signaled === "object" ? signaled : {};
+  const environment = (activity as unknown as { environment: { output: Record<string, unknown> } }).environment;
+  for (const [key, value] of Object.entries(resolveOutput(activity, scope, feelIn))) {
+    if (value !== undefined) environment.output[key] = value;
+  }
+}
+
 /** Ids the token is currently resting on (waiting activities and running ones). */
 export function postponedIds(engine: EngineInstance): string[] {
   try {
@@ -227,12 +258,19 @@ export function postponedIds(engine: EngineInstance): string[] {
   }
 }
 
-async function drive(engine: EngineInstance, options: RunnerOptions, activities: ActivityOutcome[], start: (listener: EventEmitter) => Promise<unknown>): Promise<RunResult> {
+async function drive(
+  engine: EngineInstance,
+  options: RunnerOptions,
+  activities: ActivityOutcome[],
+  byId: Map<string, RegisteredActivity>,
+  start: (listener: EventEmitter) => Promise<unknown>,
+): Promise<RunResult> {
   const visited = new Set<string>();
   const listener = new EventEmitter();
 
-  listener.on("activity.end", (api: { id: string }) => {
+  listener.on("activity.end", (api: { id: string; content?: { output?: unknown } }) => {
     visited.add(api.id);
+    applyUnharnessedOutput(byId.get(api.id), api.content?.output);
     void options.onTokens?.(postponedIds(engine), [...visited]);
   });
   listener.on("activity.wait", (api: { id: string; signal?: (message?: unknown) => void }) => {
@@ -295,9 +333,10 @@ async function drive(engine: EngineInstance, options: RunnerOptions, activities:
 /** Start a fresh process instance from BPMN XML. */
 export async function runGraph(xml: string, options: RunnerOptions): Promise<RunResult> {
   const activities: ActivityOutcome[] = [];
+  const byId = new Map<string, RegisteredActivity>();
   const sourceContext = await toSourceContext(xml);
-  const engine = new EngineCtor({ ...engineOptions(options, activities), sourceContext });
-  return drive(engine, options, activities, (listener) => engine.execute({ listener }));
+  const engine = new EngineCtor({ ...engineOptions(options, activities, byId), sourceContext });
+  return drive(engine, options, activities, byId, (listener) => engine.execute({ listener }));
 }
 
 /**
@@ -306,10 +345,11 @@ export async function runGraph(xml: string, options: RunnerOptions): Promise<Run
  */
 export async function resumeGraph(state: EngineState, xml: string, options: RunnerOptions): Promise<RunResult> {
   const activities: ActivityOutcome[] = [];
+  const byId = new Map<string, RegisteredActivity>();
   const engine = await recoverWithGraph(EngineCtor, state, xml, {
     ...(options.name === undefined ? {} : { name: options.name }),
     ...(options.variables ? { variables: options.variables } : {}),
-    engineOptions: engineOptions(options, activities),
+    engineOptions: engineOptions(options, activities, byId),
   });
-  return drive(engine, options, activities, (listener) => engine.resume({ listener }));
+  return drive(engine, options, activities, byId, (listener) => engine.resume({ listener }));
 }
