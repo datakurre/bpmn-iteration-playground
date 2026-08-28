@@ -13,6 +13,7 @@ import {
   harnessOf,
   resolveInput,
   resolveOutput,
+  retriesOf,
   type ActivityLike,
 } from "./zeebe.ts";
 import { camundaExpressions, evaluateFeel } from "./expressions.ts";
@@ -93,6 +94,24 @@ export interface RunResult {
 const feelIn = (expression: string, scope: Record<string, unknown>): unknown =>
   evaluateFeel(expression, { environment: { variables: scope, output: {} }, content: {} });
 
+/**
+ * Retries a harness call on a thrown/rejected error only -- a job failure in C8
+ * terms. A harness that *returns* `status: "failed"` is a business error the
+ * graph routes on with a gateway, and retrying it would just run it again
+ * unconditionally; that path is untouched.
+ */
+async function callWithRetries(call: () => Promise<HarnessResult>, attempts: number): Promise<HarnessResult> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await call();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
 function makeExtension(options: RunnerOptions, activities: ActivityOutcome[]) {
   return function harnessExtension(activity: ActivityLike & Record<string, unknown>): void {
     // Multi-instance activities carry their collection in a zeebe: extension the
@@ -104,6 +123,10 @@ function makeExtension(options: RunnerOptions, activities: ActivityOutcome[]) {
 
     const implementation = options.harnesses[harnessName];
     const properties = activityProperties(activity);
+    // zeebe:taskDefinition retries="n" is a count of attempts, not extra retries
+    // on top of the first: no attribute (or retries="0") means the current
+    // one-shot behaviour, retries="3" means up to three tries before giving up.
+    const attempts = Math.max(1, retriesOf(activity) ?? 1);
 
     const environment = (activity as unknown as { environment: { variables: Record<string, unknown>; output: Record<string, unknown> } })
       .environment;
@@ -136,7 +159,7 @@ function makeExtension(options: RunnerOptions, activities: ActivityOutcome[]) {
             ...(options.signal ? { signal: options.signal } : {}),
           };
 
-          void implementation(context).then(
+          void callWithRetries(() => implementation(context), attempts).then(
             (result) => {
               // Publish camunda:outputParameter / camunda:resultVariable before the
               // token leaves, so the next gateway sees the values.

@@ -81,7 +81,13 @@ export function harnessOf(activity: ActivityLike): string | undefined {
   return extensionValues(activity, "zeebe:TaskDefinition")[0]?.type;
 }
 
-/** How many times C8 would retry the job. Recorded, not yet enforced. */
+/**
+ * How many times a job may be attempted before its activity fails the run.
+ * Enforced in `engine.ts`'s `makeExtension` for a harness call that throws or
+ * rejects -- a job failure, in C8 terms -- never for one that returns
+ * `status: "failed"`, which is a business error the graph routes on with a
+ * gateway instead.
+ */
 export function retriesOf(activity: ActivityLike): number | undefined {
   const raw = extensionValues(activity, "zeebe:TaskDefinition")[0]?.retries;
   if (raw === undefined) return undefined;

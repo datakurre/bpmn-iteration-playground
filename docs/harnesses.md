@@ -38,3 +38,13 @@ Adding a new job type means adding an entry to the `HarnessRegistry` returned
 by `createHarnesses()` in `src/agent/harnesses.ts`, and -- if the studio should
 offer it from the properties panel -- an element template under
 `element_templates/`.
+
+## Retries
+
+`zeebe:taskDefinition retries="n"` sets how many times an activity's harness
+call may be attempted before the run fails: no attribute (or `retries="0"`)
+is one attempt, `retries="3"` is up to three. This only ever retries a
+harness call that **throws or rejects** -- a job failure, in C8 terms. A
+harness that *returns* `{ status: "failed", ... }` (via the `failed()`
+helper in `src/agent/harness.ts`) is a business error the graph is expected
+to route on with a gateway, and is never retried regardless of `retries`.
