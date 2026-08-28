@@ -9,6 +9,7 @@ import { Engine } from "bpmn-engine";
 import { EventEmitter } from "node:events";
 import {
   activityProperties,
+  applyZeebeLoop,
   harnessOf,
   resolveInput,
   resolveOutput,
@@ -94,6 +95,10 @@ const feelIn = (expression: string, scope: Record<string, unknown>): unknown =>
 
 function makeExtension(options: RunnerOptions, activities: ActivityOutcome[]) {
   return function harnessExtension(activity: ActivityLike & Record<string, unknown>): void {
+    // Multi-instance activities carry their collection in a zeebe: extension the
+    // engine does not read; translate it before anything tries to run the loop.
+    applyZeebeLoop(activity);
+
     const harnessName = harnessOf(activity);
     if (!harnessName) return;
 

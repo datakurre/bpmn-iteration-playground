@@ -97,11 +97,10 @@ and the model is invited to re-issue them.</bpmn:documentation>
 Pi's toolExecution setting; the default there is parallel.</bpmn:documentation>
       <bpmn:incoming>not_truncated</bpmn:incoming>
       <bpmn:outgoing>batch_done</bpmn:outgoing>
-      <bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
         <bpmn:extensionElements>
           <zeebe:loopCharacteristics inputCollection="=tool_calls" inputElement="tool_call" outputCollection="tool_results" outputElement="=tool_result" />
         </bpmn:extensionElements>
-        <bpmn:inputDataItem name="tool_call" />
       </bpmn:multiInstanceLoopCharacteristics>
       <bpmn:startEvent id="tool_start" name="Start">
         <bpmn:outgoing>to_tool</bpmn:outgoing>

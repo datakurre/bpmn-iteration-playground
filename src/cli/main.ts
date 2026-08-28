@@ -1,7 +1,10 @@
 import { parseArgs } from "node:util";
 import { copyFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { startStudio } from "../studio/server.ts";
+import { graphPath, startStudio } from "../studio/server.ts";
+import { resumeSession, runSession } from "../agent/runner.ts";
+import { createPiToolExecutor } from "../agent/tool-executor.ts";
+import { dryRunModel, resolveModel } from "./model.ts";
 import { listSessions, SessionStore } from "../agent/session-store.ts";
 import {
   bundledWorkflowsDir,
@@ -32,6 +35,10 @@ Graphs live in your user config directory and are shared across projects.
 Sessions live in your user state directory and record the project they ran in.
 
 Options
+  --graph <id>         graph to run (default: pi-default-loop)
+  --model <spec>       provider/model to use (default: the first configured)
+  --dry-run            walk the graph without calling a model
+  --name <name>        label the session
   --port <n>           studio port (0 picks a free one)
   --all                with ls, include sessions from other projects
   -h, --help           show this help
@@ -62,11 +69,9 @@ export async function main(argv: string[]): Promise<number> {
     case "show":
       return cmdShow(argv[1]);
     case "run":
+      return cmdRun(argv.slice(1));
     case "resume":
-    case "lint":
-    case "layout":
-      process.stderr.write(`graph-agent: '${command}' is not wired up yet\n`);
-      return 2;
+      return cmdResume(argv.slice(1));
     default:
       process.stderr.write(`graph-agent: unknown command '${command}'\n\n${USAGE}`);
       return 2;
@@ -156,6 +161,119 @@ async function cmdStudio(args: string[]): Promise<number> {
     process.once("SIGTERM", stop);
   });
   return 0;
+}
+
+interface RunFlags {
+  graph: string;
+  model?: string;
+  dryRun: boolean;
+  name?: string;
+  positionals: string[];
+}
+
+function runFlags(args: string[]): RunFlags {
+  const { values, positionals } = parseArgs({
+    args,
+    options: {
+      graph: { type: "string", default: "pi-default-loop" },
+      model: { type: "string" },
+      "dry-run": { type: "boolean", default: false },
+      name: { type: "string" },
+    },
+    allowPositionals: true,
+    strict: false,
+  });
+  return {
+    graph: String(values.graph ?? "pi-default-loop"),
+    ...(values.model === undefined ? {} : { model: String(values.model) }),
+    dryRun: values["dry-run"] === true,
+    ...(values.name === undefined ? {} : { name: String(values.name) }),
+    positionals: positionals.map(String),
+  };
+}
+
+async function resolveRunModel(flags: RunFlags): Promise<Awaited<ReturnType<typeof resolveModel>>> {
+  return flags.dryRun ? dryRunModel() : resolveModel(flags.model);
+}
+
+async function cmdRun(args: string[]): Promise<number> {
+  const p = requirePaths();
+  if (!p) return 1;
+  const flags = runFlags(args);
+  const project = projectId();
+
+  const graphFile = graphPath(p, flags.graph);
+  if (!graphFile) {
+    process.stderr.write(`graph-agent: no graph named '${flags.graph}' in ${p.workflowsDir}\n`);
+    return 1;
+  }
+
+  let chosen;
+  try {
+    chosen = await resolveRunModel(flags);
+  } catch (error) {
+    process.stderr.write(`graph-agent: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+
+  process.stdout.write(`graph  ${flags.graph}\nmodel  ${chosen.label}\n\n`);
+
+  const result = await runSession({
+    paths: p,
+    project,
+    graphPath: graphFile,
+    prompt: flags.positionals.join(" "),
+    ...(flags.name === undefined ? {} : { name: flags.name }),
+    model: chosen.model,
+    systemPrompt: "",
+    streamFn: chosen.streamFn,
+    tools: createPiToolExecutor(project),
+    onProgress: (line) => process.stdout.write(`  ${line}\n`),
+  });
+
+  process.stdout.write(`\nsession ${result.sessionId}  ${result.outcome}  ${result.turns} turn(s)\n`);
+  if (result.error) {
+    process.stderr.write(`error: ${result.error.message}\n`);
+    return 1;
+  }
+  return 0;
+}
+
+async function cmdResume(args: string[]): Promise<number> {
+  const p = requirePaths();
+  if (!p) return 1;
+  const flags = runFlags(args);
+  const sessionId = flags.positionals[0];
+  if (!sessionId) {
+    process.stderr.write("graph-agent: resume requires a session id\n");
+    return 2;
+  }
+
+  let chosen;
+  try {
+    chosen = await resolveRunModel(flags);
+  } catch (error) {
+    process.stderr.write(`graph-agent: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+
+  try {
+    const result = await resumeSession({
+      paths: p,
+      project: projectId(),
+      sessionId,
+      model: chosen.model,
+      systemPrompt: "",
+      streamFn: chosen.streamFn,
+      tools: createPiToolExecutor(projectId()),
+      onProgress: (line) => process.stdout.write(`  ${line}\n`),
+    });
+    process.stdout.write(`\nsession ${result.sessionId}  ${result.outcome}  ${result.turns} turn(s)\n`);
+    return result.error ? 1 : 0;
+  } catch (error) {
+    process.stderr.write(`graph-agent: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
 }
 
 function cmdLs(all: boolean): number {

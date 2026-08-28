@@ -1,0 +1,76 @@
+/**
+ * Running the tools the model asked for.
+ *
+ * These are Pi's own built-in tools, executed here rather than inside Pi's loop
+ * so that the graph decides whether each call happens at all. Pi still records
+ * the result: see PiSession, where each tool call parks until this returns.
+ */
+import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-agent-core";
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+import type { ToolOutcome } from "./pi-session.ts";
+
+export interface ToolExecutor {
+  /** Tool names the model may call. */
+  names(): string[];
+  run(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolOutcome>;
+}
+
+interface HarnessToolLike {
+  name: string;
+  execute(
+    toolCallId: string,
+    params: unknown,
+    signal: AbortSignal | undefined,
+    onUpdate: undefined,
+    context: unknown,
+  ): Promise<{ content?: Array<{ type: string; text?: string }>; terminate?: boolean }>;
+}
+
+/** Pi's built-in tools against the real filesystem and shell, rooted at `cwd`. */
+export function createPiToolExecutor(cwd: string): ToolExecutor {
+  const env = new NodeExecutionEnv({ cwd });
+  const context = { env, cwd };
+  const tools = new Map<string, HarnessToolLike>(
+    (
+      [
+        createReadTool(),
+        createWriteTool(),
+        createEditTool(),
+        createBashTool(),
+      ] as unknown as HarnessToolLike[]
+    ).map((tool) => [tool.name, tool]),
+  );
+
+  return {
+    names: () => [...tools.keys()],
+    async run(name, args, signal) {
+      const tool = tools.get(name);
+      if (!tool) {
+        return { content: `No tool named '${name}' is available.`, isError: true };
+      }
+      try {
+        const result = await tool.execute(`graph:${name}`, args, signal, undefined, context);
+        return {
+          content: (result.content ?? [])
+            .filter((block) => block.type === "text")
+            .map((block) => block.text ?? "")
+            .join("\n"),
+          ...(result.terminate === true ? { terminate: true } : {}),
+        };
+      } catch (error) {
+        return {
+          content: error instanceof Error ? error.message : String(error),
+          isError: true,
+        };
+      }
+    },
+  };
+}
+
+/** An executor that runs nothing, for dry runs and tests. */
+export function createNoopToolExecutor(names: string[] = ["read", "bash"]): ToolExecutor {
+  return {
+    names: () => names,
+    run: async (name, args) => ({ content: `[dry run] ${name} ${JSON.stringify(args)}` }),
+  };
+}

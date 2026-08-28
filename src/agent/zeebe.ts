@@ -109,6 +109,62 @@ export function activityProperties(activity: ActivityLike): Record<string, strin
   return out;
 }
 
+export interface ZeebeLoop {
+  /** FEEL expression yielding the collection to loop over. */
+  inputCollection?: string;
+  /** Name each item is bound to inside an instance. */
+  inputElement?: string;
+  outputCollection?: string;
+  outputElement?: string;
+}
+
+/**
+ * `zeebe:loopCharacteristics` on a multi-instance activity.
+ *
+ * bpmn-elements does not read it -- it wants `collection` and `elementVariable`
+ * on the loop behaviour, and a parallel multi-instance loop with neither those
+ * nor a cardinality fails outright with "cardinality or collection is required".
+ * `applyZeebeLoop` below bridges the two so diagrams stay plain Camunda 8.
+ */
+export function loopCharacteristics(activity: ActivityLike): ZeebeLoop | undefined {
+  // moddle-context-serializer re-wraps every element as { type, behaviour },
+  // so the loop's own extension elements sit one level deeper than the raw
+  // moddle tree would suggest.
+  const element = (loopBehaviour(activity)?.extensionElements?.values ?? []).find(
+    (v) => v.$type === "zeebe:LoopCharacteristics",
+  ) as (ExtensionElementValue & ZeebeLoop) | undefined;
+  if (!element) return undefined;
+  return {
+    ...(element.inputCollection === undefined ? {} : { inputCollection: element.inputCollection }),
+    ...(element.inputElement === undefined ? {} : { inputElement: element.inputElement }),
+    ...(element.outputCollection === undefined ? {} : { outputCollection: element.outputCollection }),
+    ...(element.outputElement === undefined ? {} : { outputElement: element.outputElement }),
+  };
+}
+
+/**
+ * Translate a Camunda 8 loop declaration into the `collection` /
+ * `elementVariable` behaviour bpmn-elements resolves at execution time.
+ */
+export function applyZeebeLoop(activity: ActivityLike): void {
+  const loop = loopCharacteristics(activity);
+  const behaviour = loopBehaviour(activity);
+  if (!loop?.inputCollection || !behaviour) return;
+  behaviour.collection = loop.inputCollection;
+  if (loop.inputElement) behaviour.elementVariable = loop.inputElement;
+}
+
+interface LoopBehaviour {
+  extensionElements?: { values?: ExtensionElementValue[] };
+  collection?: string;
+  elementVariable?: string;
+}
+
+function loopBehaviour(activity: ActivityLike): LoopBehaviour | undefined {
+  const loop = (activity.behaviour as { loopCharacteristics?: { behaviour?: LoopBehaviour } }).loopCharacteristics;
+  return loop?.behaviour;
+}
+
 export function formDefinition(activity: ActivityLike): ZeebeFormDefinition | undefined {
   const element = extensionValues(activity, "zeebe:FormDefinition")[0];
   if (!element) return undefined;
