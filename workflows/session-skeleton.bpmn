@@ -25,6 +25,12 @@ matches a snapshot to a graph on that id.</bpmn:documentation>
       "type": "textarea",
       "key": "context",
       "id": "context"
+    },
+    {
+      "label": "End the session instead",
+      "type": "checkbox",
+      "key": "done",
+      "id": "done"
     }
   ],
   "type": "default",
@@ -43,6 +49,7 @@ matches a snapshot to a graph on that id.</bpmn:documentation>
         <zeebe:ioMapping>
           <zeebe:output source="=intent" target="intent" />
           <zeebe:output source="=context" target="context" />
+          <zeebe:output source="=done" target="session_done" />
         </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>to_intent</bpmn:incoming>

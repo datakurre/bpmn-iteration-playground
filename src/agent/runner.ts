@@ -9,6 +9,8 @@
  */
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { indexLibrary, linkGraph } from "./link.ts";
+import { bundledWorkflowsDir, listBpmnFiles } from "./paths.ts";
 import { runGraph, resumeGraph, type RunResult } from "./engine.ts";
 import { createHarnesses } from "./harnesses.ts";
 import { PiSession } from "./pi-session.ts";
@@ -33,6 +35,12 @@ export interface RunSessionOptions {
   sessionId?: string;
   /** Emitted as the run progresses, for the CLI to print. */
   onProgress?: (line: string) => void;
+  /**
+   * Called when the graph parks on a human gate -- a user task, a receive task.
+   * Return a payload to answer it and let the run continue, or undefined to stop
+   * with a snapshot so it can be resumed once someone answers.
+   */
+  onWait?: (activityId: string) => Promise<unknown> | unknown;
 }
 
 export interface SessionOutcome {
@@ -51,10 +59,34 @@ export async function runSession(options: RunSessionOptions): Promise<SessionOut
   const store = new SessionStore(options.paths, sessionId);
   if (!store.exists()) store.create(options.project, options.name);
 
-  const graph = readFileSync(options.graphPath, "utf8");
-  store.appendGraph(graph, `started from ${options.graphPath}`, []);
+  // Resolve callActivity targets from the shared library before the session owns
+  // the graph: bpmn-elements only finds a called process inside the same
+  // definition. Revision 0 is therefore the linked graph, which is what makes the
+  // session self-contained and its recovery safe.
+  const source = readFileSync(options.graphPath, "utf8");
+  const linked = await linkGraph(source, await libraryIndex(options.paths));
+  for (const target of linked.dynamic) {
+    options.onProgress?.(`  note: calledElement '${target}' is an expression and cannot be linked ahead of the run`);
+  }
+  const reason =
+    linked.linked.length > 0
+      ? `started from ${options.graphPath}, linked ${linked.linked.join(", ")}`
+      : `started from ${options.graphPath}`;
+  store.appendGraph(linked.xml, reason, []);
 
-  return drive(store, options, (harnessOptions) => runGraph(store.currentGraph() ?? graph, harnessOptions));
+  return drive(store, options, (harnessOptions) => runGraph(store.currentGraph() ?? linked.xml, harnessOptions));
+}
+
+/**
+ * The graphs a session may call: the user's library, with the bundled graphs
+ * behind it so a user copy shadows a built-in of the same process id.
+ */
+async function libraryIndex(paths: Paths) {
+  const files = [...listBpmnFiles(bundledWorkflowsDir()), ...listBpmnFiles(paths.workflowsDir)].map((file) => ({
+    source: file.path,
+    xml: readFileSync(file.path, "utf8"),
+  }));
+  return indexLibrary(files);
 }
 
 export interface ResumeSessionOptions extends Omit<RunSessionOptions, "graphPath" | "prompt" | "name"> {
@@ -127,6 +159,7 @@ async function drive(
         meta.visited = visited;
       });
     },
+    ...(options.onWait === undefined ? {} : { onWait: options.onWait }),
     onExpressionWarning: (warning) => {
       options.onProgress?.(`  FEEL warning: ${warning.message} in ${warning.expression}`);
     },

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, beforeEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxProvider, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
@@ -117,6 +117,91 @@ describe("runSession on the built-in loop", () => {
     expect(result.outcome).toBe("completed");
     const detail = new SessionStore(paths, result.sessionId).detail();
     expect(detail.turns[0]?.stopReason).toBe("error");
+  });
+});
+
+describe("callActivity into the shared library", () => {
+  /** A caller and a callee that live in two different files, as they would. */
+  const NS =
+    'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"';
+
+  const caller = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_caller" ${NS}>
+  <bpmn:process id="caller" isExecutable="true">
+    <bpmn:startEvent id="k_start"><bpmn:outgoing>kf1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="kf1" sourceRef="k_start" targetRef="k_call" />
+    <bpmn:callActivity id="k_call" name="Delegate" calledElement="helper">
+      <bpmn:incoming>kf1</bpmn:incoming><bpmn:outgoing>kf2</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:sequenceFlow id="kf2" sourceRef="k_call" targetRef="k_end" />
+    <bpmn:endEvent id="k_end"><bpmn:incoming>kf2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+
+  const helper = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_helper" ${NS}>
+  <bpmn:process id="helper" isExecutable="true">
+    <bpmn:startEvent id="h_start"><bpmn:outgoing>hf1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="hf1" sourceRef="h_start" targetRef="h_turn" />
+    <bpmn:serviceTask id="h_turn" name="Helper turn">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="agent:turn" />
+        <zeebe:ioMapping><zeebe:input source="=prompt" target="prompt" /></zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>hf1</bpmn:incoming><bpmn:outgoing>hf2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="hf2" sourceRef="h_turn" targetRef="h_end" />
+    <bpmn:endEvent id="h_end"><bpmn:incoming>hf2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+
+  function libraryWith(files: Record<string, string>): void {
+    for (const [name, xml] of Object.entries(files)) {
+      writeFileSync(join(paths.workflowsDir, name), xml);
+    }
+  }
+
+  it("runs a process that lives in another file in the library", async () => {
+    // bpmn-elements resolves calledElement only within one definition, so
+    // without linking this call would park forever instead of running.
+    libraryWith({ "caller.bpmn": caller, "helper.bpmn": helper });
+    const faux = scripted([fauxAssistantMessage([fauxText("helped")], { stopReason: "stop" })]);
+    const result = await runSession(
+      options(faux, { graphPath: join(paths.workflowsDir, "caller.bpmn"), prompt: "delegate this" }),
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.outcome).toBe("completed");
+
+    const detail = new SessionStore(paths, result.sessionId).detail();
+    // the callee's own activity ran, so the call resolved across files
+    expect(detail.visited).toContain("h_turn");
+    expect(detail.turns[0]?.activityId).toBe("h_turn");
+    expect(detail.revisions[0]?.reason).toMatch(/linked helper/);
+  });
+
+  it("stores the linked graph with the callee marked non-executable", async () => {
+    // Left executable, the callee is auto-started as a top-level process as well
+    // as being called, and its body runs twice.
+    libraryWith({ "caller.bpmn": caller, "helper.bpmn": helper });
+    const faux = scripted([fauxAssistantMessage([fauxText("helped")], { stopReason: "stop" })]);
+    const result = await runSession(
+      options(faux, { graphPath: join(paths.workflowsDir, "caller.bpmn"), prompt: "go" }),
+    );
+
+    const detail = new SessionStore(paths, result.sessionId).detail();
+    expect(detail.graph).toMatch(/<bpmn:process id="helper"[^>]*isExecutable="false"/);
+    expect(detail.graph).toMatch(/<bpmn:process id="caller"[^>]*isExecutable="true"/);
+    // the helper ran exactly once, not once as a root and once through the call
+    expect(detail.turns).toHaveLength(1);
+  });
+
+  it("refuses to start when a calledElement is not in the library", async () => {
+    libraryWith({ "caller.bpmn": caller });
+    const faux = scripted([fauxAssistantMessage([fauxText("x")], { stopReason: "stop" })]);
+    await expect(
+      runSession(options(faux, { graphPath: join(paths.workflowsDir, "caller.bpmn"), prompt: "go" })),
+    ).rejects.toThrow(/no graph in the library defines a process 'helper'/);
   });
 });
 

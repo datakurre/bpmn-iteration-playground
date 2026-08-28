@@ -54,10 +54,9 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
           <zeebe:header key="agent_role" value="graph_architect" />
         </zeebe:taskHeaders>
         <zeebe:ioMapping>
-          <zeebe:input source="=intent" target="intent" />
-          <zeebe:input source="=current_graph" target="current_graph" />
+          <zeebe:input source="=intent" target="prompt" />
           <zeebe:input source="=lint_feedback" target="lint_feedback" />
-          <zeebe:output source="=fragment" target="fragment" />
+          <zeebe:output source="=summary" target="fragment" />
         </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>to_draft</bpmn:incoming>
@@ -79,6 +78,7 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
         <zeebe:ioMapping>
           <zeebe:output source="=status" target="lint_status" />
           <zeebe:output source="=summary" target="lint_feedback" />
+          <zeebe:output source="=attempt" target="lint_attempts" />
         </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>to_lint</bpmn:incoming>
@@ -86,12 +86,18 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
     </bpmn:serviceTask>
     <bpmn:sequenceFlow id="to_gw_lint" sourceRef="lint_fragment" targetRef="gw_lint" />
     <bpmn:exclusiveGateway id="gw_lint" name="Fragment valid?" default="lint_retry">
+      <bpmn:documentation>Flows are evaluated in order, and the default is taken only when none
+matched: valid first, then out of attempts, then redraft.</bpmn:documentation>
       <bpmn:incoming>to_gw_lint</bpmn:incoming>
       <bpmn:outgoing>lint_ok</bpmn:outgoing>
+      <bpmn:outgoing>lint_exhausted</bpmn:outgoing>
       <bpmn:outgoing>lint_retry</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="lint_ok" name="valid" sourceRef="gw_lint" targetRef="review_fragment">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=lint_status = "success"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="lint_exhausted" name="give up" sourceRef="gw_lint" targetRef="craft_rejected">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=lint_attempts != null and lint_attempts &gt;= 3</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="lint_retry" name="redraft" sourceRef="gw_lint" targetRef="draft_fragment" />
     <bpmn:userTask id="review_fragment" name="Review extension">
@@ -132,6 +138,7 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
     </bpmn:endEvent>
     <bpmn:endEvent id="craft_rejected" name="Extension rejected">
       <bpmn:incoming>rejected</bpmn:incoming>
+      <bpmn:incoming>lint_exhausted</bpmn:incoming>
     </bpmn:endEvent>
   </bpmn:process>
   <bpmndi:BPMNDiagram id="BPMNDiagram_craft_graph">
@@ -185,6 +192,11 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
       <bpmndi:BPMNEdge id="lint_ok_di" bpmnElement="lint_ok">
         <di:waypoint x="700" y="70" />
         <di:waypoint x="775" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="lint_exhausted_di" bpmnElement="lint_exhausted">
+        <di:waypoint x="675" y="95" />
+        <di:waypoint x="675" y="210" />
+        <di:waypoint x="1107" y="210" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="lint_retry_di" bpmnElement="lint_retry">
         <di:waypoint x="675" y="95" />

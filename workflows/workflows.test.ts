@@ -153,6 +153,36 @@ describe.each(files)("%s", (file) => {
     }
   });
 
+  it("has something produce every variable its gateways route on", async () => {
+    // batch_terminate was read by a gateway that nothing ever wrote, so the
+    // branch was dead; session_done was the same bug in another graph. Checking
+    // only one graph missed the second, so this runs over all of them.
+    const elements = await elementsOf(file);
+    const produced = new Set<string>(["prompt"]);
+    for (const element of elements) {
+      const io = element.extensionElements?.values?.find((v) => v.$type === "zeebe:IoMapping") as
+        | { outputParameters?: Array<{ target?: string }> }
+        | undefined;
+      for (const out of io?.outputParameters ?? []) if (out.target) produced.add(out.target);
+    }
+    const read = new Set<string>();
+    for (const flow of elements.filter((e) => e.$type === "bpmn:SequenceFlow")) {
+      const body = (flow.conditionExpression as { body?: string } | undefined)?.body;
+      if (!body) continue;
+      // Strip string literals first, or `stop_reason = "error"` reads as a
+      // reference to a variable called `error`.
+      const withoutLiterals = body.replace(/"[^"]*"/g, '""');
+      for (const name of withoutLiterals.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
+        const word = name[0];
+        if (["and", "or", "not", "true", "false", "null", "count", "in", "if", "then", "else"].includes(word)) continue;
+        read.add(word);
+      }
+    }
+    for (const name of read) {
+      expect(produced.has(name), `gateways route on '${name}' but nothing publishes it`).toBe(true);
+    }
+  });
+
   it("uses no Camunda 7 extension elements", () => {
     const xml = readFileSync(join(DIR, file), "utf8");
     expect(xml).not.toMatch(/<camunda:/);
@@ -250,32 +280,4 @@ describe("pi-default-loop.bpmn is faithful to runLoop()", () => {
     expect(io?.inputParameters?.some((p) => p.target === "prompt")).toBe(true);
   });
 
-  it("has something produce every variable a gateway routes on", async () => {
-    // batch_terminate was read by a gateway that nothing ever wrote to, so the
-    // early-exit branch was dead. Every routing variable needs a producer.
-    const elements = await elementsOf("pi-default-loop.bpmn");
-    const produced = new Set<string>(["prompt"]);
-    for (const element of elements) {
-      const io = element.extensionElements?.values?.find((v) => v.$type === "zeebe:IoMapping") as
-        | { outputParameters?: Array<{ target?: string }> }
-        | undefined;
-      for (const out of io?.outputParameters ?? []) if (out.target) produced.add(out.target);
-    }
-    const read = new Set<string>();
-    for (const flow of elements.filter((e) => e.$type === "bpmn:SequenceFlow")) {
-      const body = (flow.conditionExpression as { body?: string } | undefined)?.body;
-      if (!body) continue;
-      // Strip string literals first, or `stop_reason = "error"` reads as a
-      // reference to a variable called `error`.
-      const withoutLiterals = body.replace(/"[^"]*"/g, '""');
-      for (const name of withoutLiterals.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
-        const word = name[0];
-        if (["and", "or", "not", "true", "false", "null", "count", "in", "if", "then", "else"].includes(word)) continue;
-        read.add(word);
-      }
-    }
-    for (const name of read) {
-      expect(produced.has(name), `gateways route on '${name}' but nothing publishes it`).toBe(true);
-    }
-  });
 });

@@ -135,13 +135,21 @@ export class PiSession {
    * before its tool calls run, because running them is the graph's job.
    */
   async beginTurn(prompt?: string): Promise<TurnOutcome> {
-    if (this.run) throw new Error("a turn is already in flight");
+    // A graph that never calls tools has no reason to know about batch
+    // collection, so a previous run that has nothing left to wait for is settled
+    // here rather than making every graph pair `agent:turn` with
+    // `agent:collect-tools`. A run with tool calls still parked is genuinely in
+    // flight and must not be trampled.
+    if (this.run && this.parked.size === 0) await this.endTurn();
+    if (this.run) throw new Error("a turn is already in flight with unanswered tool calls");
     this.lastBatch = [];
     this.runError = null;
 
+    let sawAssistant = false;
     const settled = new Promise<AssistantMessage>((resolve) => {
       const unsubscribe = this.agent.subscribe((event) => {
         if (event.type === "message_end" && event.message.role === "assistant") {
+          sawAssistant = true;
           unsubscribe();
           resolve(event.message as AssistantMessage);
         }
@@ -158,7 +166,21 @@ export class PiSession {
       this.runError = error;
     });
 
-    const message = await settled;
+    // A run can fail before the model ever speaks -- continuing an empty
+    // transcript, for instance. Waiting only on the assistant message would hang
+    // forever, so race it against the run finishing.
+    const message = await Promise.race([
+      settled,
+      this.run.then(() => {
+        if (sawAssistant) return settled;
+        this.run = null;
+        const cause = this.runError;
+        this.runError = null;
+        throw cause instanceof Error
+          ? cause
+          : new Error(cause ? String(cause) : "the turn ended without a response from the model");
+      }),
+    ]);
     const stopReason = String(message.stopReason ?? "stop");
     const toolCalls = message.content
       .filter((block): block is Extract<typeof block, { type: "toolCall" }> => block.type === "toolCall")

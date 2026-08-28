@@ -38,7 +38,14 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
 
   const agentTurn: Harness = async (context) => {
     const prompt = context.input.prompt;
-    const outcome = await pi.beginTurn(typeof prompt === "string" && prompt.length > 0 ? prompt : undefined);
+    const text = typeof prompt === "string" && prompt.length > 0 ? prompt : undefined;
+    if (text === undefined && pi.messages.length === 0) {
+      return failed(
+        `${context.activityId} starts a turn with nothing to say: map a 'prompt' input, ` +
+          `or place it after an activity that has already spoken.`,
+      );
+    }
+    const outcome = await pi.beginTurn(text);
     currentToolCalls = outcome.toolCalls;
 
     const record: TurnRecord = {
@@ -136,16 +143,22 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
       }
     },
 
+    /**
+     * Reports `attempt` so the crafting graph can bound its redraft loop: a
+     * model that never produces a valid fragment would otherwise loop forever,
+     * spending a turn each time round.
+     */
     "graph:lint": async (context) => {
+      const attempt = Number(context.variables.lint_attempts ?? 0) + 1;
       const fragment = String(context.input.fragment ?? "");
-      if (!fragment) return failed("nothing to lint");
+      if (!fragment) return failed("nothing to lint", { attempt });
       try {
         const splice = await checkSplice(deps.getGraph(), fragment);
         return splice.ok
-          ? ok(`adds ${splice.added.length} element(s)`, { added: splice.added })
-          : failed(splice.reason ?? "the fragment is not an additive splice");
+          ? ok(`adds ${splice.added.length} element(s)`, { added: splice.added, attempt })
+          : failed(splice.reason ?? "the fragment is not an additive splice", { attempt });
       } catch (error) {
-        return failed(`the fragment is not valid BPMN: ${message(error)}`);
+        return failed(`the fragment is not valid BPMN: ${message(error)}`, { attempt });
       }
     },
 

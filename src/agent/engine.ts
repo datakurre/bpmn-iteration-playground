@@ -181,6 +181,20 @@ function engineOptions(options: RunnerOptions, activities: ActivityOutcome[]): R
   };
 }
 
+function isPromise(value: unknown): value is Promise<unknown> {
+  return typeof (value as { then?: unknown } | null)?.then === "function";
+}
+
+/** Answer a parked activity by looking up a live api for it. */
+function signalPostponed(engine: EngineInstance, activityId: string, message: unknown): void {
+  const postponed = (engine.execution?.getPostponed() ?? []) as Array<{
+    id: string;
+    signal?: (message?: unknown) => void;
+  }>;
+  const target = postponed.find((activity) => activity.id === activityId);
+  if (target?.signal) target.signal(message);
+}
+
 /** Ids the token is currently resting on (waiting activities and running ones). */
 export function postponedIds(engine: EngineInstance): string[] {
   try {
@@ -198,16 +212,31 @@ async function drive(engine: EngineInstance, options: RunnerOptions, activities:
     visited.add(api.id);
     void options.onTokens?.(postponedIds(engine), [...visited]);
   });
-  listener.on("activity.wait", (api: { id: string }) => {
+  listener.on("activity.wait", (api: { id: string; signal?: (message?: unknown) => void }) => {
     void options.onTokens?.(postponedIds(engine), [...visited]);
-    void (async () => {
-      const answer = await options.onWait?.(api.id);
-      if (answer !== undefined) {
-        engine.execution?.signal({ id: api.id, ...(answer as Record<string, unknown>) });
+
+    const answer = options.onWait?.(api.id);
+
+    // The api handed to a listener is only good for the duration of that event.
+    // A synchronous answer can use it directly; anything awaited has to re-acquire
+    // a live api from the postponed set, or the signal lands on a stale one and
+    // the activity simply never wakes up.
+    if (answer !== undefined && !isPromise(answer)) {
+      api.signal?.(answer);
+      return;
+    }
+    if (answer === undefined) {
+      if (options.stopOnWait !== false) void engine.stop();
+      return;
+    }
+
+    void answer.then((resolved) => {
+      if (resolved === undefined) {
+        if (options.stopOnWait !== false) void engine.stop();
         return;
       }
-      if (options.stopOnWait !== false) void engine.stop();
-    })();
+      signalPostponed(engine, api.id, resolved);
+    });
   });
 
   const ended = engine.waitFor("end").then(() => "completed" as const);
