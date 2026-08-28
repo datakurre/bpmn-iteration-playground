@@ -2,30 +2,56 @@ import { $, escapeHtml } from "../../js/lib/dom";
 import { fitDiagram, wireZoomControls } from "../../js/lib/bpmn-viewer-controls";
 import type { BpmnDiagramInstance } from "../../js/lib/bpmn-types";
 import { connectStudioEvents } from "./live";
+import { mountShell, statusChip } from "./shell";
 import type { SessionDetail, TurnRecord } from "../types";
 
 let viewer: BpmnDiagramInstance | null = null;
 let renderedGraph: string | null = null;
+let markedElements: Array<{ id: string; marker: string }> = [];
 
 const sessionId = new URLSearchParams(location.search).get("id") ?? "";
 
-function markers(detail: SessionDetail): void {
+/**
+ * Where the token stands, and where it has been. Markers are cleared first: the
+ * graph mutates between revisions, so yesterday's markers may point at elements
+ * that no longer exist.
+ */
+function paintTokens(detail: SessionDetail): void {
   if (!viewer) return;
   const canvas = viewer.get("canvas");
-  for (const id of detail.visited) {
+  for (const { id, marker } of markedElements) {
     try {
-      canvas.addMarker(id, "ga-visited");
+      canvas.removeMarker(id, marker);
     } catch {
-      // the element may have been spliced out of a later revision
+      // element gone in a later revision; nothing to clear
     }
   }
-  for (const id of detail.tokens) {
-    try {
-      canvas.addMarker(id, "ga-token");
-    } catch {
-      // as above
+  markedElements = [];
+
+  const mark = (ids: string[], marker: string): void => {
+    for (const id of ids) {
+      try {
+        canvas.addMarker(id, marker);
+        markedElements.push({ id, marker });
+      } catch {
+        // spliced out since this turn ran
+      }
     }
-  }
+  };
+  mark(detail.visited, "ga-visited");
+  mark(detail.tokens, "ga-token");
+}
+
+function usageChip(turn: TurnRecord): string {
+  if (!turn.usage) return "";
+  const { input, output, cacheRead } = turn.usage;
+  // cacheRead is the number worth watching: a graph-coordinated run reuses one
+  // Pi session, so every turn after the first should read most of its prefix
+  // from cache. A run of zeros means the prefix is being invalidated somewhere.
+  const cached = cacheRead > 0;
+  return `<span class="font-mono text-[10px] px-1 py-0.5 rounded border ${
+    cached ? "text-accent border-accent-border bg-accent-dim" : "text-muted border-line bg-panel-header"
+  }" title="input ${input}, output ${output}, cache read ${cacheRead}">${cached ? `cache ${cacheRead}` : "uncached"}</span>`;
 }
 
 function renderTurns(turns: TurnRecord[]): void {
@@ -45,25 +71,36 @@ function renderTurns(turns: TurnRecord[]): void {
             )
             .join("")}</div>`
         : "";
-      const stop = turn.stopReason
-        ? `<span class="text-[10px] uppercase tracking-wide font-bold text-muted">${escapeHtml(turn.stopReason)}</span>`
-        : "";
-      const error = turn.error
-        ? `<div class="mt-1 text-danger">${escapeHtml(turn.error)}</div>`
-        : "";
       return `
-        <article class="px-3 py-2 border-b border-line-subtle">
+        <article class="px-3 py-2 border-b border-line-subtle" data-activity="${escapeHtml(turn.activityId)}">
           <div class="flex items-baseline justify-between gap-2">
-            <span class="font-semibold text-ink">${turn.index}. ${escapeHtml(turn.activityName || turn.activityId)}</span>
-            ${stop}
+            <span class="font-semibold text-ink truncate">${turn.index}. ${escapeHtml(turn.activityName || turn.activityId)}</span>
+            <span class="flex items-center gap-1 shrink-0">
+              ${usageChip(turn)}
+              ${turn.stopReason ? `<span class="text-[10px] uppercase tracking-wide font-bold text-muted">${escapeHtml(turn.stopReason)}</span>` : ""}
+            </span>
           </div>
           <div class="font-mono text-[10px] text-muted">${escapeHtml(turn.activityId)}${turn.harness ? ` &middot; ${escapeHtml(turn.harness)}` : ""}</div>
           ${turn.summary ? `<div class="mt-1 text-ink-secondary">${escapeHtml(turn.summary)}</div>` : ""}
           ${tools}
-          ${error}
+          ${turn.error ? `<div class="mt-1 text-danger">${escapeHtml(turn.error)}</div>` : ""}
         </article>`;
     })
     .join("");
+
+  // Clicking a turn centres the node that produced it.
+  for (const article of host.querySelectorAll<HTMLElement>("article[data-activity]")) {
+    article.onclick = () => {
+      const id = article.dataset.activity;
+      if (!id || !viewer) return;
+      try {
+        const element = viewer.get("elementRegistry").get(id);
+        if (element) viewer.get("canvas").scrollToElement(element);
+      } catch {
+        // element no longer in the current revision
+      }
+    };
+  }
 }
 
 function renderRevisions(detail: SessionDetail): void {
@@ -94,50 +131,63 @@ function renderRevisions(detail: SessionDetail): void {
 
 async function refresh(): Promise<void> {
   const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`);
-  if (!res.ok) return;
+  if (!res.ok) {
+    const title = $("session-title");
+    if (title) title.textContent = "Unknown session";
+    return;
+  }
   const detail: SessionDetail = await res.json();
 
   const title = $("session-title");
   if (title) title.textContent = detail.name || detail.id;
+  const status = $("session-status");
+  if (status) status.innerHTML = statusChip(detail.status);
   const meta = $("session-meta");
   if (meta) {
-    meta.textContent = `${detail.status} · ${detail.turnCount} turns · ${detail.revisions.length} graph revision${detail.revisions.length === 1 ? "" : "s"}`;
+    meta.textContent = `${detail.turnCount} turns · ${detail.revisions.length} graph revision${
+      detail.revisions.length === 1 ? "" : "s"
+    }`;
   }
 
-  // The session graph mutates, so re-import whenever the XML actually changed.
-  if (viewer && detail.graph !== renderedGraph) {
+  // The session graph mutates, so re-import only when the XML actually changed.
+  if (viewer && detail.graph && detail.graph !== renderedGraph) {
     await viewer.importXML(detail.graph);
     renderedGraph = detail.graph;
+    markedElements = [];
     fitDiagram(viewer);
   }
-  markers(detail);
+  paintTokens(detail);
   renderTurns(detail.turns);
   renderRevisions(detail);
 }
 
 async function init(): Promise<void> {
-  const ViewerCtor = window.BpmnNavigatedViewer || window.BpmnJS;
-  if (!ViewerCtor) return;
-  viewer = new (ViewerCtor as new (options: {
-    container: string;
-    additionalModules?: unknown[];
-  }) => BpmnDiagramInstance)({
-    container: "#viewer",
-    additionalModules: [window.minimapModule].filter(Boolean),
-  });
+  await mountShell("session");
 
-  wireZoomControls(() => viewer, {
-    zoomIn: "ctrl-zoom-in",
-    zoomOut: "ctrl-zoom-out",
-    fit: "ctrl-zoom-fit",
-    reset: "ctrl-zoom-reset",
-    minimap: "ctrl-minimap",
-  });
+  const ViewerCtor = window.BpmnNavigatedViewer || window.BpmnJS;
+  if (ViewerCtor) {
+    viewer = new (ViewerCtor as new (options: {
+      container: string;
+      additionalModules?: unknown[];
+    }) => BpmnDiagramInstance)({
+      container: "#viewer",
+      additionalModules: [window.minimapModule].filter(Boolean),
+    });
+
+    wireZoomControls(() => viewer, {
+      zoomIn: "ctrl-zoom-in",
+      zoomOut: "ctrl-zoom-out",
+      fit: "ctrl-zoom-fit",
+      reset: "ctrl-zoom-reset",
+      minimap: "ctrl-minimap",
+    });
+  }
 
   await refresh();
 
   connectStudioEvents("/ws", (event) => {
     if (event.type === "session_changed" && event.sessionId !== sessionId) return;
+    if (event.type === "graphs_changed") return;
     void refresh();
   });
 }

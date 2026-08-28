@@ -1,13 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { GraphRevision, SessionDetail, SessionSummary, TurnRecord } from "../studio/types.ts";
-import type { Workspace } from "./workspace.ts";
+import type { Paths } from "./paths.ts";
 
 /**
- * On-disk shape of a session.
+ * On-disk shape of a session, under the user-level state directory.
  *
- *   .agents/sessions/<id>/
- *     meta.json        session identity + status + turn/revision history
+ *   $XDG_STATE_HOME/graph-agent/sessions/<id>/
+ *     meta.json        session identity, the project it ran against, and history
  *     engine.json      bpmn-engine state snapshot (source stripped; see graph/)
  *     graph/000.bpmn   graph revisions, oldest first -- the session mutates, so
  *     graph/001.bpmn   every splice lands as a new revision rather than an overwrite
@@ -21,6 +21,8 @@ import type { Workspace } from "./workspace.ts";
 export interface SessionMeta {
   id: string;
   name?: string;
+  /** Absolute path of the project directory this session ran against. */
+  project: string;
   status: SessionSummary["status"];
   createdAt: number;
   updatedAt: number;
@@ -34,12 +36,12 @@ export interface SessionMeta {
 
 export class SessionStore {
   constructor(
-    private readonly workspace: Workspace,
+    private readonly paths: Paths,
     readonly id: string,
   ) {}
 
   get dir(): string {
-    return join(this.workspace.sessionsDir, this.id);
+    return join(this.paths.sessionsDir, this.id);
   }
 
   get graphDir(): string {
@@ -62,11 +64,12 @@ export class SessionStore {
     return existsSync(this.metaPath);
   }
 
-  create(name?: string): SessionMeta {
+  create(project: string, name?: string): SessionMeta {
     mkdirSync(this.graphDir, { recursive: true });
     const now = Date.now();
     const meta: SessionMeta = {
       id: this.id,
+      project,
       ...(name === undefined ? {} : { name }),
       status: "idle",
       createdAt: now,
@@ -138,6 +141,7 @@ export class SessionStore {
     const meta = this.readMeta();
     return {
       id: meta.id,
+      project: meta.project,
       ...(meta.name === undefined ? {} : { name: meta.name }),
       status: meta.status,
       updatedAt: meta.updatedAt,
@@ -158,12 +162,17 @@ export class SessionStore {
   }
 }
 
-export function listSessions(workspace: Workspace): SessionStore[] {
-  if (!existsSync(workspace.sessionsDir)) return [];
-  return readdirSync(workspace.sessionsDir, { withFileTypes: true })
+/**
+ * Sessions, newest first. `project` narrows to one project directory -- the
+ * usual case, since the CLI and studio both run inside one.
+ */
+export function listSessions(paths: Paths, project?: string): SessionStore[] {
+  if (!existsSync(paths.sessionsDir)) return [];
+  return readdirSync(paths.sessionsDir, { withFileTypes: true })
     .filter((e) => e.isDirectory())
-    .map((e) => new SessionStore(workspace, e.name))
+    .map((e) => new SessionStore(paths, e.name))
     .filter((s) => s.exists())
+    .filter((s) => project === undefined || s.readMeta().project === project)
     .sort((a, b) => b.readMeta().updatedAt - a.readMeta().updatedAt);
 }
 

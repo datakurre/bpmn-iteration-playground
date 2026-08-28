@@ -14,7 +14,14 @@ graph decides whether to take another.
 Every branch in runLoop() appears below: the steering drain, the
 fail-all-truncated path taken when a response hits the output token limit, the
 batch terminate rule, prepareNextTurn, shouldStopAfterTurn, and the follow-up
-drain that decides between another turn and stopping.</bpmn:documentation>
+drain that decides between another turn and stopping.
+
+All of this runs against ONE Pi agent for the whole session. The prompt cache
+covers the prefix system prompt -&gt; tools -&gt; messages, so appending to the
+transcript keeps every earlier turn cached, while changing the system prompt or
+the tool list at a node boundary throws that cache away on every iteration.
+Specialise a node through the message it contributes, not by swapping its prompt
+or tools. See docs/research/05-pi-loops-and-token-cache.md.</bpmn:documentation>
     <bpmn:startEvent id="loop_start" name="Prompt">
       <bpmn:outgoing>to_inject</bpmn:outgoing>
     </bpmn:startEvent>
@@ -24,9 +31,6 @@ drain that decides between another turn and stopping.</bpmn:documentation>
 provider request, matching the top of runLoop's inner while.</bpmn:documentation>
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="agent:steer" />
-        <zeebe:ioMapping>
-          <zeebe:output source="=injected" target="injected" />
-        </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>to_inject</bpmn:incoming>
       <bpmn:incoming>next_turn</bpmn:incoming>
@@ -40,15 +44,17 @@ until the response is complete.</bpmn:documentation>
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="agent:turn" />
         <zeebe:ioMapping>
+          <zeebe:input source="=prompt" target="prompt" />
           <zeebe:output source="=stop_reason" target="stop_reason" />
           <zeebe:output source="=tool_calls" target="tool_calls" />
+          <zeebe:output source="=usage" target="last_usage" />
         </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>to_turn</bpmn:incoming>
       <bpmn:outgoing>to_gw_failed</bpmn:outgoing>
     </bpmn:serviceTask>
     <bpmn:sequenceFlow id="to_gw_failed" sourceRef="llm_turn" targetRef="gw_failed" />
-    <bpmn:exclusiveGateway id="gw_failed" name="Errored or aborted?">
+    <bpmn:exclusiveGateway id="gw_failed" name="Errored or aborted?" default="turn_ok">
       <bpmn:incoming>to_gw_failed</bpmn:incoming>
       <bpmn:outgoing>turn_failed</bpmn:outgoing>
       <bpmn:outgoing>turn_ok</bpmn:outgoing>
@@ -56,21 +62,17 @@ until the response is complete.</bpmn:documentation>
     <bpmn:sequenceFlow id="turn_failed" name="error / aborted" sourceRef="gw_failed" targetRef="end_error">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=stop_reason = "error" or stop_reason = "aborted"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
-    <bpmn:sequenceFlow id="turn_ok" name="ok" sourceRef="gw_failed" targetRef="gw_tools">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=stop_reason != "error" and stop_reason != "aborted"</bpmn:conditionExpression>
-    </bpmn:sequenceFlow>
-    <bpmn:exclusiveGateway id="gw_tools" name="Tool calls?">
+    <bpmn:sequenceFlow id="turn_ok" name="ok" sourceRef="gw_failed" targetRef="gw_tools" />
+    <bpmn:exclusiveGateway id="gw_tools" name="Tool calls?" default="no_tools">
       <bpmn:incoming>turn_ok</bpmn:incoming>
       <bpmn:outgoing>has_tools</bpmn:outgoing>
       <bpmn:outgoing>no_tools</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="has_tools" name="yes" sourceRef="gw_tools" targetRef="gw_truncated">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=count(tool_calls) &gt; 0</bpmn:conditionExpression>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=tool_calls != null and count(tool_calls) &gt; 0</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
-    <bpmn:sequenceFlow id="no_tools" name="no" sourceRef="gw_tools" targetRef="drain_followup">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=count(tool_calls) = 0</bpmn:conditionExpression>
-    </bpmn:sequenceFlow>
-    <bpmn:exclusiveGateway id="gw_truncated" name="Response truncated?">
+    <bpmn:sequenceFlow id="no_tools" name="no" sourceRef="gw_tools" targetRef="drain_followup" />
+    <bpmn:exclusiveGateway id="gw_truncated" name="Response truncated?" default="not_truncated">
       <bpmn:incoming>has_tools</bpmn:incoming>
       <bpmn:outgoing>truncated</bpmn:outgoing>
       <bpmn:outgoing>not_truncated</bpmn:outgoing>
@@ -78,9 +80,7 @@ until the response is complete.</bpmn:documentation>
     <bpmn:sequenceFlow id="truncated" name="hit token limit" sourceRef="gw_truncated" targetRef="fail_tool_batch">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=stop_reason = "length"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
-    <bpmn:sequenceFlow id="not_truncated" name="complete" sourceRef="gw_truncated" targetRef="tool_batch">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=stop_reason != "length"</bpmn:conditionExpression>
-    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="not_truncated" name="complete" sourceRef="gw_truncated" targetRef="tool_batch" />
     <bpmn:serviceTask id="fail_tool_batch" name="Fail truncated tool calls">
       <bpmn:documentation>A "length" stop means the arguments of every tool call in the message may
 be cut off. None are safe to execute, so each is failed with an error result
@@ -98,7 +98,9 @@ Pi's toolExecution setting; the default there is parallel.</bpmn:documentation>
       <bpmn:incoming>not_truncated</bpmn:incoming>
       <bpmn:outgoing>batch_done</bpmn:outgoing>
       <bpmn:multiInstanceLoopCharacteristics>
-        <bpmn:loopCardinality xsi:type="bpmn:tFormalExpression">=count(tool_calls)</bpmn:loopCardinality>
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=tool_calls" inputElement="tool_call" outputCollection="tool_results" outputElement="=tool_result" />
+        </bpmn:extensionElements>
       </bpmn:multiInstanceLoopCharacteristics>
       <bpmn:startEvent id="tool_start" name="Start">
         <bpmn:outgoing>to_tool</bpmn:outgoing>
@@ -107,6 +109,10 @@ Pi's toolExecution setting; the default there is parallel.</bpmn:documentation>
       <bpmn:serviceTask id="run_tool" name="Run tool">
         <bpmn:extensionElements>
           <zeebe:taskDefinition type="agent:tool" />
+          <zeebe:ioMapping>
+            <zeebe:input source="=tool_call" target="tool_call" />
+            <zeebe:output source="=terminate" target="tool_result" />
+          </zeebe:ioMapping>
         </bpmn:extensionElements>
         <bpmn:incoming>to_tool</bpmn:incoming>
         <bpmn:outgoing>tool_done</bpmn:outgoing>
@@ -116,20 +122,32 @@ Pi's toolExecution setting; the default there is parallel.</bpmn:documentation>
         <bpmn:incoming>tool_done</bpmn:incoming>
       </bpmn:endEvent>
     </bpmn:subProcess>
-    <bpmn:sequenceFlow id="batch_done" sourceRef="tool_batch" targetRef="gw_terminate" />
-    <bpmn:exclusiveGateway id="gw_terminate" name="Whole batch asked to stop?">
+    <bpmn:sequenceFlow id="batch_done" sourceRef="tool_batch" targetRef="collect_batch" />
+    <bpmn:serviceTask id="collect_batch" name="Collect tool results">
+      <bpmn:documentation>Appends the batch's tool results to the transcript and reports whether
+every one of them asked to terminate -- Pi's rule is all, not any.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="agent:collect-tools" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=tool_results" target="tool_results" />
+          <zeebe:output source="=batch_terminate" target="batch_terminate" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>batch_done</bpmn:incoming>
+      <bpmn:outgoing>collected</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="collected" sourceRef="collect_batch" targetRef="gw_terminate" />
+    <bpmn:exclusiveGateway id="gw_terminate" name="Whole batch asked to stop?" default="batch_continues">
       <bpmn:documentation>Pi terminates early only when every finalized tool result in the batch sets
 terminate, so this is an all, not an any.</bpmn:documentation>
-      <bpmn:incoming>batch_done</bpmn:incoming>
+      <bpmn:incoming>collected</bpmn:incoming>
       <bpmn:outgoing>batch_terminates</bpmn:outgoing>
       <bpmn:outgoing>batch_continues</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="batch_terminates" name="all terminate" sourceRef="gw_terminate" targetRef="end_stopped">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=batch_terminate = true</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
-    <bpmn:sequenceFlow id="batch_continues" name="continue" sourceRef="gw_terminate" targetRef="prepare_next_turn">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=batch_terminate != true</bpmn:conditionExpression>
-    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="batch_continues" name="continue" sourceRef="gw_terminate" targetRef="prepare_next_turn" />
     <bpmn:serviceTask id="prepare_next_turn" name="Prepare next turn">
       <bpmn:documentation>Pi's prepareNextTurn hook: swap context, model or thinking level before the
 next provider request. This is also where compaction belongs -- under BPMN
@@ -145,7 +163,7 @@ control it is a visible step rather than an invisible transformContext.</bpmn:do
       <bpmn:outgoing>to_gw_stop</bpmn:outgoing>
     </bpmn:serviceTask>
     <bpmn:sequenceFlow id="to_gw_stop" sourceRef="prepare_next_turn" targetRef="gw_should_stop" />
-    <bpmn:exclusiveGateway id="gw_should_stop" name="Stop after this turn?">
+    <bpmn:exclusiveGateway id="gw_should_stop" name="Stop after this turn?" default="next_turn">
       <bpmn:incoming>to_gw_stop</bpmn:incoming>
       <bpmn:outgoing>stop_now</bpmn:outgoing>
       <bpmn:outgoing>next_turn</bpmn:outgoing>
@@ -153,9 +171,7 @@ control it is a visible step rather than an invisible transformContext.</bpmn:do
     <bpmn:sequenceFlow id="stop_now" name="yes" sourceRef="gw_should_stop" targetRef="end_stopped">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=should_stop = true</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
-    <bpmn:sequenceFlow id="next_turn" name="another turn" sourceRef="gw_should_stop" targetRef="inject_pending">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=should_stop != true</bpmn:conditionExpression>
-    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="next_turn" name="another turn" sourceRef="gw_should_stop" targetRef="inject_pending" />
     <bpmn:serviceTask id="drain_followup" name="Drain follow-up queue">
       <bpmn:documentation>The agent would stop here. runLoop's outer while asks for queued follow-up
 messages; if any arrive the inner loop starts again.</bpmn:documentation>
@@ -169,7 +185,7 @@ messages; if any arrive the inner loop starts again.</bpmn:documentation>
       <bpmn:outgoing>to_gw_followup</bpmn:outgoing>
     </bpmn:serviceTask>
     <bpmn:sequenceFlow id="to_gw_followup" sourceRef="drain_followup" targetRef="gw_followup" />
-    <bpmn:exclusiveGateway id="gw_followup" name="Follow-up queued?">
+    <bpmn:exclusiveGateway id="gw_followup" name="Follow-up queued?" default="no_followup">
       <bpmn:incoming>to_gw_followup</bpmn:incoming>
       <bpmn:outgoing>followup_again</bpmn:outgoing>
       <bpmn:outgoing>no_followup</bpmn:outgoing>
@@ -177,9 +193,7 @@ messages; if any arrive the inner loop starts again.</bpmn:documentation>
     <bpmn:sequenceFlow id="followup_again" name="yes" sourceRef="gw_followup" targetRef="inject_pending">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=has_followup = true</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
-    <bpmn:sequenceFlow id="no_followup" name="no" sourceRef="gw_followup" targetRef="end_done">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=has_followup != true</bpmn:conditionExpression>
-    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="no_followup" name="no" sourceRef="gw_followup" targetRef="end_done" />
     <bpmn:endEvent id="end_done" name="Agent done">
       <bpmn:incoming>no_followup</bpmn:incoming>
     </bpmn:endEvent>
@@ -230,8 +244,11 @@ messages; if any arrive the inner loop starts again.</bpmn:documentation>
       <bpmndi:BPMNShape id="tool_batch_di" bpmnElement="tool_batch">
         <dc:Bounds x="1075" y="170" width="100" height="80" />
       </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="collect_batch_di" bpmnElement="collect_batch">
+        <dc:Bounds x="1225" y="170" width="100" height="80" />
+      </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_terminate_di" bpmnElement="gw_terminate" isMarkerVisible="true">
-        <dc:Bounds x="1250" y="185" width="50" height="50" />
+        <dc:Bounds x="1400" y="185" width="50" height="50" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="drain_followup_di" bpmnElement="drain_followup">
         <dc:Bounds x="925" y="310" width="100" height="80" />
@@ -302,15 +319,21 @@ messages; if any arrive the inner loop starts again.</bpmn:documentation>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="batch_done_di" bpmnElement="batch_done">
         <di:waypoint x="1175" y="210" />
-        <di:waypoint x="1250" y="210" />
+        <di:waypoint x="1225" y="210" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="collected_di" bpmnElement="collected">
+        <di:waypoint x="1325" y="210" />
+        <di:waypoint x="1400" y="210" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="batch_terminates_di" bpmnElement="batch_terminates">
-        <di:waypoint x="1300" y="210" />
+        <di:waypoint x="1450" y="210" />
         <di:waypoint x="1575" y="210" />
         <di:waypoint x="1575" y="88" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="batch_continues_di" bpmnElement="batch_continues">
-        <di:waypoint x="1275" y="185" />
+        <di:waypoint x="1425" y="235" />
+        <di:waypoint x="1425" y="280" />
+        <di:waypoint x="1275" y="280" />
         <di:waypoint x="1275" y="110" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="to_gw_followup_di" bpmnElement="to_gw_followup">
