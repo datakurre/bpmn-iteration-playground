@@ -1,0 +1,361 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Defs_pi_default_loop" targetNamespace="http://graph-agent/bpmn">
+  <bpmn:process id="pi_default_loop" name="Pi default agent loop" isExecutable="true">
+    <bpmn:documentation>Pi's built-in agent loop, drawn.
+
+This is a transcription of runLoop() in @earendil-works/pi-agent-core
+(packages/agent/src/agent-loop.ts): an outer follow-up loop wrapped around an
+inner turn loop. Pi still performs each turn -- streaming, tool execution,
+retries and abort are all Pi's -- but the iteration policy lives here rather
+than in a while loop nobody can see. Running the agent under
+shouldStopAfterTurn: () =&gt; true reduces Pi's loop to a single step, and this
+graph decides whether to take another.
+
+Every branch in runLoop() appears below: the steering drain, the
+fail-all-truncated path taken when a response hits the output token limit, the
+batch terminate rule, prepareNextTurn, shouldStopAfterTurn, and the follow-up
+drain that decides between another turn and stopping.</bpmn:documentation>
+    <bpmn:startEvent id="loop_start" name="Prompt">
+      <bpmn:outgoing>to_inject</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="to_inject" sourceRef="loop_start" targetRef="inject_pending" />
+    <bpmn:serviceTask id="inject_pending" name="Inject pending messages">
+      <bpmn:documentation>Drains the steering queue and appends those messages before the next
+provider request, matching the top of runLoop's inner while.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness" value="agent:steer" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:outputParameter name="injected">${injected}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>to_inject</bpmn:incoming>
+      <bpmn:incoming>next_turn</bpmn:incoming>
+      <bpmn:incoming>followup_again</bpmn:incoming>
+      <bpmn:outgoing>to_turn</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="to_turn" sourceRef="inject_pending" targetRef="llm_turn" />
+    <bpmn:serviceTask id="llm_turn" name="LLM turn">
+      <bpmn:documentation>Exactly one assistant response. Pi streams it; the token does not move
+until the response is complete.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness" value="agent:turn" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:outputParameter name="stop_reason">${stop_reason}</camunda:outputParameter>
+          <camunda:outputParameter name="tool_calls">${tool_calls}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>to_turn</bpmn:incoming>
+      <bpmn:outgoing>to_gw_failed</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="to_gw_failed" sourceRef="llm_turn" targetRef="gw_failed" />
+    <bpmn:exclusiveGateway id="gw_failed" name="Errored or aborted?">
+      <bpmn:incoming>to_gw_failed</bpmn:incoming>
+      <bpmn:outgoing>turn_failed</bpmn:outgoing>
+      <bpmn:outgoing>turn_ok</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="turn_failed" name="error / aborted" sourceRef="gw_failed" targetRef="end_error">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${stop_reason = "error" or stop_reason = "aborted"}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="turn_ok" name="ok" sourceRef="gw_failed" targetRef="gw_tools">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${stop_reason != "error" and stop_reason != "aborted"}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:exclusiveGateway id="gw_tools" name="Tool calls?">
+      <bpmn:incoming>turn_ok</bpmn:incoming>
+      <bpmn:outgoing>has_tools</bpmn:outgoing>
+      <bpmn:outgoing>no_tools</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="has_tools" name="yes" sourceRef="gw_tools" targetRef="gw_truncated">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${count(tool_calls) &gt; 0}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="no_tools" name="no" sourceRef="gw_tools" targetRef="drain_followup">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${count(tool_calls) = 0}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:exclusiveGateway id="gw_truncated" name="Response truncated?">
+      <bpmn:incoming>has_tools</bpmn:incoming>
+      <bpmn:outgoing>truncated</bpmn:outgoing>
+      <bpmn:outgoing>not_truncated</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="truncated" name="hit token limit" sourceRef="gw_truncated" targetRef="fail_tool_batch">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${stop_reason = "length"}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="not_truncated" name="complete" sourceRef="gw_truncated" targetRef="tool_batch">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${stop_reason != "length"}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:serviceTask id="fail_tool_batch" name="Fail truncated tool calls">
+      <bpmn:documentation>A "length" stop means the arguments of every tool call in the message may
+be cut off. None are safe to execute, so each is failed with an error result
+and the model is invited to re-issue them.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness" value="agent:fail-truncated-tools" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>truncated</bpmn:incoming>
+      <bpmn:outgoing>failed_to_prepare</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="failed_to_prepare" sourceRef="fail_tool_batch" targetRef="prepare_next_turn" />
+    <bpmn:subProcess id="tool_batch" name="Execute tool batch">
+      <bpmn:documentation>One instance per tool call in the assistant message. isSequential mirrors
+Pi's toolExecution setting; the default there is parallel.</bpmn:documentation>
+      <bpmn:incoming>not_truncated</bpmn:incoming>
+      <bpmn:outgoing>batch_done</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:loopCardinality xsi:type="bpmn:tFormalExpression">${count(tool_calls)}</bpmn:loopCardinality>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:startEvent id="tool_start" name="Start">
+        <bpmn:outgoing>to_tool</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="to_tool" sourceRef="tool_start" targetRef="run_tool" />
+      <bpmn:serviceTask id="run_tool" name="Run tool">
+        <bpmn:extensionElements>
+          <camunda:properties>
+            <camunda:property name="harness" value="agent:tool" />
+          </camunda:properties>
+        </bpmn:extensionElements>
+        <bpmn:incoming>to_tool</bpmn:incoming>
+        <bpmn:outgoing>tool_done</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:sequenceFlow id="tool_done" sourceRef="run_tool" targetRef="tool_end" />
+      <bpmn:endEvent id="tool_end" name="Done">
+        <bpmn:incoming>tool_done</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="batch_done" sourceRef="tool_batch" targetRef="gw_terminate" />
+    <bpmn:exclusiveGateway id="gw_terminate" name="Whole batch asked to stop?">
+      <bpmn:documentation>Pi terminates early only when every finalized tool result in the batch sets
+terminate, so this is an all, not an any.</bpmn:documentation>
+      <bpmn:incoming>batch_done</bpmn:incoming>
+      <bpmn:outgoing>batch_terminates</bpmn:outgoing>
+      <bpmn:outgoing>batch_continues</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="batch_terminates" name="all terminate" sourceRef="gw_terminate" targetRef="end_stopped">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${batch_terminate = true}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="batch_continues" name="continue" sourceRef="gw_terminate" targetRef="prepare_next_turn">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${batch_terminate != true}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:serviceTask id="prepare_next_turn" name="Prepare next turn">
+      <bpmn:documentation>Pi's prepareNextTurn hook: swap context, model or thinking level before the
+next provider request. This is also where compaction belongs -- under BPMN
+control it is a visible step rather than an invisible transformContext.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness" value="agent:prepare-next-turn" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:outputParameter name="should_stop">${should_stop}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>batch_continues</bpmn:incoming>
+      <bpmn:incoming>failed_to_prepare</bpmn:incoming>
+      <bpmn:outgoing>to_gw_stop</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="to_gw_stop" sourceRef="prepare_next_turn" targetRef="gw_should_stop" />
+    <bpmn:exclusiveGateway id="gw_should_stop" name="Stop after this turn?">
+      <bpmn:incoming>to_gw_stop</bpmn:incoming>
+      <bpmn:outgoing>stop_now</bpmn:outgoing>
+      <bpmn:outgoing>next_turn</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="stop_now" name="yes" sourceRef="gw_should_stop" targetRef="end_stopped">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${should_stop = true}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="next_turn" name="another turn" sourceRef="gw_should_stop" targetRef="inject_pending">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${should_stop != true}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:serviceTask id="drain_followup" name="Drain follow-up queue">
+      <bpmn:documentation>The agent would stop here. runLoop's outer while asks for queued follow-up
+messages; if any arrive the inner loop starts again.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness" value="agent:follow-up" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:outputParameter name="has_followup">${has_followup}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>no_tools</bpmn:incoming>
+      <bpmn:outgoing>to_gw_followup</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="to_gw_followup" sourceRef="drain_followup" targetRef="gw_followup" />
+    <bpmn:exclusiveGateway id="gw_followup" name="Follow-up queued?">
+      <bpmn:incoming>to_gw_followup</bpmn:incoming>
+      <bpmn:outgoing>followup_again</bpmn:outgoing>
+      <bpmn:outgoing>no_followup</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="followup_again" name="yes" sourceRef="gw_followup" targetRef="inject_pending">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${has_followup = true}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="no_followup" name="no" sourceRef="gw_followup" targetRef="end_done">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${has_followup != true}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:endEvent id="end_done" name="Agent done">
+      <bpmn:incoming>no_followup</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="end_stopped" name="Stopped">
+      <bpmn:incoming>stop_now</bpmn:incoming>
+      <bpmn:incoming>batch_terminates</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="end_error" name="Turn failed">
+      <bpmn:incoming>turn_failed</bpmn:incoming>
+      <bpmn:terminateEventDefinition id="terminate_on_error" />
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_pi_default_loop">
+    <bpmndi:BPMNPlane id="BPMNPlane_pi_default_loop" bpmnElement="pi_default_loop">
+      <bpmndi:BPMNShape id="loop_start_di" bpmnElement="loop_start">
+        <dc:Bounds x="57" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="inject_pending_di" bpmnElement="inject_pending">
+        <dc:Bounds x="175" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="llm_turn_di" bpmnElement="llm_turn">
+        <dc:Bounds x="325" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_failed_di" bpmnElement="gw_failed" isMarkerVisible="true">
+        <dc:Bounds x="500" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end_error_di" bpmnElement="end_error">
+        <dc:Bounds x="657" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_tools_di" bpmnElement="gw_tools" isMarkerVisible="true">
+        <dc:Bounds x="800" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_truncated_di" bpmnElement="gw_truncated" isMarkerVisible="true">
+        <dc:Bounds x="950" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="fail_tool_batch_di" bpmnElement="fail_tool_batch">
+        <dc:Bounds x="1075" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="prepare_next_turn_di" bpmnElement="prepare_next_turn">
+        <dc:Bounds x="1225" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_should_stop_di" bpmnElement="gw_should_stop" isMarkerVisible="true">
+        <dc:Bounds x="1400" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end_stopped_di" bpmnElement="end_stopped">
+        <dc:Bounds x="1557" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="tool_batch_di" bpmnElement="tool_batch">
+        <dc:Bounds x="1075" y="170" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_terminate_di" bpmnElement="gw_terminate" isMarkerVisible="true">
+        <dc:Bounds x="1250" y="185" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="drain_followup_di" bpmnElement="drain_followup">
+        <dc:Bounds x="925" y="310" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_followup_di" bpmnElement="gw_followup" isMarkerVisible="true">
+        <dc:Bounds x="1100" y="325" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end_done_di" bpmnElement="end_done">
+        <dc:Bounds x="1257" y="332" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="to_inject_di" bpmnElement="to_inject">
+        <di:waypoint x="93" y="70" />
+        <di:waypoint x="175" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_turn_di" bpmnElement="to_turn">
+        <di:waypoint x="275" y="70" />
+        <di:waypoint x="325" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_gw_failed_di" bpmnElement="to_gw_failed">
+        <di:waypoint x="425" y="70" />
+        <di:waypoint x="500" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="turn_failed_di" bpmnElement="turn_failed">
+        <di:waypoint x="550" y="70" />
+        <di:waypoint x="657" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="turn_ok_di" bpmnElement="turn_ok">
+        <di:waypoint x="525" y="95" />
+        <di:waypoint x="525" y="140" />
+        <di:waypoint x="825" y="140" />
+        <di:waypoint x="825" y="95" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="has_tools_di" bpmnElement="has_tools">
+        <di:waypoint x="850" y="70" />
+        <di:waypoint x="950" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="no_tools_di" bpmnElement="no_tools">
+        <di:waypoint x="825" y="95" />
+        <di:waypoint x="825" y="350" />
+        <di:waypoint x="925" y="350" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="truncated_di" bpmnElement="truncated">
+        <di:waypoint x="1000" y="70" />
+        <di:waypoint x="1075" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="not_truncated_di" bpmnElement="not_truncated">
+        <di:waypoint x="975" y="95" />
+        <di:waypoint x="975" y="210" />
+        <di:waypoint x="1075" y="210" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="failed_to_prepare_di" bpmnElement="failed_to_prepare">
+        <di:waypoint x="1175" y="70" />
+        <di:waypoint x="1225" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_gw_stop_di" bpmnElement="to_gw_stop">
+        <di:waypoint x="1325" y="70" />
+        <di:waypoint x="1400" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="stop_now_di" bpmnElement="stop_now">
+        <di:waypoint x="1450" y="70" />
+        <di:waypoint x="1557" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="next_turn_di" bpmnElement="next_turn">
+        <di:waypoint x="1425" y="95" />
+        <di:waypoint x="1425" y="140" />
+        <di:waypoint x="225" y="140" />
+        <di:waypoint x="225" y="110" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="batch_done_di" bpmnElement="batch_done">
+        <di:waypoint x="1175" y="210" />
+        <di:waypoint x="1250" y="210" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="batch_terminates_di" bpmnElement="batch_terminates">
+        <di:waypoint x="1300" y="210" />
+        <di:waypoint x="1575" y="210" />
+        <di:waypoint x="1575" y="88" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="batch_continues_di" bpmnElement="batch_continues">
+        <di:waypoint x="1275" y="185" />
+        <di:waypoint x="1275" y="110" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_gw_followup_di" bpmnElement="to_gw_followup">
+        <di:waypoint x="1025" y="350" />
+        <di:waypoint x="1100" y="350" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="followup_again_di" bpmnElement="followup_again">
+        <di:waypoint x="1125" y="375" />
+        <di:waypoint x="1125" y="420" />
+        <di:waypoint x="225" y="420" />
+        <di:waypoint x="225" y="110" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="no_followup_di" bpmnElement="no_followup">
+        <di:waypoint x="1150" y="350" />
+        <di:waypoint x="1257" y="350" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNShape id="tool_start_di" bpmnElement="tool_start">
+        <dc:Bounds x="57" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="run_tool_di" bpmnElement="run_tool">
+        <dc:Bounds x="175" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="tool_end_di" bpmnElement="tool_end">
+        <dc:Bounds x="357" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="to_tool_di" bpmnElement="to_tool">
+        <di:waypoint x="93" y="70" />
+        <di:waypoint x="175" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="tool_done_di" bpmnElement="tool_done">
+        <di:waypoint x="275" y="70" />
+        <di:waypoint x="357" y="70" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

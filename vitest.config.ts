@@ -5,7 +5,7 @@ export default defineConfig({
     // Browser-side editor modules need a DOM; the agent/studio modules are
     // environment-agnostic and run fine under jsdom too, so one project covers both.
     environment: "jsdom",
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "workflows/**/*.test.ts"],
     coverage: {
       provider: "v8",
       reporter: ["text", "html", "lcov"],

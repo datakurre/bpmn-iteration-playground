@@ -1,0 +1,197 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Defs_craft_graph" targetNamespace="http://graph-agent/bpmn">
+  <bpmn:process id="craft_graph" name="Craft a graph extension" isExecutable="true">
+    <bpmn:documentation>Turning a prompt into new graph.
+
+The agent proposes a BPMN fragment, the fragment is laid out and linted, a human
+approves it, and only then is it spliced into the running session. Because this
+is itself a BPMN process, the act of extending the agent is as visible and as
+auditable as the work the extension goes on to do.
+
+The splice must be additive with stable ids: bpmn-engine replays recovered child
+state by element id, so a fragment that renames or removes a live element cannot
+be recovered. graph:extend rejects those before they are applied.</bpmn:documentation>
+    <bpmn:startEvent id="craft_start" name="Intent">
+      <bpmn:outgoing>to_draft</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="to_draft" sourceRef="craft_start" targetRef="draft_fragment" />
+    <bpmn:serviceTask id="draft_fragment" name="Draft BPMN fragment">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness" value="agent:turn" />
+          <camunda:property name="agent_role" value="graph_architect" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="intent">${intent}</camunda:inputParameter>
+          <camunda:inputParameter name="current_graph">${current_graph}</camunda:inputParameter>
+          <camunda:inputParameter name="lint_feedback">${lint_feedback}</camunda:inputParameter>
+          <camunda:outputParameter name="fragment">${fragment}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>to_draft</bpmn:incoming>
+      <bpmn:incoming>lint_retry</bpmn:incoming>
+      <bpmn:outgoing>to_layout</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="to_layout" sourceRef="draft_fragment" targetRef="layout_fragment" />
+    <bpmn:serviceTask id="layout_fragment" name="Auto-layout">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness" value="graph:layout" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>to_layout</bpmn:incoming>
+      <bpmn:outgoing>to_lint</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="to_lint" sourceRef="layout_fragment" targetRef="lint_fragment" />
+    <bpmn:serviceTask id="lint_fragment" name="Lint and check splice">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness" value="graph:lint" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:outputParameter name="lint_status">${status}</camunda:outputParameter>
+          <camunda:outputParameter name="lint_feedback">${summary}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>to_lint</bpmn:incoming>
+      <bpmn:outgoing>to_gw_lint</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="to_gw_lint" sourceRef="lint_fragment" targetRef="gw_lint" />
+    <bpmn:exclusiveGateway id="gw_lint" name="Fragment valid?">
+      <bpmn:incoming>to_gw_lint</bpmn:incoming>
+      <bpmn:outgoing>lint_ok</bpmn:outgoing>
+      <bpmn:outgoing>lint_retry</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="lint_ok" name="valid" sourceRef="gw_lint" targetRef="review_fragment">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${lint_status = "success"}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="lint_retry" name="redraft" sourceRef="gw_lint" targetRef="draft_fragment">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${lint_status != "success"}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:userTask id="review_fragment" name="Review extension">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="approval" label="Apply this extension?" type="enum" defaultValue="apply">
+            <camunda:value id="apply" name="Apply" />
+            <camunda:value id="reject" name="Reject" />
+          </camunda:formField>
+          <camunda:formField id="notes" label="Notes for the agent" type="textarea" />
+        </camunda:formData>
+        <camunda:inputOutput>
+          <camunda:outputParameter name="approval">${approval}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>lint_ok</bpmn:incoming>
+      <bpmn:outgoing>to_gw_approve</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="to_gw_approve" sourceRef="review_fragment" targetRef="gw_approve" />
+    <bpmn:exclusiveGateway id="gw_approve" name="Approved?">
+      <bpmn:incoming>to_gw_approve</bpmn:incoming>
+      <bpmn:outgoing>approved</bpmn:outgoing>
+      <bpmn:outgoing>rejected</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="approved" name="apply" sourceRef="gw_approve" targetRef="apply_extension">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${approval = "apply"}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="rejected" name="reject" sourceRef="gw_approve" targetRef="craft_rejected">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${approval != "apply"}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:serviceTask id="apply_extension" name="Splice into the session graph">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="harness" value="graph:extend" />
+        </camunda:properties>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="fragment">${fragment}</camunda:inputParameter>
+          <camunda:outputParameter name="extend_status">${status}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>approved</bpmn:incoming>
+      <bpmn:outgoing>to_applied</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="to_applied" sourceRef="apply_extension" targetRef="craft_applied" />
+    <bpmn:endEvent id="craft_applied" name="Extension applied">
+      <bpmn:incoming>to_applied</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="craft_rejected" name="Extension rejected">
+      <bpmn:incoming>rejected</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_craft_graph">
+    <bpmndi:BPMNPlane id="BPMNPlane_craft_graph" bpmnElement="craft_graph">
+      <bpmndi:BPMNShape id="craft_start_di" bpmnElement="craft_start">
+        <dc:Bounds x="57" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="draft_fragment_di" bpmnElement="draft_fragment">
+        <dc:Bounds x="175" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="layout_fragment_di" bpmnElement="layout_fragment">
+        <dc:Bounds x="325" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="lint_fragment_di" bpmnElement="lint_fragment">
+        <dc:Bounds x="475" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_lint_di" bpmnElement="gw_lint" isMarkerVisible="true">
+        <dc:Bounds x="650" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="review_fragment_di" bpmnElement="review_fragment">
+        <dc:Bounds x="775" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_approve_di" bpmnElement="gw_approve" isMarkerVisible="true">
+        <dc:Bounds x="950" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="apply_extension_di" bpmnElement="apply_extension">
+        <dc:Bounds x="1075" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="craft_applied_di" bpmnElement="craft_applied">
+        <dc:Bounds x="1257" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="craft_rejected_di" bpmnElement="craft_rejected">
+        <dc:Bounds x="1107" y="192" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="to_draft_di" bpmnElement="to_draft">
+        <di:waypoint x="93" y="70" />
+        <di:waypoint x="175" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_layout_di" bpmnElement="to_layout">
+        <di:waypoint x="275" y="70" />
+        <di:waypoint x="325" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_lint_di" bpmnElement="to_lint">
+        <di:waypoint x="425" y="70" />
+        <di:waypoint x="475" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_gw_lint_di" bpmnElement="to_gw_lint">
+        <di:waypoint x="575" y="70" />
+        <di:waypoint x="650" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="lint_ok_di" bpmnElement="lint_ok">
+        <di:waypoint x="700" y="70" />
+        <di:waypoint x="775" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="lint_retry_di" bpmnElement="lint_retry">
+        <di:waypoint x="675" y="95" />
+        <di:waypoint x="675" y="140" />
+        <di:waypoint x="225" y="140" />
+        <di:waypoint x="225" y="110" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_gw_approve_di" bpmnElement="to_gw_approve">
+        <di:waypoint x="875" y="70" />
+        <di:waypoint x="950" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="approved_di" bpmnElement="approved">
+        <di:waypoint x="1000" y="70" />
+        <di:waypoint x="1075" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="rejected_di" bpmnElement="rejected">
+        <di:waypoint x="975" y="95" />
+        <di:waypoint x="975" y="210" />
+        <di:waypoint x="1107" y="210" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_applied_di" bpmnElement="to_applied">
+        <di:waypoint x="1175" y="70" />
+        <di:waypoint x="1257" y="70" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

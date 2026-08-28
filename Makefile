@@ -3,7 +3,7 @@
 
 .PHONY: help setup install submodules submodule-update check-vendor-pins vendor-build \
         build build-cli build-assets build-css dev run studio init \
-        lint lint-templates typecheck test test-watch test-coverage verify-editor clean
+        lint lint-templates lint-bpmn layout typecheck test test-watch test-coverage verify-editor clean
 
 NPM ?= npm
 NODE ?= node
@@ -34,6 +34,8 @@ help:
 	@echo "  make lint               - typecheck + template lint"
 	@echo "  make typecheck          - tsc --noEmit"
 	@echo "  make lint-templates     - htmlhint over studio pages"
+	@echo "  make lint-bpmn          - bpmnlint over workflows/"
+	@echo "  make layout             - regenerate diagram layout for workflows/"
 	@echo "  make test               - vitest run"
 	@echo "  make test-watch         - vitest watch"
 	@echo "  make test-coverage      - vitest run --coverage"
@@ -104,7 +106,15 @@ typecheck:
 lint-templates:
 	$(NPM) run lint:templates
 
-lint: typecheck lint-templates
+# Regenerates DI from the graph -- hand-written <bpmndi:> coordinates go stale
+# the moment a node is spliced in.
+layout:
+	$(NODE) scripts/bpmn-tools.mjs layout workflows/*.bpmn
+
+lint-bpmn:
+	$(NODE) scripts/bpmn-tools.mjs lint workflows/*.bpmn
+
+lint: typecheck lint-templates lint-bpmn
 
 test:
 	$(NPM) test
