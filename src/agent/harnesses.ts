@@ -5,6 +5,7 @@
  * are deliberately thin: the decisions live in the graph, and the state lives in
  * the Pi session, so a harness is mostly a translation between the two.
  */
+import { spawn } from "node:child_process";
 import { layoutProcess } from "bpmn-auto-layout";
 import { checkSplice } from "./graph.ts";
 import { failed, ok, type Harness, type HarnessRegistry, type HarnessResult } from "./harness.ts";
@@ -23,6 +24,8 @@ export interface HarnessDeps {
   /** Steering and follow-up text the CLI has queued for this session. */
   takeSteering: () => string[];
   takeFollowUp: () => string[];
+  /** Workspace `shell` steps run their command in. Defaults to `process.cwd()`. */
+  cwd?: string;
 }
 
 /** Turn index, so each recorded turn is numbered in execution order. */
@@ -32,6 +35,7 @@ function nextTurnIndex(store: SessionStore): number {
 
 export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
   const { pi, tools, store } = deps;
+  const cwd = deps.cwd ?? process.cwd();
 
   /** Tool calls of the turn in flight, so `agent:tool` can find them by index. */
   let currentToolCalls: ToolCallRequest[] = [];
@@ -179,7 +183,44 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
         return failed(`could not apply the fragment: ${message(error)}`);
       }
     },
+
+    /**
+     * A deterministic step: no model call, just a command and its exit status.
+     * `element_templates/shell_task.json` binds the taskHeaders this reads.
+     */
+    "shell": async (context) => {
+      const command = context.properties.command;
+      if (!command) return failed("no 'command' header configured for this shell step");
+      const failOnError = context.properties.fail_on_error !== "false";
+
+      const { exit_code, stdout, stderr } = await runCommand(command, cwd, context.signal);
+      const summary = `\`${command}\` exited ${exit_code}`;
+      // `exit_code`, never `status`: HarnessResult already reserves `status` for
+      // "success" | "failed", and zeebe:output reads this object by field name.
+      const extra = { exit_code, stdout, stderr };
+      if (exit_code !== 0 && failOnError) return failed(summary, extra);
+      return ok(summary, extra);
+    },
   };
+}
+
+/** Run a command line in a shell, rooted at `cwd`. Resolves rather than rejects on a non-zero exit. */
+function runCommand(
+  command: string,
+  cwd: string,
+  signal?: AbortSignal,
+): Promise<{ exit_code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, { cwd, shell: true, signal });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+    child.stderr?.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    child.on("error", reject);
+    child.on("close", (code, signalName) => {
+      resolve({ exit_code: signalName ? -1 : (code ?? -1), stdout, stderr });
+    });
+  });
 }
 
 /**

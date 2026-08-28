@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_shell_demo" targetNamespace="http://graph-agent/bpmn">
+  <bpmn:process id="shell_demo" name="Shell step demo" isExecutable="true">
+    <bpmn:documentation>The smallest graph that pairs a Pi turn with a deterministic step.
+
+`agent:turn` asks the model to do something; nothing here checks whether it
+actually happened. The `shell` harness is the other kind of activity a graph
+can dispatch to: no model call, just a command and its exit status. This graph
+runs one, then routes on the result -- the pattern for "let the agent try,
+then verify deterministically" that a model's own self-report cannot give you.
+
+Try it with `graph-agent run --dry-run --graph shell-demo`.</bpmn:documentation>
+    <bpmn:startEvent id="start" name="Prompt">
+      <bpmn:outgoing>to_turn</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="to_turn" sourceRef="start" targetRef="turn" />
+    <bpmn:serviceTask id="turn" name="Ask the agent">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="agent:turn" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=prompt" target="prompt" />
+          <zeebe:output source="=stop_reason" target="stop_reason" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>to_turn</bpmn:incoming>
+      <bpmn:outgoing>to_verify</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="to_verify" sourceRef="turn" targetRef="verify" />
+    <bpmn:serviceTask id="verify" name="Verify the workspace">
+      <bpmn:documentation>A stand-in check: swap the command header for whatever this graph should
+actually confirm (a test run, a lint, a build).</bpmn:documentation>
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="shell" />
+        <zeebe:taskHeaders>
+          <zeebe:header key="command" value="git rev-parse --is-inside-work-tree" />
+          <zeebe:header key="fail_on_error" value="false" />
+        </zeebe:taskHeaders>
+        <zeebe:ioMapping>
+          <zeebe:output source="=exit_code" target="shell_status" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>to_verify</bpmn:incoming>
+      <bpmn:outgoing>to_gateway</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="to_gateway" sourceRef="verify" targetRef="gw_verified" />
+    <bpmn:exclusiveGateway id="gw_verified" name="Exit status 0?" default="not_verified">
+      <bpmn:incoming>to_gateway</bpmn:incoming>
+      <bpmn:outgoing>verified</bpmn:outgoing>
+      <bpmn:outgoing>not_verified</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="verified" name="yes" sourceRef="gw_verified" targetRef="end_verified">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=shell_status = 0</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="not_verified" sourceRef="gw_verified" targetRef="end_not_verified" />
+    <bpmn:endEvent id="end_verified" name="Verified">
+      <bpmn:incoming>verified</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="end_not_verified" name="Not verified">
+      <bpmn:incoming>not_verified</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_shell_demo">
+    <bpmndi:BPMNPlane id="BPMNPlane_shell_demo" bpmnElement="shell_demo">
+      <bpmndi:BPMNShape id="start_di" bpmnElement="start">
+        <dc:Bounds x="57" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="turn_di" bpmnElement="turn">
+        <dc:Bounds x="175" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="verify_di" bpmnElement="verify">
+        <dc:Bounds x="325" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_verified_di" bpmnElement="gw_verified" isMarkerVisible="true">
+        <dc:Bounds x="500" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end_verified_di" bpmnElement="end_verified">
+        <dc:Bounds x="657" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end_not_verified_di" bpmnElement="end_not_verified">
+        <dc:Bounds x="657" y="192" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="to_turn_di" bpmnElement="to_turn">
+        <di:waypoint x="93" y="70" />
+        <di:waypoint x="175" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_verify_di" bpmnElement="to_verify">
+        <di:waypoint x="275" y="70" />
+        <di:waypoint x="325" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_gateway_di" bpmnElement="to_gateway">
+        <di:waypoint x="425" y="70" />
+        <di:waypoint x="500" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="verified_di" bpmnElement="verified">
+        <di:waypoint x="550" y="70" />
+        <di:waypoint x="657" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="not_verified_di" bpmnElement="not_verified">
+        <di:waypoint x="525" y="95" />
+        <di:waypoint x="525" y="210" />
+        <di:waypoint x="657" y="210" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

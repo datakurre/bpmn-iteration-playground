@@ -1,0 +1,6 @@
+title: graph-agent
+description: A Pi coding agent whose control flow is a mutable BPMN graph.
+theme: jekyll-theme-minimal
+markdown: kramdown
+exclude:
+  - research

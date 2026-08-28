@@ -133,6 +133,7 @@ async function drive(
     pi,
     tools: options.tools,
     store,
+    cwd: options.project,
     getGraph: () => graph,
     setGraph: (xml, reason, added) => {
       graph = xml;
