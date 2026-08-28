@@ -159,9 +159,9 @@ class SessionChatScreen(Screen):  # type: ignore
             self.displayed_task_ids.add("__WELCOME_RENDERED__")
             await scroll.mount(
                 Static(
-                    "💬 [b text-accent]Interactive Agent Session Ready[/b]\n"
+                    "💬 [bold cyan]Interactive Agent Session Ready[/bold cyan]\n"
                     "[dim]Type your goal or task in the input bar below and press Enter to formulate a plan.[/dim]\n"
-                    "[dim text-muted]Commands: /diff · /retry · /cancel · /purge · /web · /help[/dim]",
+                    "[dim]Commands: /diff · /retry · /cancel · /purge · /web · /help[/dim]",
                     classes="chat-welcome-banner",
                 )
             )

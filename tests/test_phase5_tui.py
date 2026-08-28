@@ -352,4 +352,19 @@ async def test_tui_screens_pilot(mock_daemon: tuple[Workspace, WorkflowService, 
             # Test App Screenshot
             app.action_take_screenshot()
 
+            # Test screen navigation actions (multiple transitions must not raise ScreenError)
+            app.action_goto_sessions()
+            await pilot.pause(0.05)
+            app.action_goto_inbox()
+            await pilot.pause(0.05)
+            app.action_goto_runs()
+            await pilot.pause(0.05)
+            app.action_goto_start()
+            await pilot.pause(0.05)
+            app.action_goto_logs()
+            await pilot.pause(0.05)
+            app.action_goto_sessions()
+            await pilot.pause(0.05)
+
+
 

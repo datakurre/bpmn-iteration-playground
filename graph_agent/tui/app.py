@@ -108,21 +108,18 @@ class GraphAgentApp(App):  # type: ignore
     def on_mount(self) -> None:
         from graph_agent.tui.screens.session_picker import SessionPickerScreen
 
-        self.install_screen(SessionPickerScreen(), name="sessions")
-        self.push_screen("sessions")
+        self.push_screen(SessionPickerScreen())
 
     def action_goto_sessions(self) -> None:
         from graph_agent.tui.screens.session_picker import SessionPickerScreen
 
-        self.install_screen(SessionPickerScreen(), name="sessions")
-        self.switch_screen("sessions")
+        self.switch_screen(SessionPickerScreen())
 
     def action_new_session(self) -> None:
         from graph_agent.tui.screens.session_picker import SessionPickerScreen
 
         picker = SessionPickerScreen()
-        self.install_screen(picker, name="sessions")
-        self.switch_screen("sessions")
+        self.switch_screen(picker)
         self.run_worker(picker.action_new_session())
 
     def action_open_palette(self) -> None:
@@ -133,27 +130,22 @@ class GraphAgentApp(App):  # type: ignore
     def action_goto_runs(self) -> None:
         from graph_agent.tui.screens.runs import RunsScreen
 
-        # Install fresh instance so the screen is re-mounted and data is refreshed.
-        self.install_screen(RunsScreen(), name="runs")
-        self.switch_screen("runs")
+        self.switch_screen(RunsScreen())
 
     def action_goto_inbox(self) -> None:
         from graph_agent.tui.screens.inbox import InboxScreen
 
-        self.install_screen(InboxScreen(), name="inbox")
-        self.switch_screen("inbox")
+        self.switch_screen(InboxScreen())
 
     def action_goto_start(self) -> None:
         from graph_agent.tui.screens.start import StartScreen
 
-        self.install_screen(StartScreen(), name="start")
-        self.switch_screen("start")
+        self.switch_screen(StartScreen())
 
     def action_goto_logs(self) -> None:
         from graph_agent.tui.screens.log import LogScreen
 
-        self.install_screen(LogScreen(), name="logs")
-        self.switch_screen("logs")
+        self.switch_screen(LogScreen())
 
 
 def _patch_data_table() -> None:
