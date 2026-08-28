@@ -31,7 +31,7 @@
         "description": "Process variable the exit status is published to.",
         "type": "String",
         "value": "shell_status",
-        "binding": { "type": "zeebe:output", "source": "=status" }
+        "binding": { "type": "zeebe:output", "source": "=exit_code" }
       }
     ]
   }

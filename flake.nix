@@ -1,5 +1,5 @@
 {
-  description = "Pi coding agent driven by mutable Camunda-7-flavour BPMN graphs";
+  description = "Pi coding agent driven by mutable Camunda-8-flavour BPMN graphs";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -58,7 +58,7 @@
             '';
 
             meta = {
-              description = "Pi coding agent driven by mutable Camunda-7-flavour BPMN graphs";
+              description = "Pi coding agent driven by mutable Camunda-8-flavour BPMN graphs";
               mainProgram = "graph-agent";
               license = lib.licenses.mit;
             };
