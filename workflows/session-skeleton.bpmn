@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Defs_session" targetNamespace="http://graph-agent/bpmn">
+  <bpmn:process id="session" name="Agent session" isExecutable="true">
+    <bpmn:documentation>What a session looks like before it has done anything.
+
+A session is one long-lived process instance whose definition is not fixed: as
+the agent takes on work, fragments are spliced in and this graph grows. What you
+see here is only the seed -- ask for the intent, craft an extension for it, run
+whatever that extension added, and come back for more.
+
+The definitions id must stay stable for the life of the session: recovery
+matches a snapshot to a graph on that id.</bpmn:documentation>
+    <bpmn:startEvent id="session_start" name="Session start">
+      <bpmn:outgoing>to_intent</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="to_intent" sourceRef="session_start" targetRef="await_intent" />
+    <bpmn:userTask id="await_intent" name="What should the agent do?">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="intent" label="Goal" type="textarea" />
+          <camunda:formField id="context" label="Context or constraints" type="textarea" />
+        </camunda:formData>
+        <camunda:inputOutput>
+          <camunda:outputParameter name="intent">${intent}</camunda:outputParameter>
+          <camunda:outputParameter name="context">${context}</camunda:outputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>to_intent</bpmn:incoming>
+      <bpmn:incoming>more_work</bpmn:incoming>
+      <bpmn:outgoing>to_craft</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="to_craft" sourceRef="await_intent" targetRef="craft" />
+    <bpmn:callActivity id="craft" name="Craft an extension" calledElement="craft_graph">
+      <bpmn:documentation>Calls the crafting graph, which is spliced into this definition when the
+session is created -- bpmn-elements resolves calledElement within the same
+definition, and keeping it inline makes the session one self-contained,
+self-documenting artifact.</bpmn:documentation>
+      <bpmn:incoming>to_craft</bpmn:incoming>
+      <bpmn:outgoing>to_gw_more</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:sequenceFlow id="to_gw_more" sourceRef="craft" targetRef="gw_more" />
+    <bpmn:exclusiveGateway id="gw_more" name="More work?">
+      <bpmn:incoming>to_gw_more</bpmn:incoming>
+      <bpmn:outgoing>more_work</bpmn:outgoing>
+      <bpmn:outgoing>session_over</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="more_work" name="continue" sourceRef="gw_more" targetRef="await_intent">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${session_done != true}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="session_over" name="done" sourceRef="gw_more" targetRef="session_end">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${session_done = true}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:endEvent id="session_end" name="Session ended">
+      <bpmn:incoming>session_over</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_session">
+    <bpmndi:BPMNPlane id="BPMNPlane_session" bpmnElement="session">
+      <bpmndi:BPMNShape id="session_start_di" bpmnElement="session_start">
+        <dc:Bounds x="57" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="await_intent_di" bpmnElement="await_intent">
+        <dc:Bounds x="175" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="craft_di" bpmnElement="craft">
+        <dc:Bounds x="325" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_more_di" bpmnElement="gw_more" isMarkerVisible="true">
+        <dc:Bounds x="500" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="session_end_di" bpmnElement="session_end">
+        <dc:Bounds x="657" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="to_intent_di" bpmnElement="to_intent">
+        <di:waypoint x="93" y="70" />
+        <di:waypoint x="175" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_craft_di" bpmnElement="to_craft">
+        <di:waypoint x="275" y="70" />
+        <di:waypoint x="325" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_gw_more_di" bpmnElement="to_gw_more">
+        <di:waypoint x="425" y="70" />
+        <di:waypoint x="500" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="more_work_di" bpmnElement="more_work">
+        <di:waypoint x="525" y="95" />
+        <di:waypoint x="525" y="140" />
+        <di:waypoint x="225" y="140" />
+        <di:waypoint x="225" y="110" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="session_over_di" bpmnElement="session_over">
+        <di:waypoint x="550" y="70" />
+        <di:waypoint x="657" y="70" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

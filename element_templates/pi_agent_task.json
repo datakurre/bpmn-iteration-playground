@@ -1,0 +1,51 @@
+[
+  {
+    "$schema": "https://unpkg.com/@camunda/element-templates-json-schema/resources/schema.json",
+    "name": "Pi Agent Task",
+    "id": "playground.pi-agent-task",
+    "version": 1,
+    "description": "Service task executed by the Pi coding agent harness (app/adapters/pi_client.py).",
+    "appliesTo": ["bpmn:ServiceTask"],
+    "properties": [
+      {
+        "label": "Harness type",
+        "type": "Hidden",
+        "value": "pi_agent",
+        "editable": false,
+        "binding": { "type": "camunda:property", "name": "harness_type" }
+      },
+      {
+        "label": "Agent role",
+        "description": "Role/prompt variant Pi runs for this task, e.g. planner, implementer, reviewer, assistant.",
+        "type": "String",
+        "value": "assistant",
+        "editable": true,
+        "binding": { "type": "camunda:property", "name": "agent_role" }
+      },
+      {
+        "label": "Instructions (input)",
+        "description": "Process variable mapped in as the task's free-form instructions.",
+        "type": "String",
+        "value": "${instructions}",
+        "editable": true,
+        "binding": { "type": "camunda:inputParameter", "name": "instructions" }
+      },
+      {
+        "label": "Status (output)",
+        "description": "Process variable to publish the harness result's `status` field to.",
+        "type": "String",
+        "value": "status",
+        "editable": true,
+        "binding": { "type": "camunda:outputParameter", "source": "${status}" }
+      },
+      {
+        "label": "Summary (output)",
+        "description": "Process variable to publish the harness result's `summary` field to.",
+        "type": "String",
+        "value": "summary",
+        "editable": true,
+        "binding": { "type": "camunda:outputParameter", "source": "${summary}" }
+      }
+    ]
+  }
+]
