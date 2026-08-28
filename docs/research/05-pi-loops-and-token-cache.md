@@ -150,9 +150,36 @@ sitting in the diagram since it was written:
    longer arrived. bpmnlint does not catch this; a reference-integrity test now
    does.
 
-## 5. Still open
+## 5. How it is actually wired
 
-`agent:turn` and the rest of the harnesses are not implemented yet — the graphs
-and the registry are ready for them, and that is the next piece of work. The
-design above is what they have to honour: one `Agent` per session, appended to
-and never rebuilt.
+`src/agent/pi-session.ts` holds one `Agent` for the life of the session, with
+`shouldStopAfterTurn: () => true`. The awkward part is tool execution: the graph
+wants to run the tools, Pi wants to run them itself and record the results. Both
+get their way by registering every tool as a **parked** tool — Pi calls it, the
+call suspends, an `agent:tool` activity does the real work, and Pi finalises the
+result into its own transcript exactly as it would have anyway. The transcript
+therefore has the shape a plain Pi run would produce, which is what the cache
+needs.
+
+That makes `agent:turn` return early by design: it resolves when the assistant
+has finished speaking, *before* the tools run, because running them is the
+graph's job. `agent:collect-tools` lets Pi finish the turn afterwards and reports
+whether the whole batch asked to terminate.
+
+The claim in §2 is not taken on trust. Pi's faux provider models prompt caching
+the way a real one does — keyed on session, crediting the shared prefix — so
+`src/agent/pi-session.test.ts` and `src/agent/runner.test.ts` both assert that a
+second turn on the same transcript reads from cache while the first does not. A
+future change that rebuilt the agent per activity, or swapped the system prompt
+between nodes, would fail them.
+
+`TurnRecord.usage` carries the same numbers into the studio, so the property is
+visible at runtime and not only in a test.
+
+## 6. Still open
+
+Graph mutation is implemented (`graph:extend`) but the crafting flow that drives
+it is not yet exercised end to end: `session-skeleton.bpmn` calls `craft_graph`
+through a `callActivity`, and bpmn-elements resolves `calledElement` only within
+the same definition, so the crafting graph still has to be spliced into the
+session at creation. Until then that call parks waiting for a signal.
