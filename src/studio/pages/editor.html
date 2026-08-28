@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BPMN Editor - graph-agent studio</title>
+  <script>
+    if (localStorage.theme === 'dark') { document.documentElement.classList.add('dark'); }
+    else { document.documentElement.classList.remove('dark'); }
+  </script>
+  <link rel="icon" href='data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"%3E%3Crect x="4" y="9" width="24" height="14" rx="3" fill="none" stroke="%230f766e" stroke-width="2.5"/%3E%3Ccircle cx="16" cy="16" r="3" fill="%230f766e"/%3E%3C/svg%3E'>
+  <link rel="stylesheet" href="/static/tailwind.css">
+  <link rel="stylesheet" href="/static/vendor/bpmn-js/assets/diagram-js.css">
+  <link rel="stylesheet" href="/static/vendor/bpmn-js/assets/bpmn-font/css/bpmn.css">
+  <link rel="stylesheet" href="/static/vendor/bpmn-js/assets/bpmn-js.css">
+  <link rel="stylesheet" href="/static/diagram-js-minimap.css">
+  <link rel="stylesheet" href="/static/properties-panel.css">
+  <link rel="stylesheet" href="/static/bpmn-js-token-simulation.css">
+  <link rel="stylesheet" href="/static/bpmn-js-bpmnlint.css">
+  <link rel="stylesheet" href="/static/element-template-chooser.css">
+</head>
+<body class="bg-bg text-ink font-sans antialiased min-h-screen overflow-x-hidden">
+<main class="max-w-[1600px] mx-auto px-5 py-4 pb-6">
+  <header class="relative z-50 flex justify-between gap-4 items-start sm:items-end border-b border-line pb-3 mb-3">
+    <div class="min-w-0 flex-1 pr-2">
+      <div class="text-[10px] font-bold text-accent tracking-widest uppercase">Visual Workflow Modeler</div>
+      <h1 class="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight text-ink mt-0.5 mb-0.5">BPMN Editor</h1>
+      <p class="text-muted text-xs sm:text-[13px] leading-relaxed hidden sm:block">Design and iterate executable BPMN 2.0 graphs with Camunda 7 element templates, linting and token simulation.</p>
+    </div>
+    <nav class="hidden md:flex items-center gap-1.5 shrink-0">
+      <a href="/" class="nav-link">Sessions</a>
+      <a href="/editor" class="nav-link active">Editor</a>
+      <button onclick="toggleTheme()" class="btn btn-secondary text-xs px-2 py-1 ml-1" title="Toggle light/dark theme">
+        <span class="theme-toggle-icon">&#9728;</span>
+      </button>
+    </nav>
+    <div class="md:hidden flex items-center gap-2 shrink-0">
+      <button onclick="toggleTheme()" class="btn btn-secondary text-xs px-2 py-1" title="Toggle light/dark theme">
+        <span class="theme-toggle-icon">&#9728;</span>
+      </button>
+      <button id="mobile-menu-btn" class="p-2 rounded-md bg-panel border border-line text-ink hover:bg-card-hover transition-colors" aria-label="Toggle menu">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+      </button>
+    </div>
+    <div id="mobile-menu" class="hidden md:hidden absolute top-full right-0 mt-1 w-44 py-2 bg-panel border border-line rounded-lg shadow-2xl z-[1000] flex flex-col gap-1">
+      <a href="/" class="nav-link mx-2">Sessions</a>
+      <a href="/editor" class="nav-link active mx-2">Editor</a>
+    </div>
+  </header>
+
+  <div class="flex flex-col h-[calc(100vh-140px)] min-h-[520px]">
+    <section class="flex justify-between items-center gap-2.5 mb-2.5 flex-wrap bg-panel border border-line rounded-md px-2.5 py-1.5 shadow-md">
+      <div class="flex items-center gap-1.5 flex-wrap">
+        <label for="template-select" class="text-muted text-xs font-semibold uppercase tracking-wide whitespace-nowrap">Workflow:</label>
+        <select id="template-select" class="w-48 border border-line rounded-md bg-card text-ink px-2 py-1 text-xs focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent">
+          <option value="">-- Blank new diagram --</option>
+        </select>
+        <button id="load-btn" class="btn btn-secondary px-2.5 py-1 text-xs" title="Load selected workflow">Load</button>
+        <button id="new-btn" class="btn btn-secondary px-2.5 py-1 text-xs" title="Create blank diagram">New</button>
+        <button id="layout-btn" class="btn btn-secondary px-2.5 py-1 text-xs" title="Auto-layout diagram nodes">Auto-layout</button>
+        <button id="undo-btn" class="btn btn-secondary px-2 py-1 text-xs" title="Undo (Ctrl+Z)">&#8617;</button>
+        <button id="redo-btn" class="btn btn-secondary px-2 py-1 text-xs" title="Redo (Ctrl+Y)">&#8618;</button>
+      </div>
+      <div class="flex items-center gap-1.5 flex-wrap">
+        <input type="file" id="file-input" accept=".bpmn,.xml" class="hidden">
+        <button id="open-file-btn" class="btn btn-secondary px-2.5 py-1 text-xs" title="Open a local BPMN file">Open</button>
+        <button id="download-btn" class="btn btn-secondary px-2.5 py-1 text-xs" title="Download BPMN XML">Export</button>
+        <input type="text" id="workflow-name" placeholder="workflow_name" value="custom_workflow" class="w-36 border border-line rounded-md bg-card text-ink px-2 py-1 text-xs focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent">
+        <button id="save-btn" class="btn px-3 py-1 text-xs">Save BPMN</button>
+        <button id="toggle-properties-btn" class="btn btn-secondary px-2.5 py-1 text-xs" title="Toggle properties panel (Alt+P)">Properties</button>
+      </div>
+    </section>
+
+    <div id="save-msg" class="hidden mb-2 p-2 rounded-md text-xs"></div>
+
+    <div class="flex flex-1 min-h-0 relative bg-white rounded-lg overflow-hidden border border-line shadow-2xl">
+      <div id="modeler" class="modeler-canvas flex-1 h-full min-w-[300px] relative bg-white">
+        <div class="diagram-controls !left-16">
+          <button class="ctrl-btn" id="ctrl-zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
+          <button class="ctrl-btn" id="ctrl-zoom-out" title="Zoom out" aria-label="Zoom out">-</button>
+          <button class="ctrl-btn" id="ctrl-zoom-fit" title="Fit diagram to viewport (Ctrl+0)" aria-label="Fit diagram to viewport">Fit</button>
+          <button class="ctrl-btn" id="ctrl-zoom-reset" title="Reset zoom (1:1)" aria-label="Reset zoom">1:1</button>
+          <button class="ctrl-btn" id="ctrl-minimap" title="Toggle minimap (M)" aria-label="Toggle minimap">Map</button>
+        </div>
+      </div>
+
+      <div id="resizer" class="resizer-handle" title="Drag to resize the properties panel"></div>
+
+      <aside id="properties-container" class="properties-container w-[330px] min-w-[240px] max-w-[600px] h-full flex flex-col bg-panel border-l border-line transition-[width] duration-150 overflow-hidden">
+        <div class="flex justify-between items-center px-3 py-2 bg-panel-header border-b border-line text-[11.5px] font-bold tracking-wider uppercase text-ink select-none shrink-0">
+          <span>Element properties</span>
+          <button id="close-properties-btn" class="bg-transparent border-0 text-muted hover:text-ink text-sm px-1.5 py-0.5 cursor-pointer" title="Collapse panel">&#10005;</button>
+        </div>
+        <div id="properties-panel" class="flex-1 overflow-y-auto bg-card text-ink"></div>
+      </aside>
+    </div>
+  </div>
+</main>
+<script src="/static/pages/base.js" defer></script>
+<script src="/static/bpmn-modeler-bundle.js"></script>
+<script src="/static/pages/editor.js" defer></script>
+</body>
+</html>

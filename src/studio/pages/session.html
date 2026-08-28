@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Session - graph-agent studio</title>
+  <script>
+    if (localStorage.theme === 'dark') { document.documentElement.classList.add('dark'); }
+    else { document.documentElement.classList.remove('dark'); }
+  </script>
+  <link rel="icon" href='data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"%3E%3Crect x="4" y="9" width="24" height="14" rx="3" fill="none" stroke="%230f766e" stroke-width="2.5"/%3E%3Ccircle cx="16" cy="16" r="3" fill="%230f766e"/%3E%3C/svg%3E'>
+  <link rel="stylesheet" href="/static/tailwind.css">
+  <link rel="stylesheet" href="/static/vendor/bpmn-js/assets/diagram-js.css">
+  <link rel="stylesheet" href="/static/vendor/bpmn-js/assets/bpmn-font/css/bpmn.css">
+  <link rel="stylesheet" href="/static/vendor/bpmn-js/assets/bpmn-js.css">
+  <link rel="stylesheet" href="/static/diagram-js-minimap.css">
+  <style>
+    /* Token overlay: where the BPMN token is standing right now. */
+    .djs-element.ga-token .djs-visual > :nth-child(1) {
+      stroke: var(--color-accent) !important;
+      stroke-width: 3px !important;
+    }
+    .djs-element.ga-visited .djs-visual > :nth-child(1) {
+      stroke: var(--color-sky) !important;
+    }
+  </style>
+</head>
+<body class="bg-bg text-ink font-sans antialiased min-h-screen overflow-x-hidden">
+<main class="max-w-[1600px] mx-auto px-5 py-4 pb-6">
+  <header class="relative z-50 flex justify-between gap-4 items-start sm:items-end border-b border-line pb-3 mb-3">
+    <div class="min-w-0 flex-1 pr-2">
+      <div class="text-[10px] font-bold text-accent tracking-widest uppercase">Session</div>
+      <h1 id="session-title" class="text-xl sm:text-2xl font-bold tracking-tight text-ink mt-0.5 mb-0.5">&hellip;</h1>
+      <p id="session-meta" class="text-muted text-xs sm:text-[13px]"></p>
+    </div>
+    <nav class="hidden md:flex items-center gap-1.5 shrink-0">
+      <a href="/" class="nav-link">Sessions</a>
+      <a href="/editor" class="nav-link">Editor</a>
+      <button onclick="toggleTheme()" class="btn btn-secondary text-xs px-2 py-1 ml-1" title="Toggle light/dark theme">
+        <span class="theme-toggle-icon">&#9728;</span>
+      </button>
+    </nav>
+  </header>
+
+  <div class="flex flex-col lg:flex-row gap-3 h-[calc(100vh-150px)] min-h-[520px]">
+    <div class="flex-1 min-h-0 relative bg-white rounded-lg overflow-hidden border border-line shadow-2xl">
+      <div id="viewer" class="w-full h-full bg-white relative">
+        <div class="diagram-controls !left-4">
+          <button class="ctrl-btn" id="ctrl-zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
+          <button class="ctrl-btn" id="ctrl-zoom-out" title="Zoom out" aria-label="Zoom out">-</button>
+          <button class="ctrl-btn" id="ctrl-zoom-fit" title="Fit diagram" aria-label="Fit diagram">Fit</button>
+          <button class="ctrl-btn" id="ctrl-zoom-reset" title="Reset zoom" aria-label="Reset zoom">1:1</button>
+          <button class="ctrl-btn" id="ctrl-minimap" title="Toggle minimap" aria-label="Toggle minimap">Map</button>
+        </div>
+      </div>
+    </div>
+
+    <aside class="w-full lg:w-[420px] shrink-0 flex flex-col gap-3 min-h-0">
+      <section class="bg-panel border border-line rounded-lg overflow-hidden flex flex-col min-h-0 flex-1">
+        <h2 class="px-3 py-2 bg-panel-header border-b border-line text-[11.5px] font-bold tracking-wider uppercase">Turns</h2>
+        <div id="turns" class="flex-1 overflow-y-auto text-xs"></div>
+      </section>
+      <section class="bg-panel border border-line rounded-lg overflow-hidden">
+        <h2 class="px-3 py-2 bg-panel-header border-b border-line text-[11.5px] font-bold tracking-wider uppercase">Graph revisions</h2>
+        <div id="revisions" class="max-h-48 overflow-y-auto text-xs"></div>
+      </section>
+    </aside>
+  </div>
+</main>
+<script src="/static/pages/base.js" defer></script>
+<script src="/static/bpmn-viewer-bundle.js"></script>
+<script src="/static/pages/session.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+static/
+.agents/
+coverage/
+htmlcov/
+*.log
+.DS_Store
+
+# vendored submodule build output (regenerate with `make vendor-build`)
+vendor/*/dist/
+vendor/*/node_modules/
