@@ -97,7 +97,14 @@ class BpmnStepper(Static):
             if p5_active
             else ("[green]✓ 5. Review[/green]" if p5_done else "[dim]5. Review[/dim]")
         )
-        steps.append("[bold green]★ Complete[/bold green]" if status == "completed" else "[dim]Done[/dim]")
+        if status == "completed":
+            steps.append("[bold green]★ Complete[/bold green]")
+        elif status == "cancelled":
+            steps.append("[bold red]✗ Cancelled[/bold red]")
+        elif status == "failed":
+            steps.append("[bold red]✗ Failed[/bold red]")
+        else:
+            steps.append("[dim]Done[/dim]")
         return steps
 
     def render(self) -> Any:

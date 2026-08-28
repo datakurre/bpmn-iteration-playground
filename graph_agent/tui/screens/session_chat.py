@@ -167,13 +167,17 @@ class SessionChatScreen(Screen):  # type: ignore
             )
 
         # 1. Render initial user prompt if present and not yet displayed
-        if "user_prompt" in data and "__USER_PROMPT_RENDERED__" not in self.displayed_task_ids:
+        if data.get("user_prompt") and "__USER_PROMPT_RENDERED__" not in self.displayed_task_ids:
             self.displayed_task_ids.add("__USER_PROMPT_RENDERED__")
             created = (self.run_state.get("created_at") or "")[:19].replace("T", " ")
             await scroll.mount(UserPromptBubble(data["user_prompt"], timestamp=created))
 
         # 2. Render planner card if plan is formulated
-        if "plan_summary" in data and "__PLANNER_RENDERED__" not in self.displayed_task_ids:
+        if (
+            data.get("plan_summary")
+            and data.get("plan_summary") != "None"
+            and "__PLANNER_RENDERED__" not in self.displayed_task_ids
+        ):
             self.displayed_task_ids.add("__PLANNER_RENDERED__")
             ext_spec = data.get("extension_spec") or {}
             await scroll.mount(PlannerMessageCard(data["plan_summary"], extension_spec=ext_spec))
@@ -182,14 +186,35 @@ class SessionChatScreen(Screen):  # type: ignore
         for task in tasks:
             tid = task.get("id") or ""
             tname = task.get("name") or task.get("bpmn_id") or "Task"
+            ttype = task.get("type", "")
             tstate = task.get("state", "")
             lower_name = tname.lower()
+
+            if ttype in (
+                "StartEvent",
+                "EndEvent",
+                "ExclusiveGateway",
+                "ParallelGateway",
+                "InclusiveGateway",
+                "ComplexGateway",
+                "EventBasedGateway",
+                "BoundaryEvent",
+                "IntermediateCatchEvent",
+                "IntermediateThrowEvent",
+                "SequenceFlow",
+            ):
+                continue
 
             if lower_name in (
                 "prompt user",
                 "formulate execution plan & graph",
                 "validate bpmn & invariants",
                 "apply graph extension",
+                "review plan & execution",
+                "start session",
+                "session completed",
+                "start",
+                "end",
             ):
                 continue
 
@@ -243,6 +268,10 @@ class SessionChatScreen(Screen):  # type: ignore
                 bar.set_mode("BUSY", "Agent turn executing in background...")
             elif status == "completed":
                 bar.set_mode("DONE", "Session completed. Type a new goal to continue.")
+            elif status == "cancelled":
+                bar.set_mode("IDLE", "Session was cancelled.")
+            elif status == "failed":
+                bar.set_mode("IDLE", "Session failed. Type /retry or press 't' to retry.")
             else:
                 bar.set_mode("IDLE", "Session paused.")
 
@@ -261,6 +290,7 @@ class SessionChatScreen(Screen):  # type: ignore
             from graph_agent.tui.widgets.chat_message import UserPromptBubble
 
             scroll = self.query_one("#chat-scroll", VerticalScroll)
+            self.displayed_task_ids.add("__USER_PROMPT_RENDERED__")
             await scroll.mount(UserPromptBubble(text))
 
             if self.active_human_task_id:

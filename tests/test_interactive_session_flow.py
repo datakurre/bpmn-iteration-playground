@@ -151,6 +151,32 @@ def test_tui_stepper_widget() -> None:
     rendered = stepper.render()
     assert rendered is not None
 
+    stepper.update_state({"workflow_id": "test12345", "status": "cancelled", "tasks": []})
+    steps = stepper._compute_steps()
+    assert any("Cancelled" in s for s in steps)
+
+    stepper.update_state({"workflow_id": "test12345", "status": "failed", "tasks": []})
+    steps = stepper._compute_steps()
+    assert any("Failed" in s for s in steps)
+
+
+def test_tui_planner_message_card() -> None:
+    """Test PlannerMessageCard rendering with None/empty/valid summaries."""
+    from graph_agent.tui.widgets.chat_message import PlannerMessageCard
+
+    card_none = PlannerMessageCard(summary=None)
+    rendered_none = card_none.render()
+    assert "None" not in str(rendered_none)
+    assert "Execution plan formulated" in str(rendered_none)
+
+    card_valid = PlannerMessageCard(
+        summary="Plan is ready",
+        extension_spec={"nodes": [{"name": "Step 1", "properties": {"agent_role": "coder"}}]},
+    )
+    rendered_valid = card_valid.render()
+    assert "Plan is ready" in str(rendered_valid)
+    assert "Step 1" in str(rendered_valid)
+
 
 def test_tui_diff_view_widget() -> None:
     """Test DiffViewWidget with sample diff text."""

@@ -83,7 +83,14 @@ def _cmd_init(workspace_root: Path | None) -> None:
 def _cmd_serve(workspace_root: Path | None, host: str, port: int, reload: bool) -> None:
     """Run the daemon in the foreground (blocking).  Used by --no-tui and --reload."""
     if reload:
-        uvicorn.run("graph_agent.api.server:app", host=host, port=port or 8000, reload=True)
+        uvicorn.run(
+            "graph_agent.api.server:app",
+            host=host,
+            port=port or 8000,
+            reload=True,
+            reload_dirs=["graph_agent"],
+            reload_excludes=[".agents*", ".git*", "*.log"],
+        )
         return
 
     workspace = Workspace.discover(workspace_root)

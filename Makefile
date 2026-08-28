@@ -31,7 +31,7 @@ clear-log:
 truncate-log: clear-log
 
 watch:
-	$(UV) run uvicorn graph_agent.api.server:app --reload --host $(HOST) --port $(PORT) 2>&1 | tee $(WATCH_LOG)
+	$(UV) run uvicorn graph_agent.api.server:app --reload --reload-dir graph_agent --reload-exclude '.agents*' --reload-exclude '.git*' --reload-exclude '*.log' --host $(HOST) --port $(PORT) 2>&1 | tee $(WATCH_LOG)
 
 run:
 	$(UV) run uvicorn graph_agent.api.server:app --host $(HOST) --port $(PORT)
@@ -39,7 +39,7 @@ run:
 start: run
 
 demo:
-	PI_EXECUTABLE="$(CURDIR)/graph_agent/data/pi-demo" $(UV) run uvicorn graph_agent.api.server:app --reload --host $(HOST) --port $(PORT)
+	PI_EXECUTABLE="$(CURDIR)/graph_agent/data/pi-demo" $(UV) run uvicorn graph_agent.api.server:app --reload --reload-dir graph_agent --reload-exclude '.agents*' --reload-exclude '.git*' --reload-exclude '*.log' --host $(HOST) --port $(PORT)
 
 lint:
 	$(UV) run ruff check .

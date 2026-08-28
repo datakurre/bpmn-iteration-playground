@@ -14,7 +14,6 @@ from typing import Any
 import pytest
 
 from graph_agent.adapters.base import AgentResult, BaseAdapter
-from graph_agent.adapters.mock_adapter import MockAdapter
 from graph_agent.agents_root import Workspace
 from graph_agent.persistence import WorkflowStore
 from graph_agent.workflow_service import WorkflowService
@@ -124,7 +123,7 @@ async def test_savepoint_before_and_after_harness_both_still_recorded(tmp_path: 
 
     store = WorkflowStore(":memory:")
     service = WorkflowService(store, adapter_registry=None, workspace=workspace)
-    service.registry.register(MockAdapter())
+    service.registry.register(FileWritingAdapter())
 
     started = await service.start("tests/fixtures/sequential_agents.bpmn", "sequential_agents", {})
     workflow_id = started["workflow_id"]

@@ -109,13 +109,27 @@ def test_cli_init_is_quiet_about_git_when_workspace_is_a_repo(tmp_path: Path, ca
 def test_cli_serve_reload_falls_back_to_uvicorn_run() -> None:
     with patch("graph_agent.cli.uvicorn.run") as mock_run:
         main(["serve", "--host", "0.0.0.0", "--port", "9001", "--reload"])
-    mock_run.assert_called_once_with("graph_agent.api.server:app", host="0.0.0.0", port=9001, reload=True)
+    mock_run.assert_called_once_with(
+        "graph_agent.api.server:app",
+        host="0.0.0.0",
+        port=9001,
+        reload=True,
+        reload_dirs=["graph_agent"],
+        reload_excludes=[".agents*", ".git*", "*.log"],
+    )
 
 
 def test_cli_serve_reload_with_no_port_defaults_to_8000() -> None:
     with patch("graph_agent.cli.uvicorn.run") as mock_run:
         main(["serve", "--reload"])
-    mock_run.assert_called_once_with("graph_agent.api.server:app", host="127.0.0.1", port=8000, reload=True)
+    mock_run.assert_called_once_with(
+        "graph_agent.api.server:app",
+        host="127.0.0.1",
+        port=8000,
+        reload=True,
+        reload_dirs=["graph_agent"],
+        reload_excludes=[".agents*", ".git*", "*.log"],
+    )
 
 
 def test_cli_serve_binds_free_port_writes_runtime_and_cleans_up(tmp_path: Path, _restore_admin_token_env: None) -> None:

@@ -59,15 +59,16 @@ class PlannerMessageCard(Static):
     }
     """
 
-    def __init__(self, summary: str, extension_spec: dict[str, Any] | None = None, **kwargs: Any) -> None:
+    def __init__(self, summary: str | None = None, extension_spec: dict[str, Any] | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.summary = summary
+        self.summary = summary or ""
         self.extension_spec = extension_spec or {}
 
     def render(self) -> Any:
         from rich.text import Text
 
-        lines = ["[bold green]⚡ BPMN Planner & Lint Verification[/bold green]\n", f"[white]{self.summary}[/white]"]
+        summary_text = self.summary if self.summary and self.summary != "None" else "Execution plan formulated."
+        lines = ["[bold green]⚡ BPMN Planner & Lint Verification[/bold green]\n", f"[white]{summary_text}[/white]"]
         nodes = self.extension_spec.get("nodes", [])
         if nodes:
             lines.append("\n[bold cyan]Planned BPMN Graph Pipeline:[/bold cyan]")

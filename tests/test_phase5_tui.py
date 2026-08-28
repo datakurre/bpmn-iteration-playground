@@ -349,8 +349,21 @@ async def test_tui_screens_pilot(mock_daemon: tuple[Workspace, WorkflowService, 
             await pilot.pause(0.05)
             await pilot.press("escape")
 
-            # Test App Screenshot
+            # Test App Screenshot and Deliver Screenshot
             app.action_take_screenshot()
+            app.action_screenshot()
+
+            # Test deliver_screenshot with automatic directory creation
+            non_existent_dir = ws.root / "nested" / "downloads"
+            assert not non_existent_dir.exists()
+            app.deliver_screenshot(path=str(non_existent_dir))
+            await pilot.pause(0.2)
+            assert non_existent_dir.exists()
+
+            # Test save_screenshot fallback when path is inside workspace
+            custom_dir = ws.root / "screenshots"
+            saved_file = app.save_screenshot(filename="custom.svg", path=str(custom_dir))
+            assert Path(saved_file).exists()
 
             # Test screen navigation actions (multiple transitions must not raise ScreenError)
             app.action_goto_sessions()

@@ -124,34 +124,89 @@
         default = self.apps.${pkgs.stdenv.hostPlatform.system}.graph-agent;
       });
 
-      devShells = forAllSystems (pkgs: {
-        default = pkgs.mkShell {
-          packages = [
-            pkgs.python314
-            pkgs.uv
-            pkgs.nodejs_22
-            pkgs.curl
-            pkgs.jq
-            pkgs.git
-            pkgs.zstd
-            pkgs.coreutils
-          ];
-          env = {
-            PYTHONUNBUFFERED = "1";
-            LOG_LEVEL = "debug";
-            PI_TIMEOUT_SECONDS = "1800";
-            PI_OFFLINE = "0";
-            PI_PROVIDER = "opencode-go";
-            PI_MODEL = "gpt-5.6-luna";
-            OPENAI_BASE_URL = "https://opencode.ai/go/v1";
-            OPENAI_API_KEY = "secret-injected-by-proxy";
+      devShells = forAllSystems (
+        pkgs:
+        let
+          open-browser = pkgs.writeShellApplication {
+            name = "open-browser";
+            runtimeInputs = [ pkgs.python314 ];
+            text = ''
+              python3 -c '
+import os, sys, json, urllib.parse, urllib.request, subprocess
+
+url = sys.argv[1] if len(sys.argv) > 1 else ""
+if not url:
+    sys.exit(0)
+
+cdp_port = os.environ.get("AGENT_SANDBOX_BROWSER_CDP_PORT")
+if cdp_port:
+    try:
+        encoded = urllib.parse.quote(url, safe="")
+        req = urllib.request.Request(f"http://127.0.0.1:{cdp_port}/json/new?{encoded}", method="PUT")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            tab_id = data.get("id")
+            if tab_id:
+                act_req = urllib.request.Request(f"http://127.0.0.1:{cdp_port}/json/activate/{tab_id}", method="POST")
+                urllib.request.urlopen(act_req, timeout=5)
+        sys.exit(0)
+    except Exception as exc:
+        sys.stderr.write(f"Warning: Failed to open URL via CDP on port {cdp_port}: {exc}\n")
+
+# Fallback: try xdg-open if present and not ourselves
+xdg = "/usr/bin/xdg-open"
+if os.path.exists(xdg):
+    try:
+        subprocess.run([xdg, url], check=False)
+        sys.exit(0)
+    except Exception:
+        pass
+
+sys.stderr.write(f"Browser open: {url}\n")
+' "$@"
+            '';
           };
-          shellHook = ''
-            export PI_EXECUTABLE="''${PWD}/node_modules/.bin/pi"
-            export PATH="''${PWD}/.venv/bin:''${PWD}/node_modules/.bin:''${PATH}"
-          '';
-        };
-      });
+          xdg-open = pkgs.writeShellApplication {
+            name = "xdg-open";
+            runtimeInputs = [ open-browser ];
+            text = ''
+              exec open-browser "$@"
+            '';
+          };
+        in
+        {
+          default = pkgs.mkShell {
+            packages = [
+              pkgs.python314
+              pkgs.uv
+              pkgs.nodejs_22
+              pkgs.curl
+              pkgs.jq
+              pkgs.git
+              pkgs.zstd
+              pkgs.coreutils
+              open-browser
+              xdg-open
+            ];
+            env = {
+              PYTHONUNBUFFERED = "1";
+              LOG_LEVEL = "debug";
+              PI_TIMEOUT_SECONDS = "1800";
+              PI_OFFLINE = "0";
+              PI_PROVIDER = "opencode-go";
+              PI_MODEL = "gpt-5.6-luna";
+              OPENAI_BASE_URL = "https://opencode.ai/go/v1";
+              OPENAI_API_KEY = "secret-injected-by-proxy";
+              BROWSER = "open-browser";
+            };
+            shellHook = ''
+              export PI_EXECUTABLE="''${PWD}/node_modules/.bin/pi"
+              export PATH="''${PWD}/.venv/bin:''${PWD}/node_modules/.bin:''${PATH}"
+              export BROWSER="open-browser"
+            '';
+          };
+        }
+      );
 
       checks = forAllSystems (pkgs: {
         graph-agent = self.packages.${pkgs.stdenv.hostPlatform.system}.graph-agent;
