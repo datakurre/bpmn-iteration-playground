@@ -75,6 +75,25 @@ graph-agent run "say hello" --model opencode-go/gpt-5.6-luna
 **Pi's own credential store.** Run `pi`, then `/login`, and pick a provider.
 `graph-agent` reads the same store.
 
+A single-turn run works end to end:
+
+```
+$ export ANTHROPIC_API_KEY=sk-ant-...
+$ graph-agent run "Reply with exactly: hello from graph-agent" --model anthropic/claude-haiku-4-5
+graph  pi-default-loop
+model  anthropic/claude-haiku-4-5
+
+  inject_pending  agent:steer  nothing queued
+  llm_turn  agent:turn  hello from graph-agent
+  drain_followup  agent:follow-up  no follow-up
+
+session 497c0b40  completed  1 turn(s)
+```
+
+**A run that calls tools does not yet.** See [Tool calls](#tool-calls) before
+pointing this at real work -- there are three open defects on that path, one of
+which bills you for an unbounded number of turns.
+
 ### Naming a model
 
 `--model` takes `provider/model`, or a bare provider (the first model that
@@ -159,6 +178,43 @@ the properties panel. See the [screenshots on the front page](index.html).
 `scripts/screenshot-docs.mjs` produces the screenshots in this repo's own
 `docs/` by driving the real CLI and a real Chromium against a throwaway
 workspace -- run it after any studio change to refresh them.
+
+## Tool calls
+
+`--dry-run` answers once and stops, so it never exercises the half of
+`pi-default-loop` that matters most: the tool batch, `agent:collect-tools`,
+`agent:prepare-next-turn`, and the loop back for another turn. Driving that
+path with a real model surfaces three defects, and until they are fixed a run
+that uses tools will not do useful work.
+
+**The prompt is re-sent on every turn**
+([#25](https://github.com/datakurre/graph-agent/issues/25)). `llm_turn` maps
+`=prompt` unconditionally and the variable is never cleared, so the transcript
+grows as `user / assistant / toolResult / user / assistant / toolResult ...`
+with the *same* user message each time. The model answers the tool call, is
+handed its own original request again, and re-issues the call. One
+`graph-agent run` observed here reached **110 turns** -- 110 billed API calls --
+and still reported `completed` with exit code 0. Do not leave a tool-using run
+unattended.
+
+**The model is not told what arguments a tool takes**
+([#26](https://github.com/datakurre/graph-agent/issues/26)).
+`PiSession.parkingTool` advertises every tool as
+`{type: "object", additionalProperties: true}` described only as "Deferred to
+the process graph", discarding the real schema (`bash` requires `command`,
+`read` requires `path`, and so on). The model guesses; when it guesses wrong
+the call arrives with `arguments: {}` and the real tool fails with
+`/bin/bash: line 1: undefined: command not found`.
+
+**A batch of more than one tool call is broken**
+([#27](https://github.com/datakurre/graph-agent/issues/27)). The multi-instance
+`tool_call` element variable never reaches the harness, so `resolveToolCall`
+falls back to the first call for every instance. With two calls in a message,
+the first runs twice, the second never runs, and the session ends in `error`.
+Parallel tool calls are normal for current models, so this is the main path.
+
+None of the three is visible under `--dry-run`, and the test suite scripts tool
+calls one at a time, so `make test` stays green through all of them.
 
 ## The bundled graphs
 

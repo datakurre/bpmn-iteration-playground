@@ -19,9 +19,13 @@ TypeScript that actually does the work an activity names.
 - [Harness reference](harnesses.html) -- every job type a graph can dispatch to,
   and what it expects on the activity.
 
-The CLI can drive `pi-default-loop` and `shell-demo` end to end. The other two
-bundled graphs -- `session-skeleton` and the `craft-graph` it calls -- open on
-a human gate that nothing can answer yet; see [the bundled
+The CLI can drive `pi-default-loop` and `shell-demo` end to end against a real
+model, for a single turn. Runs that call **tools** hit three open defects --
+including one that re-sends the prompt every iteration and bills you for an
+unbounded number of turns; read [Tool
+calls](getting-started.html#tool-calls) before pointing this at real work. The
+other two bundled graphs -- `session-skeleton` and the `craft-graph` it calls --
+open on a human gate that nothing can answer yet; see [the bundled
 graphs](getting-started.html#the-bundled-graphs).
 
 ## Screenshots

@@ -91,6 +91,28 @@ the message is in the session's `meta.json` under `turns[].error`, and the
 studio's session view renders it. The same silence covers a harness that
 returns `failed()` -- it scrolls past as an ordinary progress line.
 
+**`--dry-run` does not cover the tool path.** Its scripted provider answers
+once and stops, so the tool batch, `agent:collect-tools`,
+`agent:prepare-next-turn` and the loop-back are never exercised; the suite
+scripts tool calls one at a time, so `make test` is green through all three of
+the defects below. Verify anything touching that path against a real model, in
+a throwaway workspace -- `createPiToolExecutor` gives the model real
+`read`/`write`/`edit`/`bash` against the cwd, so do not run it in this
+checkout.
+
+- The prompt is re-sent every iteration (`llm_turn` maps `=prompt`
+  unconditionally, nothing clears it), so a tool-using run never converges. One
+  observed run reached 110 billed turns and still reported `completed` with
+  exit 0 (issue #25). Cap or watch any real run.
+- `PiSession.parkingTool` replaces each tool's real schema and description with
+  an open object, so the model guesses argument names and often sends `{}`
+  (issue #26).
+- The multi-instance `tool_call` never reaches `agent:tool`; `resolveToolCall`
+  silently falls back to `calls[0]`, so a two-call batch runs the first call
+  twice and errors (issue #27). Reproduce with two `fauxToolCall`s in one
+  `fauxAssistantMessage` -- note the signature is `fauxToolCall(name, args)`,
+  two arguments, not three.
+
 Of the four bundled graphs, only `pi-default-loop` and `shell-demo` are
 drivable from the CLI. `session-skeleton` opens on a user task and nothing
 wires `runSession`'s `onWait`, so it parks and `resume` re-parks (issue #21);
