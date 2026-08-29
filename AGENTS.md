@@ -55,3 +55,45 @@ deploys it to GitHub Pages on push to `main`). Its screenshots
 drives the real CLI and studio the same way `scripts/verify-editor.mjs`
 does -- regenerate them with that script rather than editing the PNGs by
 hand, and after any change to the studio's pages.
+
+`npm install` rewrites `package-lock.json` under some npm versions (the
+`integrity` key moves within each entry) without changing a single resolved
+version. That churn is noise -- `git checkout -- package-lock.json` before
+committing unless a dependency actually changed. `scripts/screenshot-docs.mjs`
+likewise rewrites all four PNGs on every run; keep them only when the studio
+changed.
+
+## Running against a real model
+
+`--dry-run` covers most of what you need: it walks a graph with a scripted
+provider, so no credential and no egress. Reach for a real model only when the
+thing under test is the model call itself.
+
+When you do, credentials come from Pi's `ModelRuntime` -- export the provider's
+key (`OPENCODE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, ...) or use
+`pi` + `/login`. **Always pass `--model provider/model`.** The default resolver
+reads Pi's entire static catalogue rather than the providers you hold
+credentials for, so an unqualified `run` picks `amazon-bedrock/...` and fails
+(issue #17). One OpenCode key covers two separate catalogues: `opencode` (Zen)
+and `opencode-go` (Go).
+
+A real run needs outbound HTTPS to the provider's host -- `opencode.ai:443` for
+either OpenCode catalogue. The `agent-sandbox` block above declares that, but
+it only governs the agent sandbox: a CI runner or a hosted session enforces its
+own egress policy, and a blocked host shows up as a turn that stops with
+`error`. Confirm reachability (`curl -sS -o /dev/null -w '%{http_code}'
+https://opencode.ai/`) before concluding the code is at fault.
+
+**A failed run looks like a successful one.** `graph-agent run` exits 0 and
+records `status: completed` even when every turn errored, and neither `run` nor
+`show` prints the reason (issue #18). Read the turn list, not the exit code;
+the message is in the session's `meta.json` under `turns[].error`, and the
+studio's session view renders it. The same silence covers a harness that
+returns `failed()` -- it scrolls past as an ordinary progress line.
+
+Of the four bundled graphs, only `pi-default-loop` and `shell-demo` are
+drivable from the CLI. `session-skeleton` opens on a user task and nothing
+wires `runSession`'s `onWait`, so it parks and `resume` re-parks (issue #21);
+`craft-graph` is its callee and maps `=intent`, which only that form supplies,
+so `--graph craft-graph` starts a turn with no prompt (issue #22). Don't spend
+time debugging either as if it were broken locally.

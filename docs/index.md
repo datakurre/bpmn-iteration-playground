@@ -14,9 +14,15 @@ activity in the diagram dispatches to a **harness**: a small piece of
 TypeScript that actually does the work an activity names.
 
 - [Getting started](getting-started.html) -- build the project, run the bundled
-  Pi demo loop, and pair it with a deterministic `shell` step.
+  Pi demo loop, pair it with a deterministic `shell` step, point it at a real
+  model, and read a run that went wrong.
 - [Harness reference](harnesses.html) -- every job type a graph can dispatch to,
   and what it expects on the activity.
+
+The CLI can drive `pi-default-loop` and `shell-demo` end to end. The other two
+bundled graphs -- `session-skeleton` and the `craft-graph` it calls -- open on
+a human gate that nothing can answer yet; see [the bundled
+graphs](getting-started.html#the-bundled-graphs).
 
 ## Screenshots
 

@@ -22,6 +22,7 @@ run of the studio).
 make setup   # npm install
 make build   # bundle the CLI, the studio's bpmn-js bundles, and Tailwind CSS
 make init    # seed $XDG_CONFIG_HOME/graph-agent with the bundled graph library
+             # (`graph-agent where` prints the config, library and state paths)
 ```
 
 Walk the bundled Pi agent loop with no credentials and no network:
@@ -36,10 +37,28 @@ or pair one Pi turn with a deterministic `shell` step:
 graph-agent run "verify this workspace" --dry-run --graph shell-demo
 ```
 
-To run against a real model, authenticate with Pi first (`pi`, then
-`/login`) and drop `--dry-run`. See [`docs/getting-started.md`](docs/getting-started.md)
-for the full walkthrough, and [`docs/harnesses.md`](docs/harnesses.md) for
+To run against a real model, give Pi a credential -- either export the
+provider's API key, or authenticate once with `pi` and `/login` -- and drop
+`--dry-run`:
+
+```
+export OPENCODE_API_KEY=sk-...
+graph-agent run "say hello" --model opencode-go/gpt-5.6-luna
+```
+
+Name the model. Omitting `--model` currently resolves against Pi's whole
+static catalogue rather than the providers you hold credentials for, so it
+can pick one you never configured ([#17](https://github.com/datakurre/graph-agent/issues/17)),
+and a turn that fails still reports `completed` with exit code 0
+([#18](https://github.com/datakurre/graph-agent/issues/18)) -- the reason is in
+the session's `meta.json`, or in the studio's session view. See
+[`docs/getting-started.md`](docs/getting-started.md) for the full walkthrough
+and its troubleshooting notes, and [`docs/harnesses.md`](docs/harnesses.md) for
 every job type a graph can dispatch to.
+
+Of the four bundled graphs, `pi-default-loop` and `shell-demo` run from the
+CLI; `session-skeleton` and the `craft-graph` it calls open on a human gate
+that nothing can answer yet ([#21](https://github.com/datakurre/graph-agent/issues/21)).
 
 (Under Nix: `nix develop --command make <target>`.)
 
