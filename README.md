@@ -51,10 +51,24 @@ static catalogue rather than the providers you hold credentials for, so it
 can pick one you never configured ([#17](https://github.com/datakurre/graph-agent/issues/17)),
 and a turn that fails still reports `completed` with exit code 0
 ([#18](https://github.com/datakurre/graph-agent/issues/18)) -- the reason is in
-the session's `meta.json`, or in the studio's session view. See
-[`docs/getting-started.md`](docs/getting-started.md) for the full walkthrough
-and its troubleshooting notes, and [`docs/harnesses.md`](docs/harnesses.md) for
-every job type a graph can dispatch to.
+the session's `meta.json`, or in the studio's session view.
+
+**Runs that call tools are not ready yet.** A single turn works. Anything that
+reaches the tool batch hits three open defects: the initial prompt is re-sent
+on every iteration so the loop never converges and keeps billing
+([#25](https://github.com/datakurre/graph-agent/issues/25)), the model is never
+told what arguments a tool takes
+([#26](https://github.com/datakurre/graph-agent/issues/26)), and a batch of more
+than one call runs the first call twice and errors
+([#27](https://github.com/datakurre/graph-agent/issues/27)). None of them shows
+up under `--dry-run`. Read
+[Tool calls](docs/getting-started.md#tool-calls) before pointing this at real
+work.
+
+See [`docs/getting-started.md`](docs/getting-started.md) for the full
+walkthrough and its troubleshooting notes, and
+[`docs/harnesses.md`](docs/harnesses.md) for every job type a graph can
+dispatch to.
 
 Of the four bundled graphs, `pi-default-loop` and `shell-demo` run from the
 CLI; `session-skeleton` and the `craft-graph` it calls open on a human gate
