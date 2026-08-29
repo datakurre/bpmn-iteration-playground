@@ -316,13 +316,27 @@ async function drive(
   const visited = new Set<string>();
   const listener = new EventEmitter();
 
+  // `engine.execution` (what postponedIds reads) is not yet assigned the very
+  // first time a fresh run parks on its own first activity -- execute() has not
+  // finished its own setup by the time that "activity.wait" fires -- so
+  // postponedIds alone would silently report no token at all for exactly the
+  // case session-skeleton.bpmn hits on every run: await_intent, first thing.
+  // Tracking waits directly from the events that announce them covers that gap;
+  // postponedIds stays the primary source once the engine is up, chiefly for
+  // multi-instance batches whose individual instances postponedIds sees but a
+  // single "activity.wait" on the subProcess would not.
+  const waiting = new Set<string>();
+  const currentTokens = (): string[] => [...new Set([...postponedIds(engine), ...waiting])];
+
   listener.on("activity.end", (api: { id: string; content?: { output?: unknown } }) => {
     visited.add(api.id);
+    waiting.delete(api.id);
     applyUnharnessedOutput(byId.get(api.id), api.content?.output, sharedOutput);
-    void options.onTokens?.(postponedIds(engine), [...visited]);
+    void options.onTokens?.(currentTokens(), [...visited]);
   });
   listener.on("activity.wait", (api: { id: string; signal?: (message?: unknown) => void }) => {
-    void options.onTokens?.(postponedIds(engine), [...visited]);
+    waiting.add(api.id);
+    void options.onTokens?.(currentTokens(), [...visited]);
 
     const answer = options.onWait?.(api.id);
 
@@ -331,6 +345,7 @@ async function drive(
     // a live api from the postponed set, or the signal lands on a stale one and
     // the activity simply never wakes up.
     if (answer !== undefined && !isPromise(answer)) {
+      waiting.delete(api.id);
       api.signal?.(answer);
       return;
     }
@@ -344,6 +359,7 @@ async function drive(
         if (options.stopOnWait !== false) void engine.stop();
         return;
       }
+      waiting.delete(api.id);
       signalPostponed(engine, api.id, resolved);
     });
   });

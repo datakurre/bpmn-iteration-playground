@@ -166,21 +166,34 @@ async function drive(
     },
   });
 
+  // bpmn-engine reports "completed" for any run that reaches an end event, even
+  // pi-default-loop's own error path: end_error is a plain terminate end event,
+  // not a thrown error, so a turn that errored looks exactly like one that
+  // finished cleanly unless something checks. A *graph* is free to route a
+  // failed() harness result anywhere it likes (craft-graph's lint_exhausted ->
+  // craft_rejected is a legitimate, non-error outcome), so this deliberately
+  // does not treat every failed() activity in the run as trouble -- only the
+  // last turn actually reaching Pi, since that is what end_error's own
+  // condition (`stop_reason = "error"`) keys on.
+  const lastTurn = store.readMeta().turns.at(-1);
+  const trouble = result.outcome === "completed" && lastTurn?.stopReason === "error" ? lastTurn : undefined;
+  const outcome = trouble ? "error" : result.outcome;
+  const error = result.error ?? (trouble ? new Error(trouble.error ?? `${trouble.activityId} stopped: error`) : undefined);
+
   store.writeEngineState(result.state);
   store.update((meta) => {
-    meta.status =
-      result.outcome === "completed" ? "completed" : result.outcome === "error" ? "error" : "wait";
+    meta.status = outcome === "completed" ? "completed" : outcome === "error" ? "error" : "wait";
     // The token reports come from getPostponed() as the run proceeds, so the
     // last one seen is whatever was in flight at the time. A run that reached an
     // end event has no token anywhere; leaving the stale set behind would draw
     // one on the diagram forever.
-    if (result.outcome === "completed") meta.tokens = [];
+    if (outcome === "completed") meta.tokens = [];
   });
 
   return {
     sessionId: store.id,
-    outcome: result.outcome,
+    outcome,
     turns: store.readMeta().turns.length,
-    ...(result.error === undefined ? {} : { error: result.error }),
+    ...(error === undefined ? {} : { error }),
   };
 }

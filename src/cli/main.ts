@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { graphPath, startStudio } from "../studio/server.ts";
 import { resumeSession, runSession } from "../agent/runner.ts";
 import { createPiToolExecutor } from "../agent/tool-executor.ts";
-import { dryRunModel, resolveModel } from "./model.ts";
+import { dryRunModel, readConfiguredModel, resolveModel } from "./model.ts";
 import { listSessions, SessionStore } from "../agent/session-store.ts";
 import {
   bundledWorkflowsDir,
@@ -36,9 +36,11 @@ Sessions live in your user state directory and record the project they ran in.
 
 Options
   --graph <id>         graph to run (default: pi-default-loop)
-  --model <spec>       provider/model to use (default: the first configured)
+  --model <spec>       provider/model to use (default: config.toml's [agent]
+                        model, or the first model with credentials)
   --dry-run            walk the graph without calling a model
   --name <name>        label the session
+  --answer key=value   answer a parked human gate (resume only; repeatable)
   --port <n>           studio port (0 picks a free one)
   --all                with ls, include sessions from other projects
   -h, --help           show this help
@@ -168,6 +170,7 @@ interface RunFlags {
   model?: string;
   dryRun: boolean;
   name?: string;
+  answer?: Record<string, unknown>;
   positionals: string[];
 }
 
@@ -179,6 +182,7 @@ function runFlags(args: string[]): RunFlags {
       model: { type: "string" },
       "dry-run": { type: "boolean", default: false },
       name: { type: "string" },
+      answer: { type: "string", multiple: true },
     },
     allowPositionals: true,
     strict: false,
@@ -188,12 +192,26 @@ function runFlags(args: string[]): RunFlags {
     ...(values.model === undefined ? {} : { model: String(values.model) }),
     dryRun: values["dry-run"] === true,
     ...(values.name === undefined ? {} : { name: String(values.name) }),
+    ...(values.answer === undefined ? {} : { answer: parseAnswers(values.answer as string[]) }),
     positionals: positionals.map(String),
   };
 }
 
-async function resolveRunModel(flags: RunFlags): Promise<Awaited<ReturnType<typeof resolveModel>>> {
-  return flags.dryRun ? dryRunModel() : resolveModel(flags.model);
+/** `key=value` pairs from repeated `--answer`, coercing obvious booleans and numbers. */
+function parseAnswers(pairs: string[]): Record<string, unknown> {
+  const answer: Record<string, unknown> = {};
+  for (const pair of pairs) {
+    const eq = pair.indexOf("=");
+    if (eq === -1) throw new Error(`--answer '${pair}' is not 'key=value'`);
+    const key = pair.slice(0, eq);
+    const raw = pair.slice(eq + 1);
+    answer[key] = raw === "true" ? true : raw === "false" ? false : raw !== "" && !Number.isNaN(Number(raw)) ? Number(raw) : raw;
+  }
+  return answer;
+}
+
+async function resolveRunModel(flags: RunFlags, p: Paths): Promise<Awaited<ReturnType<typeof resolveModel>>> {
+  return flags.dryRun ? dryRunModel() : resolveModel(flags.model, readConfiguredModel(p.configFile));
 }
 
 async function cmdRun(args: string[]): Promise<number> {
@@ -210,7 +228,7 @@ async function cmdRun(args: string[]): Promise<number> {
 
   let chosen;
   try {
-    chosen = await resolveRunModel(flags);
+    chosen = await resolveRunModel(flags, p);
   } catch (error) {
     process.stderr.write(`graph-agent: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
@@ -229,9 +247,11 @@ async function cmdRun(args: string[]): Promise<number> {
     streamFn: chosen.streamFn,
     tools: createPiToolExecutor(project),
     onProgress: (line) => process.stdout.write(`  ${line}\n`),
+    ...(flags.answer === undefined ? {} : { onWait: () => flags.answer }),
   });
 
   process.stdout.write(`\nsession ${result.sessionId}  ${result.outcome}  ${result.turns} turn(s)\n`);
+  reportWait(p, result.sessionId, result.outcome);
   if (result.error) {
     process.stderr.write(`error: ${result.error.message}\n`);
     return 1;
@@ -251,7 +271,7 @@ async function cmdResume(args: string[]): Promise<number> {
 
   let chosen;
   try {
-    chosen = await resolveRunModel(flags);
+    chosen = await resolveRunModel(flags, p);
   } catch (error) {
     process.stderr.write(`graph-agent: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
@@ -267,13 +287,28 @@ async function cmdResume(args: string[]): Promise<number> {
       streamFn: chosen.streamFn,
       tools: createPiToolExecutor(projectId()),
       onProgress: (line) => process.stdout.write(`  ${line}\n`),
+      ...(flags.answer === undefined ? {} : { onWait: () => flags.answer }),
     });
     process.stdout.write(`\nsession ${result.sessionId}  ${result.outcome}  ${result.turns} turn(s)\n`);
+    reportWait(p, result.sessionId, result.outcome);
+    if (result.error) {
+      process.stderr.write(`error: ${result.error.message}\n`);
+    }
     return result.error ? 1 : 0;
   } catch (error) {
     process.stderr.write(`graph-agent: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
   }
+}
+
+/** Names what a stopped run is parked on, so `resume` isn't a guessing game. */
+function reportWait(p: Paths, sessionId: string, outcome: string): void {
+  if (outcome !== "stopped") return;
+  const tokens = new SessionStore(p, sessionId).readMeta().tokens;
+  if (tokens.length === 0) return;
+  process.stdout.write(
+    `waiting on ${tokens.join(", ")}\nresume with: graph-agent resume ${sessionId} --answer key=value\n`,
+  );
 }
 
 function cmdLs(all: boolean): number {
@@ -315,6 +350,7 @@ function cmdShow(id: string | undefined): number {
     process.stdout.write(
       `${String(turn.index).padStart(3)}  ${turn.activityId}  ${turn.harness ?? ""}  ${turn.stopReason ?? ""}\n`,
     );
+    if (turn.error) process.stdout.write(`       ${turn.error}\n`);
   }
   return 0;
 }

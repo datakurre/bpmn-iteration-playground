@@ -207,6 +207,24 @@ const parkingExtended = parking
     <sequenceFlow id="f3" sourceRef="added" targetRef="end" />
     <endEvent id="end" />`);
 
+describe("runGraph parking", () => {
+  it("reports the token on the very first activity, not just later ones", async () => {
+    // engine.execution -- what postponedIds() normally reads -- is not assigned
+    // yet the first time a fresh run parks on its own first activity, so this
+    // has to come from the wait event itself rather than the postponed set.
+    const tokenReports: string[][] = [];
+    const result = await runGraph(parking, {
+      harnesses: {},
+      onTokens: (tokens) => {
+        tokenReports.push(tokens);
+      },
+    });
+
+    expect(result.outcome).toBe("stopped");
+    expect(tokenReports.at(-1)).toEqual(["gate"]);
+  });
+});
+
 describe("resumeGraph", () => {
   it("continues a parked run into a node the graph gained while it waited", async () => {
     const first = await runGraph(parking, { harnesses: {} });
