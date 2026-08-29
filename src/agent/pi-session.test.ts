@@ -18,7 +18,13 @@ function session(responses: unknown[], sessionId = "s1") {
     pi: new PiSession({
       model,
       systemPrompt: "You are a test agent.",
-      toolNames: ["read", "bash"],
+      // Permissive schemas: these tests exercise PiSession's own parking and
+      // turn-orchestration behaviour, scripting arbitrary tool-call arguments
+      // that are not meant to satisfy a real tool's schema.
+      tools: [
+        { name: "read", description: "Read a file.", parameters: { type: "object", additionalProperties: true } },
+        { name: "bash", description: "Run a bash command.", parameters: { type: "object", additionalProperties: true } },
+      ],
       streamFn: (m, context, options) => faux.provider.streamSimple(m, context, options),
       sessionId,
     }),

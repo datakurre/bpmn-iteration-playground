@@ -91,9 +91,19 @@ export interface RunResult {
  * zeebe:ioMapping sources are FEEL. The mapping module stays pure and takes an
  * evaluator, so this is where it is supplied: a flat scope, since the source is
  * evaluated against process variables (input) or the job result (output).
+ *
+ * `content` is forwarded rather than hardcoded empty: bpmn-elements binds a
+ * multi-instance loop's `elementVariable` (a subProcess's `zeebe:loopCharacteristics
+ * inputElement`, e.g. tool_batch's `tool_call`) as a process variable literally
+ * named `content` holding that iteration's message, not as a bare top-level
+ * name -- so `scope` already carries it under that key when present. Hardcoding
+ * `content: {}` here clobbered it back to empty, since feelContext() lets its own
+ * explicit `content` win over whatever the environment.variables spread already
+ * produced under the same bare name. An ordinary activity has no such variable,
+ * so `scope.content` is `undefined` and this stays `{}` exactly as before.
  */
 const feelIn = (expression: string, scope: Record<string, unknown>): unknown =>
-  evaluateFeel(expression, { environment: { variables: scope, output: {} }, content: {} });
+  evaluateFeel(expression, { environment: { variables: scope, output: {} }, content: scope.content ?? {} });
 
 /**
  * Retries a harness call on a thrown/rejected error only -- a job failure in C8

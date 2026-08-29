@@ -121,6 +121,52 @@ describe("runSession on the built-in loop", () => {
     expect(detail.status).toBe("error");
     expect(detail.turns[0]?.stopReason).toBe("error");
   });
+
+  it("does not re-send the initial prompt once the transcript has a tool result (issue #25)", async () => {
+    const faux = scripted([
+      fauxAssistantMessage([fauxToolCall("bash", { command: "echo hi" })], { stopReason: "toolUse" }),
+      fauxAssistantMessage([fauxText("done")], { stopReason: "stop" }),
+    ]);
+    const userMessageCounts: number[] = [];
+    const streamFn = ((m: never, context: never, o: never) => {
+      const messages = (context as { messages: Array<{ role: string }> }).messages;
+      userMessageCounts.push(messages.filter((message) => message.role === "user").length);
+      return faux.provider.streamSimple(m, context, o);
+    }) as RunSessionOptions["streamFn"];
+
+    const result = await runSession(options(faux, { prompt: "run echo hi", streamFn }));
+
+    expect(result.error).toBeUndefined();
+    expect(result.turns).toBe(2);
+    // Both requests saw exactly one user message: the loop's second llm_turn
+    // continues the same transcript on the tool result rather than handing the
+    // model its own original request again as a fresh one.
+    expect(userMessageCounts).toEqual([1, 1]);
+  });
+
+  it("runs each call in a multi-call batch exactly once (issue #27)", async () => {
+    const faux = scripted([
+      fauxAssistantMessage(
+        [fauxToolCall("bash", { command: "echo A" }), fauxToolCall("bash", { command: "echo B" })],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage([fauxText("done")], { stopReason: "stop" }),
+    ]);
+    const ran: string[] = [];
+    const tools = {
+      list: () => [{ name: "bash", description: "Run a bash command.", parameters: { type: "object", additionalProperties: true } }],
+      run: async (name: string, args: Record<string, unknown>) => {
+        ran.push(`${name} ${JSON.stringify(args)}`);
+        return { content: "ok" };
+      },
+    };
+
+    const result = await runSession(options(faux, { prompt: "run two commands", tools }));
+
+    expect(result.error).toBeUndefined();
+    expect(result.outcome).toBe("completed");
+    expect(ran).toEqual(['bash {"command":"echo A"}', 'bash {"command":"echo B"}']);
+  });
 });
 
 describe("callActivity into the shared library", () => {

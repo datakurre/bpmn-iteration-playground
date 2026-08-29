@@ -7,16 +7,18 @@
  */
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import type { ToolOutcome } from "./pi-session.ts";
+import type { ToolOutcome, ToolSpec } from "./pi-session.ts";
 
 export interface ToolExecutor {
-  /** Tool names the model may call. */
-  names(): string[];
+  /** Tools the model may call, with the schema it should be told about. */
+  list(): ToolSpec[];
   run(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolOutcome>;
 }
 
 interface HarnessToolLike {
   name: string;
+  description: string;
+  parameters: unknown;
   execute(
     toolCallId: string,
     params: unknown,
@@ -42,7 +44,7 @@ export function createPiToolExecutor(cwd: string): ToolExecutor {
   );
 
   return {
-    names: () => [...tools.keys()],
+    list: () => [...tools.values()].map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
     async run(name, args, signal) {
       const tool = tools.get(name);
       if (!tool) {
@@ -70,7 +72,12 @@ export function createPiToolExecutor(cwd: string): ToolExecutor {
 /** An executor that runs nothing, for dry runs and tests. */
 export function createNoopToolExecutor(names: string[] = ["read", "bash"]): ToolExecutor {
   return {
-    names: () => names,
+    list: () =>
+      names.map((name) => ({
+        name,
+        description: `Deferred to the process graph (mock ${name}).`,
+        parameters: { type: "object", additionalProperties: true },
+      })),
     run: async (name, args) => ({ content: `[dry run] ${name} ${JSON.stringify(args)}` }),
   };
 }

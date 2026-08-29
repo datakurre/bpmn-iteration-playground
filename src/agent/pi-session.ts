@@ -26,6 +26,13 @@ export interface ToolCallRequest {
   arguments: Record<string, unknown>;
 }
 
+/** What the model is told a tool looks like -- name, description, and parameter schema. */
+export interface ToolSpec {
+  name: string;
+  description: string;
+  parameters: unknown;
+}
+
 export interface TurnOutcome {
   /** Why the assistant stopped: `stop`, `toolUse`, `length`, `error`, `aborted`. */
   stopReason: string;
@@ -51,8 +58,13 @@ export interface ToolOutcome {
 export interface PiSessionOptions {
   model: Model<any>;
   systemPrompt: string;
-  /** Tool names the model may call. Kept stable for the session: see the note above. */
-  toolNames: string[];
+  /**
+   * Tools the model may call, with the schema it should be told about --
+   * kept stable for the session: see the note above. Execution is always
+   * parked regardless of what description/parameters say; only what the
+   * model sees comes from here.
+   */
+  tools: ToolSpec[];
   /** Injected so tests can drive a scripted provider. */
   streamFn: ConstructorParameters<typeof Agent>[0]["streamFn"];
   sessionId?: string;
@@ -90,22 +102,24 @@ export class PiSession {
       initialState: {
         systemPrompt: options.systemPrompt,
         model: options.model,
-        tools: options.toolNames.map((name) => this.parkingTool(name)),
+        tools: options.tools.map((spec) => this.parkingTool(spec)),
         messages: [],
       },
     });
   }
 
   /**
-   * A tool that does nothing except wait for the graph. Pi sees an ordinary
-   * tool; the work happens in an `agent:tool` activity.
+   * A tool that does nothing except wait for the graph. Pi -- and the model --
+   * see the real tool's own name, description and parameter schema; only
+   * `execute` is swapped out, so the model gets real argument names instead of
+   * guessing them against an undescribed `{ type: "object" }` (issue #26).
    */
-  private parkingTool(name: string): AgentTool<any> {
+  private parkingTool(spec: ToolSpec): AgentTool<any> {
     return {
-      name,
-      label: name,
-      description: `Deferred to the process graph.`,
-      parameters: { type: "object", additionalProperties: true } as never,
+      name: spec.name,
+      label: spec.name,
+      description: spec.description,
+      parameters: spec.parameters as never,
       execute: async (toolCallId: string): Promise<AgentToolResult<unknown>> => {
         const outcome = await new Promise<ToolOutcome>((resolve) => {
           this.parked.set(toolCallId, { resolve });

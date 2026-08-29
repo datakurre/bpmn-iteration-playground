@@ -45,6 +45,7 @@ until the response is complete.</bpmn:documentation>
         <zeebe:taskDefinition type="agent:turn" />
         <zeebe:ioMapping>
           <zeebe:input source="=prompt" target="prompt" />
+          <zeebe:output source="=null" target="prompt" />
           <zeebe:output source="=stop_reason" target="stop_reason" />
           <zeebe:output source="=tool_calls" target="tool_calls" />
           <zeebe:output source="=usage" target="last_usage" />
@@ -110,7 +111,7 @@ Pi's toolExecution setting; the default there is parallel.</bpmn:documentation>
         <bpmn:extensionElements>
           <zeebe:taskDefinition type="agent:tool" />
           <zeebe:ioMapping>
-            <zeebe:input source="=tool_call" target="tool_call" />
+            <zeebe:input source="=content.tool_call" target="tool_call" />
             <zeebe:output source="=terminate" target="tool_result" />
           </zeebe:ioMapping>
         </bpmn:extensionElements>
