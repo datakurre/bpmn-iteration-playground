@@ -56,6 +56,19 @@ const DEFAULT_SYSTEM_PROMPT =
   "You are a coding agent whose control flow is described by a BPMN process. " +
   "Do the work the current step asks for and nothing more.";
 
+/**
+ * Whether a graph has an `agent:tool` activity anywhere -- the only thing
+ * that can actually run a tool call an `agent:turn` model asks for. A cheap
+ * substring check rather than a parse: `zeebe:taskDefinition` always writes
+ * its job type as a quoted attribute (`type="agent:tool"`), and a false
+ * positive here only costs offering a tool that then goes unused, not a wedged
+ * run -- the failure mode this exists to avoid only comes from the opposite,
+ * a false *negative*, which a literal match on the attribute does not produce.
+ */
+export function graphOffersTools(xml: string): boolean {
+  return xml.includes('type="agent:tool"');
+}
+
 export async function runSession(options: RunSessionOptions): Promise<SessionOutcome> {
   const sessionId = options.sessionId ?? randomUUID().slice(0, 8);
   const store = new SessionStore(options.paths, sessionId);
@@ -115,10 +128,27 @@ async function drive(
   options: Omit<RunSessionOptions, "graphPath">,
   start: Drive,
 ): Promise<SessionOutcome> {
+  let graph = store.currentGraph() ?? "";
+
+  // agent:tool is what actually runs a tool call the model asks for; a graph
+  // with no such activity anywhere has nowhere to send one. Pi's tool list is
+  // fixed for the whole session -- its prompt cache covers it, and changing
+  // tools mid-session would invalidate every turn's cache -- so this is
+  // decided once, up front, rather than per turn: a graph like craft-graph's
+  // draft_fragment otherwise offers the model four tools it can never
+  // actually run, and the model reaching for one wedges the run one activity
+  // downstream of the real cause, surfacing as "a turn is already in flight"
+  // on the *next* turn rather than naming the stuck call (issue #36). With no
+  // tools declared, Pi's request carries none at all, so the model has
+  // nothing to call in the first place -- this holds for the rest of the
+  // session even if a later splice adds an agent:tool activity, since the
+  // tool list itself cannot change without the same cache cost.
+  const canRunTools = graphOffersTools(graph);
+
   const pi = new PiSession({
     model: options.model,
     systemPrompt: options.systemPrompt || DEFAULT_SYSTEM_PROMPT,
-    tools: options.tools.list(),
+    tools: canRunTools ? options.tools.list() : [],
     streamFn: options.streamFn,
     sessionId: store.id,
   });
@@ -128,8 +158,6 @@ async function drive(
   // process variable that the turn activity maps in.
   const steering: string[] = [];
   const followUp: string[] = [];
-
-  let graph = store.currentGraph() ?? "";
 
   const harnesses = createHarnesses({
     pi,
@@ -178,10 +206,20 @@ async function drive(
   // does not treat every failed() activity in the run as trouble -- only the
   // last turn actually reaching Pi, since that is what end_error's own
   // condition (`stop_reason = "error"`) keys on.
-  const lastTurn = store.readMeta().turns.at(-1);
+  const meta = store.readMeta();
+  const lastTurn = meta.turns.at(-1);
   const trouble = result.outcome === "completed" && lastTurn?.stopReason === "error" ? lastTurn : undefined;
   const outcome = trouble ? "error" : result.outcome;
-  const error = result.error ?? (trouble ? new Error(trouble.error ?? `${trouble.activityId} stopped: error`) : undefined);
+  // Prefer `result.error`'s own message, but a harness that gave up outside
+  // the ordinary turn path (graph:lint's redraft-attempt cap, chiefly) may
+  // have already recorded a clearer one in meta.harnessError: bpmn-elements
+  // re-wraps a thrown error at every callActivity boundary it crosses, and by
+  // the time it reaches here `result.error.message` can be empty even though
+  // the original cause is well known.
+  const fallbackMessage =
+    meta.harnessError ?? trouble?.error ?? lastTurn?.error ?? `${lastTurn?.activityId ?? "run"} stopped: error`;
+  const error =
+    outcome !== "error" ? undefined : result.error?.message ? result.error : new Error(fallbackMessage);
 
   store.writeEngineState(result.state);
   store.update((meta) => {

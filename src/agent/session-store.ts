@@ -32,6 +32,15 @@ export interface SessionMeta {
   tokens: string[];
   /** Activity ids executed at least once. */
   visited: string[];
+  /**
+   * Set by a harness that gave up and deliberately ended the run outside the
+   * ordinary agent:turn path (graph:lint's redraft-attempt cap, chiefly).
+   * bpmn-elements re-wraps a thrown error at every callActivity boundary it
+   * crosses, and the original message is not reliably reachable off the
+   * resulting error's own `.message` by the time it reaches the CLI -- this
+   * is a channel this project controls instead.
+   */
+  harnessError?: string;
 }
 
 export class SessionStore {
@@ -158,6 +167,7 @@ export class SessionStore {
       visited: meta.visited,
       turns: meta.turns,
       revisions: meta.revisions,
+      ...(meta.harnessError === undefined ? {} : { harnessError: meta.harnessError }),
     };
   }
 }

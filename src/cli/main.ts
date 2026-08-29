@@ -1,5 +1,5 @@
 import { parseArgs } from "node:util";
-import { copyFileSync, existsSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { graphPath, startStudio } from "../studio/server.ts";
 import { resumeSession, runSession } from "../agent/runner.ts";
@@ -24,6 +24,8 @@ Usage
 
 Commands
   init                 create the user-level config and graph library
+                        (--refresh: take the bundled version of any graph
+                        that differs from your library copy, backed up first)
   run [prompt]         start a session in this project and drive it turn by turn
   resume <session>     recover engine + transcript state and continue
   ls                   list this project's sessions (--all for every project)
@@ -61,7 +63,7 @@ export async function main(argv: string[]): Promise<number> {
 
   switch (command) {
     case "init":
-      return cmdInit();
+      return cmdInit(argv.slice(1));
     case "where":
       return cmdWhere();
     case "studio":
@@ -93,15 +95,33 @@ function requirePaths(): Paths | null {
   return p;
 }
 
-function cmdInit(): number {
+function cmdInit(args: string[]): number {
   const p = ensurePaths(resolvePaths());
+  const refresh = args.includes("--refresh") || args.includes("--force");
 
-  // Seed the library with the bundled graphs, but never overwrite a graph the
-  // user has since edited -- the library is theirs, and it is shared by every
-  // project, so a re-init in a new checkout must not clobber it.
+  // Seed the library with the bundled graphs, but never silently overwrite a
+  // graph the user has since edited -- the library is theirs, and it is
+  // shared by every project, so a re-init in a new checkout must not clobber
+  // it. A bundled graph can still be *fixed* upstream after someone's already
+  // seeded a copy, though, and nothing said so (issue #35): a stale copy just
+  // keeps running its old bug with no warning. So compare content, report a
+  // mismatch, and let --refresh take the bundled copy (backed up first).
+  const stale: string[] = [];
+  const refreshed: string[] = [];
   for (const { id, path: from } of listBpmnFiles(bundledWorkflowsDir())) {
     const to = join(p.workflowsDir, `${id}.bpmn`);
-    if (!existsSync(to)) copyFileSync(from, to);
+    if (!existsSync(to)) {
+      copyFileSync(from, to);
+      continue;
+    }
+    if (readFileSync(from, "utf8") === readFileSync(to, "utf8")) continue;
+    if (refresh) {
+      copyFileSync(to, `${to}.bak`);
+      copyFileSync(from, to);
+      refreshed.push(id);
+    } else {
+      stale.push(id);
+    }
   }
 
   if (!existsSync(p.configFile)) {
@@ -118,6 +138,16 @@ function cmdInit(): number {
   }
 
   process.stdout.write(`graphs   ${p.workflowsDir}\nsessions ${p.sessionsDir}\nconfig   ${p.configFile}\n`);
+  if (refreshed.length > 0) {
+    process.stdout.write(`refreshed from the bundled version (old copy backed up as .bak): ${refreshed.join(", ")}\n`);
+  }
+  if (stale.length > 0) {
+    process.stdout.write(
+      `${stale.length} graph(s) differ from the bundled version: ${stale.join(", ")}\n` +
+        `If that's your own edit, ignore this. Otherwise a bug fix may not have reached your copy yet -- ` +
+        `re-run \`graph-agent init --refresh\` to take the bundled version (your copy is backed up as <id>.bpmn.bak).\n`,
+    );
+  }
   return 0;
 }
 
@@ -376,6 +406,7 @@ function cmdShow(id: string | undefined): number {
     );
     if (turn.error) process.stdout.write(`       ${turn.error}\n`);
   }
+  if (detail.harnessError) process.stdout.write(`\n${detail.harnessError}\n`);
   return 0;
 }
 

@@ -72,6 +72,8 @@ export interface SessionDetail extends SessionSummary {
   visited: string[];
   turns: TurnRecord[];
   revisions: GraphRevision[];
+  /** Set by a harness that gave up and deliberately ended the run outside the ordinary turn path. */
+  harnessError?: string;
 }
 
 /** Pushed over the studio WebSocket when a session advances or its graph changes. */
