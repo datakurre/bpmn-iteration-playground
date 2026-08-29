@@ -144,13 +144,29 @@ run hangs rather than failing, which reads like a deadlock in the engine.
 
 ### The bundled graphs
 
-Only `pi-default-loop` and `shell-demo` are drivable end to end.
-`session-skeleton` parks on a user task; `resume --answer key=value` answers it
-(issue #21, fixed) but the `callActivity` after it fails with `cannot resume
-running process <craft_graph>` and the run then keeps executing forever after
-the CLI has printed its result -- 1065 iterations in 40s, ignores SIGTERM,
-needs `kill -9` (issue #30). The loop is unbounded because `craft-graph`'s
-`lint_attempts >= 3` cap never trips on the `failed()` path (issue #31).
-**Never point that at a real model.** `craft-graph` standalone still maps
-`=intent`, which only that form supplies (issue #22). Don't spend time
-debugging any of it as if it were broken locally.
+`pi-default-loop`, `shell-demo` and `craft-graph` are drivable from the CLI.
+`session-skeleton` parks on a user task and `resume --answer key=value` answers
+it, but the `craft-graph` redraft loop it then enters does not terminate: 1671
+iterations in 45s, no result line, and **neither Ctrl-C nor SIGTERM stops it**
+-- only `kill -9` (issue #34). Never point that path at a real model; it is
+~37 billed calls a second from a command that reports nothing. The same
+scenario is bounded when driven in-process through `runSession`'s `onWait`,
+which is why the suite stays green -- **a test that only calls `onWait` cannot
+cover the `run` -> park -> `resume --answer` route the CLI actually takes**,
+and that gap has now hidden two separate bugs.
+
+### The graph library goes stale, silently
+
+`graph-agent init` seeds `$XDG_CONFIG_HOME/graph-agent/workflows` and never
+overwrites (issue #35). A library seeded before a fix keeps running the old
+graph, `init` says nothing, and `run` names the graph but not its provenance.
+**Before concluding a bundled graph is still broken, diff your library copy
+against `workflows/`.** That trap made #22 look open here when it was fixed,
+and left `pi-default-loop` running without the #25 fix that had stopped it
+billing 110 turns:
+
+```
+for f in workflows/*.bpmn; do
+  diff -q "$f" "$(graph-agent where | awk '/^graphs/{print $2}')/$(basename "$f")"
+done
+```

@@ -249,16 +249,17 @@ checkout.
 
 ## The bundled graphs
 
-`make init` seeds four graphs. Two run from the CLI today, two do not:
+`make init` seeds four graphs. Three run from the CLI; the fourth starts but
+cannot finish:
 
 | Graph | `graph-agent run --graph …` |
 |---|---|
 | `pi-default-loop` | yes -- the default, tool calls included |
 | `shell-demo` | yes |
-| `session-skeleton` | starts, then parks on a gate you cannot get past |
-| `craft-graph` | no -- called by `session-skeleton`, not run directly |
+| `craft-graph` | yes -- falls back to the seeded prompt when there is no session `intent` |
+| `session-skeleton` | parks on a gate; answering it runs away (see below) |
 
-A run that reaches a `zeebe:userTask` now says so and tells you how to continue:
+A run that reaches a `zeebe:userTask` says so and tells you how to continue:
 
 ```
 $ graph-agent run "hi" --dry-run --graph session-skeleton
@@ -267,22 +268,37 @@ waiting on await_intent
 resume with: graph-agent resume eacee704 --answer key=value
 ```
 
-Answering it, though, does not yet get you into `craft-graph`:
-`resume --answer intent=...` fails with `cannot resume running process
-<craft_graph>` and then keeps executing the graph forever *after* printing that
-result -- 1065 iterations in 40 seconds, needing `kill -9`
-([#30](https://github.com/datakurre/graph-agent/issues/30)). The loop it lands
-in is unbounded because `craft-graph`'s `lint_attempts >= 3` cap never trips
-([#31](https://github.com/datakurre/graph-agent/issues/31)). **Do not run that
-against a real model** -- it is one billed call per iteration.
+**Do not answer that gate against a real model.** `resume --answer intent=...`
+now reaches `craft-graph`, but its redraft loop does not terminate: 1671
+iterations in 45 seconds, no result line, and neither Ctrl-C nor `SIGTERM`
+stops it -- only `kill -9`
+([#34](https://github.com/datakurre/graph-agent/issues/34)). That is one billed
+call per iteration, roughly 37 a second, from a command that never reports
+anything. The same path is bounded when driven in-process through
+`runSession`'s `onWait`, which is why the regression suite does not catch it.
 
-`craft-graph` standalone still starts a turn with nothing to say, because its
-first activity maps `=intent` and only `session-skeleton`'s form supplies it
-([#22](https://github.com/datakurre/graph-agent/issues/22)).
+`craft-graph` on its own is fine -- its first activity falls back to the prompt
+you type when no `intent` is in scope.
 
-Both are worth reading in the studio -- they are the design for the
-self-extending session -- but `pi-default-loop` and `shell-demo` are what you
-can drive from a terminal right now.
+## Keeping the graph library current
+
+`graph-agent init` seeds `$XDG_CONFIG_HOME/graph-agent/workflows` but **never
+overwrites**, by design: the library is yours and shared across projects. The
+cost is that a bundled graph fixed upstream never reaches a library seeded
+before the fix, and nothing warns you
+([#35](https://github.com/datakurre/graph-agent/issues/35)). A graph that
+"still" misbehaves after a fix landed is worth checking first:
+
+```
+for f in workflows/*.bpmn; do
+  diff -q "$f" "$(graph-agent where | awk '/^graphs/{print $2}')/$(basename "$f")"
+done
+```
+
+Copy the bundled file over your library copy to take the fix (back up first if
+you have edited it). This is not hypothetical: it made a fixed defect look open
+here, and it left the default graph running without a fix that had stopped it
+billing 110 turns.
 
 ## Troubleshooting
 
