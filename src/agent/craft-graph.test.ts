@@ -199,6 +199,46 @@ describe("running craft-graph standalone (issue #22)", () => {
   });
 });
 
+describe("craft-graph's redraft loop is bounded (issue #31)", () => {
+  it("reaches craft_rejected within a bounded number of turns when the model never drafts valid BPMN", async () => {
+    // The end-to-end regression the issue asked for: a model that never drafts
+    // valid BPMN must not run away. harnesses.test.ts pins the specific defect
+    // (graph:lint's attempt count is now the harness's own, not read back from
+    // context.variables.lint_attempts); this is the integration-level check
+    // that the whole self-extension path -- session-skeleton's await_intent
+    // into craft-graph's callActivity -- stays bounded end to end.
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-craft-bound-"));
+    const paths: Paths = ensurePaths(
+      resolvePaths({ XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") } as NodeJS.ProcessEnv),
+    );
+    const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", name: "Faux" }] });
+    // Enough identical, always-invalid replies to cover every redraft attempt
+    // the loop could legitimately make; if the bound didn't hold this would
+    // run out and surface as a turn error instead of a bounded rejection.
+    faux.setResponses(
+      Array.from({ length: 10 }, () => fauxAssistantMessage([fauxText("not valid bpmn")], { stopReason: "stop" })) as never,
+    );
+
+    const result = await runSession({
+      paths,
+      project: "/tmp/some-project",
+      graphPath: join(bundledWorkflowsDir(), "session-skeleton.bpmn"),
+      prompt: "",
+      model: faux.getModel(),
+      systemPrompt: "test agent",
+      streamFn: ((m: never, context: never, o: never) => faux.provider.streamSimple(m, context, o)) as RunSessionOptions["streamFn"],
+      tools: createNoopToolExecutor(["read", "bash"]),
+      onWait: (activityId) =>
+        activityId === "await_intent" ? { intent: "add a lint step", context: "", done: true } : undefined,
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.outcome).toBe("completed");
+    // Three draft attempts, matching gw_lint's lint_attempts >= 3 cap.
+    expect(result.turns).toBe(3);
+  }, 15000);
+});
+
 describe("running the linked graph with the real harness registry", () => {
   it("carries the session's intent into the crafting graph's first turn", async () => {
     const home = mkdtempSync(join(tmpdir(), "graph-agent-craft-"));

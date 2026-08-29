@@ -241,10 +241,6 @@ function engineOptions(
   };
 }
 
-function isPromise(value: unknown): value is Promise<unknown> {
-  return typeof (value as { then?: unknown } | null)?.then === "function";
-}
-
 /** Answer a parked activity by looking up a live api for it. */
 function signalPostponed(engine: EngineInstance, activityId: string, message: unknown): void {
   const postponed = (engine.execution?.getPostponed() ?? []) as Array<{
@@ -349,22 +345,20 @@ async function drive(
     void options.onTokens?.(currentTokens(), [...visited]);
 
     const answer = options.onWait?.(api.id);
-
-    // The api handed to a listener is only good for the duration of that event.
-    // A synchronous answer can use it directly; anything awaited has to re-acquire
-    // a live api from the postponed set, or the signal lands on a stale one and
-    // the activity simply never wakes up.
-    if (answer !== undefined && !isPromise(answer)) {
-      waiting.delete(api.id);
-      api.signal?.(answer);
-      return;
-    }
     if (answer === undefined) {
       if (options.stopOnWait !== false) void engine.stop();
       return;
     }
 
-    void answer.then((resolved) => {
+    // Always settle on a fresh microtask and re-acquire a live api from the
+    // postponed set, even for a synchronous answer: the api handed to this
+    // listener is only good for the duration of the event, and signalling it
+    // inline -- in the same synchronous pass that can instantiate a brand-new
+    // nested process, e.g. a callActivity reached for the first time mid-resume
+    // -- hits a bpmn-elements message-redelivery race that throws "cannot
+    // resume running process" on that fresh child (issue #30). A one-microtask
+    // deferral sidesteps it without any real latency.
+    void Promise.resolve(answer).then((resolved) => {
       if (resolved === undefined) {
         if (options.stopOnWait !== false) void engine.stop();
         return;
@@ -394,6 +388,26 @@ async function drive(
       activities,
     };
   } catch (error) {
+    // `engine.waitFor("error")` resolves on the first error event and we return
+    // right away, but nothing else here ever told the engine to stop -- so
+    // whatever kept running (a nested process mid-callActivity, chiefly: see
+    // issue #30, where resuming into one that had not started yet threw
+    // "cannot resume running process") kept right on running, detached from
+    // this call and from anything that could interrupt it. A caller await-ing
+    // this function sees it return; the model calls and BPMN activity churn
+    // do not stop with it unless told to here.
+    //
+    // Not awaited: an engine that has already errored out cleanly (nothing left
+    // running, e.g. "no harness registered for X") never settles its own stop()
+    // promise, and awaiting it here would hang this call over a stop that has
+    // nothing to do. Firing it and moving on matches the abort-signal handler
+    // above, which does the same for the same reason.
+    try {
+      void Promise.resolve(engine.stop()).catch(() => {});
+    } catch {
+      // Already broken; stopping is a best-effort cleanup, not a second error
+      // to report over the one that actually happened.
+    }
     return {
       outcome: "error",
       state: await engine.getState(),

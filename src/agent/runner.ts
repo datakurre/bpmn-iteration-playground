@@ -41,6 +41,8 @@ export interface RunSessionOptions {
    * with a snapshot so it can be resumed once someone answers.
    */
   onWait?: (activityId: string) => Promise<unknown> | unknown;
+  /** Aborting stops the engine -- a snapshot is still saved, so `resume` picks up from there. */
+  signal?: AbortSignal;
 }
 
 export interface SessionOutcome {
@@ -161,6 +163,7 @@ async function drive(
       });
     },
     ...(options.onWait === undefined ? {} : { onWait: options.onWait }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
     onExpressionWarning: (warning) => {
       options.onProgress?.(`  FEEL warning: ${warning.message} in ${warning.expression}`);
     },
