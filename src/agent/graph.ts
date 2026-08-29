@@ -9,6 +9,7 @@ import { BpmnModdle } from "bpmn-moddle";
 import * as elements from "bpmn-elements";
 import { Serializer, TypeResolver } from "moddle-context-serializer";
 import zeebeDescriptor from "zeebe-bpmn-moddle/resources/zeebe.json" with { type: "json" };
+import { harnessOf, type ActivityLike } from "./zeebe.ts";
 
 export const MODDLE_OPTIONS = { zeebe: zeebeDescriptor };
 
@@ -84,6 +85,34 @@ export interface SpliceCheck {
   reason?: string;
 }
 
+interface ModdleFlowElement {
+  $type: string;
+  id: string;
+  flowElements?: ModdleFlowElement[];
+  [key: string]: unknown;
+}
+
+function flattenFlowElements(nodes: ModdleFlowElement[] = []): ModdleFlowElement[] {
+  return nodes.flatMap((node) => [node, ...flattenFlowElements(node.flowElements)]);
+}
+
+/**
+ * Every `bpmn:ServiceTask` in a graph, adapted to the `{ id, type, behaviour }`
+ * shape `harnessOf` (written against the running engine's own activities)
+ * expects -- see workflows.test.ts's `asActivity` for the same adaptation.
+ */
+async function serviceTasks(xml: string): Promise<ActivityLike[]> {
+  const moddle = new BpmnModdle(MODDLE_OPTIONS);
+  const { rootElement } = await moddle.fromXML(xml.trim());
+  const processes = ((rootElement as unknown as { rootElements?: ModdleFlowElement[] }).rootElements ?? []).filter(
+    (node) => node.$type === "bpmn:Process",
+  );
+  const all = processes.flatMap((process) => flattenFlowElements(process.flowElements));
+  return all
+    .filter((node) => node.$type === "bpmn:ServiceTask")
+    .map((node) => ({ id: node.id, type: node.$type, behaviour: node as unknown as ActivityLike["behaviour"] }));
+}
+
 /**
  * Graph mutation has to be additive with stable ids.
  *
@@ -91,8 +120,22 @@ export interface SpliceCheck {
  * carried live state and then disappears -- or gets renumbered -- leaves the
  * recovered definition referring to something that no longer exists. Adding
  * nodes and re-pointing sequence flows is safe; removing or renaming is not.
+ *
+ * `knownJobTypes`, when given, also rejects a *new* service task whose
+ * `zeebe:taskDefinition type` names no registered harness. Without this, a
+ * drafted fragment that invents a plausible-looking job type (`shell:exec`
+ * instead of `shell`, say) passes as a perfectly additive splice, gets
+ * approved and committed, and only dies the next time the graph actually
+ * reaches that activity -- by which point the session that produced it is
+ * long closed (issue #40). Only *new* activities are checked: an existing
+ * one already ran once as part of a graph someone approved, and revalidating
+ * it here would reject a splice for a job type problem that predates it.
  */
-export async function checkSplice(previousXml: string, nextXml: string): Promise<SpliceCheck> {
+export async function checkSplice(
+  previousXml: string,
+  nextXml: string,
+  knownJobTypes?: ReadonlySet<string>,
+): Promise<SpliceCheck> {
   const before = await elementIds(previousXml);
   const after = await elementIds(nextXml);
   const added = [...after].filter((id) => !before.has(id));
@@ -104,6 +147,24 @@ export async function checkSplice(previousXml: string, nextXml: string): Promise
       removed,
       reason: `graph mutation must be additive; these elements were removed or renamed: ${removed.join(", ")}`,
     };
+  }
+  if (knownJobTypes) {
+    const addedIds = new Set(added);
+    for (const task of await serviceTasks(nextXml)) {
+      if (!addedIds.has(task.id)) continue;
+      const jobType = harnessOf(task);
+      if (jobType !== undefined && knownJobTypes.has(jobType)) continue;
+      const valid = [...knownJobTypes].sort().join(", ");
+      return {
+        ok: false,
+        added,
+        removed,
+        reason:
+          jobType === undefined
+            ? `${task.id} has no zeebe:taskDefinition type; valid job types are: ${valid}`
+            : `${task.id} names job type '${jobType}', which no harness handles; valid job types are: ${valid}`,
+      };
+    }
   }
   return { ok: true, added, removed };
 }

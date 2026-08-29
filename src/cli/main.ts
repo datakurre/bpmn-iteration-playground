@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { graphPath, startStudio } from "../studio/server.ts";
 import { resumeSession, runSession } from "../agent/runner.ts";
 import { createPiToolExecutor } from "../agent/tool-executor.ts";
@@ -410,5 +411,34 @@ function cmdShow(id: string | undefined): number {
   return 0;
 }
 
-const exitCode = await main(process.argv.slice(2));
-if (exitCode !== 0) process.exitCode = exitCode;
+/**
+ * A consumer downstream of a pipe (`graph-agent ls | head -5`) can close it
+ * before every write lands; Node turns that into an unhandled 'error' event
+ * -- an EPIPE stack dump -- unless something is listening. Real CLIs treat it
+ * as an early, clean exit instead.
+ */
+export function installEpipeGuard(streams: Array<NodeJS.WritableStream>): void {
+  for (const stream of streams) {
+    stream.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code !== "EPIPE") throw error;
+    });
+  }
+}
+
+// Guarded so importing this module (as the test below does) does not also run
+// the CLI against the test runner's own argv. realpath on argv[1] because an
+// installed `graph-agent` binary is a symlink node does not itself resolve
+// the way import.meta.url does.
+function isEntryPoint(): boolean {
+  try {
+    return process.argv[1] !== undefined && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
+
+if (isEntryPoint()) {
+  installEpipeGuard([process.stdout, process.stderr]);
+  const exitCode = await main(process.argv.slice(2));
+  if (exitCode !== 0) process.exitCode = exitCode;
+}

@@ -123,6 +123,101 @@ describe("graph:lint attempt counter (issue #31)", () => {
   });
 });
 
+describe("graph:lint and graph:extend reject an unregistered job type (issue #40)", () => {
+  const baseGraph = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="start" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+  function fragmentWith(jobType: string): string {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="start" />
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="run_it" />
+    <bpmn:serviceTask id="run_it">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="${jobType}" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="run_it" targetRef="end" />
+    <bpmn:endEvent id="end" />
+  </bpmn:process>
+</bpmn:definitions>`;
+  }
+
+  function graphHarnesses(): ReturnType<typeof createHarnesses> {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-jobtype-"));
+    const paths = ensurePaths(
+      resolvePaths({ XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") } as NodeJS.ProcessEnv),
+    );
+    const store = new SessionStore(paths, "s1");
+    store.create("/tmp/some-project");
+    const deps: HarnessDeps = {
+      pi: {} as HarnessDeps["pi"],
+      tools: {} as HarnessDeps["tools"],
+      store,
+      getGraph: () => baseGraph,
+      setGraph: () => {},
+      takeSteering: () => [],
+      takeFollowUp: () => [],
+    };
+    return createHarnesses(deps);
+  }
+
+  it("graph:lint rejects a fragment naming a job type nothing handles", async () => {
+    const harnesses = graphHarnesses();
+    const lint = harnesses["graph:lint"];
+    if (!lint) throw new Error("no 'graph:lint' harness registered");
+
+    const result = await lint({
+      activityId: "lint_fragment",
+      harness: "graph:lint",
+      properties: {},
+      input: { fragment: fragmentWith("shell:exec") },
+      variables: {},
+    });
+    expect(result.status).toBe("failed");
+    expect(result.summary).toMatch(/'shell:exec'/);
+  });
+
+  it("graph:lint accepts a fragment naming a real, registered job type", async () => {
+    const harnesses = graphHarnesses();
+    const lint = harnesses["graph:lint"];
+    if (!lint) throw new Error("no 'graph:lint' harness registered");
+
+    const result = await lint({
+      activityId: "lint_fragment",
+      harness: "graph:lint",
+      properties: {},
+      input: { fragment: fragmentWith("shell") },
+      variables: {},
+    });
+    expect(result.status).toBe("success");
+  });
+
+  it("graph:extend also refuses to commit a fragment with an unregistered job type", async () => {
+    // graph:lint is what feeds a redraft loop, but graph:extend is the actual
+    // commit point ("before anything applies it") -- it must not trust that
+    // something upstream already checked.
+    const harnesses = graphHarnesses();
+    const extend = harnesses["graph:extend"];
+    if (!extend) throw new Error("no 'graph:extend' harness registered");
+
+    const result = await extend({
+      activityId: "apply_extension",
+      harness: "graph:extend",
+      properties: {},
+      input: { fragment: fragmentWith("shell:exec") },
+      variables: {},
+    });
+    expect(result.status).toBe("failed");
+    expect(result.summary).toMatch(/'shell:exec'/);
+  });
+});
+
 describe("graph:layout strips a wrapping markdown fence (issue #37)", () => {
   function layoutHarness() {
     const deps = {
@@ -255,6 +350,58 @@ describe("agent:turn consumes agent_role and lint_feedback (issue #37)", () => {
 
     expect(sentUserText).toContain("craft_start");
     expect(sentUserText).toContain("current graph you are splicing into");
+  });
+
+  it("gives graph_architect the real job-type vocabulary so it does not invent one (issue #40)", async () => {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-role-jobtypes-"));
+    const paths = ensurePaths(
+      resolvePaths({ XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") } as NodeJS.ProcessEnv),
+    );
+    const store = new SessionStore(paths, "s1");
+    store.create("/tmp/some-project");
+
+    const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", name: "Faux" }] });
+    faux.setResponses([fauxAssistantMessage([fauxText("<bpmn:definitions />")], { stopReason: "stop" })] as never);
+
+    let sentUserText = "";
+    const pi = new PiSession({
+      model: faux.getModel(),
+      systemPrompt: "test",
+      tools: [],
+      sessionId: "s1",
+      streamFn: (m, c, o) => {
+        const messages = (c as { messages: Array<{ role: string; content: unknown }> }).messages;
+        const lastUser = [...messages].reverse().find((msg) => msg.role === "user");
+        sentUserText = typeof lastUser?.content === "string" ? lastUser.content : JSON.stringify(lastUser?.content);
+        return faux.provider.streamSimple(m, c, o);
+      },
+    });
+
+    const turn = createHarnesses({
+      pi,
+      tools: {} as HarnessDeps["tools"],
+      store,
+      getGraph: () => "<bpmn:definitions />",
+      setGraph: () => {},
+      takeSteering: () => [],
+      takeFollowUp: () => [],
+    })["agent:turn"];
+    if (!turn) throw new Error("no 'agent:turn' harness registered");
+
+    await turn({
+      activityId: "draft_fragment",
+      harness: "agent:turn",
+      properties: { agent_role: "graph_architect" },
+      input: { prompt: "add a lint step" },
+      variables: {},
+    });
+
+    // "shell" is a real registered job type; "shell:exec" is the invented one
+    // issue #40 found the model reach for -- listing the real vocabulary means
+    // there is no need to guess.
+    expect(sentUserText).toContain("shell");
+    expect(sentUserText).not.toContain("shell:exec");
+    expect(sentUserText).toContain("zeebe:taskDefinition");
   });
 
   it("does not inject a current-graph block for roles that don't ask for it", async () => {

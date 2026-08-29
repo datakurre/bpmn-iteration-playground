@@ -85,6 +85,35 @@ function currentGraphBlock(xml: string): string {
   );
 }
 
+/**
+ * Roles whose prompt must also carry the session's job-type vocabulary --
+ * issue #40 found the model invents plausible-looking `zeebe:taskDefinition`
+ * types (`shell:exec` instead of the registered `shell`) with nothing to tell
+ * it the real ones, and checkSplice used to have no way to catch that either,
+ * so the graph shipped it and it only died the next time something reached
+ * that activity. checkSplice now rejects it (a `graph:lint` failure feeds
+ * back into `lint_feedback`), but naming the real vocabulary up front means
+ * the model has a chance of getting it right the first time instead of
+ * guessing into the redraft-attempt cap.
+ */
+const ROLES_NEEDING_JOB_TYPES = ROLES_NEEDING_CURRENT_GRAPH;
+
+function jobTypesBlock(jobTypes: Iterable<string>): string {
+  return (
+    "A new <bpmn:serviceTask>'s <zeebe:taskDefinition type=\"...\"> must be exactly one of these -- " +
+    "anything else has no harness to run it and will be rejected:\n" +
+    [...jobTypes].sort().join(", ") +
+    "\n\n" +
+    // checkSplice only catches an unregistered type, not a right type wired
+    // wrong -- issue #40's own repro used the real `shell` type but still
+    // passed `command` through zeebe:ioMapping, where the harness never looks.
+    "'shell' reads its command from zeebe:taskHeaders, not zeebe:ioMapping " +
+    "input, because the command is a fixed part of what the activity is, not " +
+    "something a previous activity computes; route on the result with " +
+    "zeebe:output source=\"=exit_code\" (or =stdout/=stderr)."
+  );
+}
+
 export interface HarnessDeps {
   pi: PiSession;
   tools: ToolExecutor;
@@ -142,11 +171,18 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
     const agentRole = context.properties.agent_role ?? "";
     const role = AGENT_ROLES[agentRole];
     const graphBlock = ROLES_NEEDING_CURRENT_GRAPH.has(agentRole) ? currentGraphBlock(deps.getGraph()) : undefined;
+    const jobBlock = ROLES_NEEDING_JOB_TYPES.has(agentRole) ? jobTypesBlock(Object.keys(registry)) : undefined;
     const feedback = typeof context.input.lint_feedback === "string" ? context.input.lint_feedback : undefined;
     const text =
       raw === undefined
         ? undefined
-        : [role, graphBlock, raw, feedback && `The previous attempt was rejected: ${feedback}. Fix that and try again.`]
+        : [
+            role,
+            graphBlock,
+            jobBlock,
+            raw,
+            feedback && `The previous attempt was rejected: ${feedback}. Fix that and try again.`,
+          ]
             .filter((part): part is string => Boolean(part))
             .join("\n\n");
     const outcome = await pi.beginTurn(text);
@@ -207,7 +243,13 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
     return ok(summary, { batch_terminate: end.terminate, tool_results: end.toolResults });
   };
 
-  return {
+  // Captured by "graph:lint" and "graph:extend" below, so a drafted fragment's
+  // taskDefinition types can be checked against what this session can
+  // actually run rather than only against additiveness (issue #40). `const`
+  // is enough even though these closures are defined as its own properties:
+  // none of them read `registry` until invoked, by which point the object
+  // literal below has finished constructing and the binding is initialized.
+  const registry: HarnessRegistry = {
     "agent:turn": agentTurn,
     "agent:tool": agentTool,
 
@@ -304,7 +346,7 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
         return failed("nothing to lint", { attempt });
       }
       try {
-        const splice = await checkSplice(deps.getGraph(), fragment);
+        const splice = await checkSplice(deps.getGraph(), fragment, new Set(Object.keys(registry)));
         if (splice.ok) {
           settle(true);
           return ok(`adds ${splice.added.length} element(s)`, { added: splice.added, attempt });
@@ -330,7 +372,7 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
       const fragment = String(context.input.fragment ?? "");
       if (!fragment) return failed("no fragment to apply");
       try {
-        const splice = await checkSplice(deps.getGraph(), fragment);
+        const splice = await checkSplice(deps.getGraph(), fragment, new Set(Object.keys(registry)));
         if (!splice.ok) return failed(splice.reason ?? "the fragment is not an additive splice");
         deps.setGraph(fragment, "graph:extend", splice.added);
         return ok(`spliced in ${splice.added.length} element(s)`, { added: splice.added });
@@ -357,6 +399,7 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
       return ok(summary, extra);
     },
   };
+  return registry;
 }
 
 /** Run a command line in a shell, rooted at `cwd`. Resolves rather than rejects on a non-zero exit. */

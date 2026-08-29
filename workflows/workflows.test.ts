@@ -6,9 +6,27 @@ import { BpmnModdle } from "bpmn-moddle";
 import zeebe from "zeebe-bpmn-moddle/resources/zeebe.json" with { type: "json" };
 import { harnessOf, type ActivityLike } from "../src/agent/zeebe.ts";
 import { toSourceContext } from "../src/agent/graph.ts";
+import { createHarnesses, type HarnessDeps } from "../src/agent/harnesses.ts";
 
 const DIR = join(import.meta.dirname);
 const files = readdirSync(DIR).filter((f) => f.endsWith(".bpmn"));
+
+// Every job type this build can actually dispatch to -- the same set
+// checkSplice checks a drafted fragment against (issue #40). A hand-authored
+// graph in this directory should not be able to ship a dead job type either.
+const REGISTERED_JOB_TYPES = new Set(
+  Object.keys(
+    createHarnesses({
+      pi: {} as HarnessDeps["pi"],
+      tools: {} as HarnessDeps["tools"],
+      store: {} as HarnessDeps["store"],
+      getGraph: () => "",
+      setGraph: () => {},
+      takeSteering: () => [],
+      takeFollowUp: () => [],
+    }),
+  ),
+);
 
 async function parse(file: string) {
   const moddle = new BpmnModdle({ zeebe });
@@ -74,6 +92,17 @@ describe.each(files)("%s", (file) => {
     const serviceTasks = elements.filter((e) => e.$type === "bpmn:ServiceTask");
     for (const task of serviceTasks) {
       expect(harnessOf(asActivity(task)), `${task.id} has no zeebe:taskDefinition`).toBeTruthy();
+    }
+  });
+
+  it("names a job type some harness actually handles", async () => {
+    const elements = await elementsOf(file);
+    const serviceTasks = elements.filter((e) => e.$type === "bpmn:ServiceTask");
+    for (const task of serviceTasks) {
+      const jobType = harnessOf(asActivity(task));
+      expect(jobType && REGISTERED_JOB_TYPES.has(jobType), `${task.id} names '${jobType}', which no harness handles`).toBe(
+        true,
+      );
     }
   });
 

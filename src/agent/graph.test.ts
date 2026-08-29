@@ -117,6 +117,67 @@ describe("checkSplice", () => {
   });
 });
 
+describe("checkSplice with a known job-type set (issue #40)", () => {
+  // A new service task, zeebe-flavored like the real graphs -- camunda:properties
+  // (v1/v2 above) predates the project's actual Camunda 8 convention.
+  function withNewTask(jobType: string): string {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="start" />
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="run_it" />
+    <bpmn:serviceTask id="run_it">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="${jobType}" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="run_it" targetRef="end" />
+    <bpmn:endEvent id="end" />
+  </bpmn:process>
+</bpmn:definitions>`;
+  }
+  const base = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="start" />
+  </bpmn:process>
+</bpmn:definitions>`;
+  const known = new Set(["shell", "agent:turn"]);
+
+  it("accepts a new service task whose job type is registered", async () => {
+    const result = await checkSplice(base, withNewTask("shell"), known);
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects a new service task naming a job type nothing handles", async () => {
+    const result = await checkSplice(base, withNewTask("shell:exec"), known);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/'shell:exec'/);
+    expect(result.reason).toMatch(/shell/);
+    expect(result.reason).toMatch(/agent:turn/);
+  });
+
+  it("rejects a new service task with no taskDefinition at all", async () => {
+    const noType = withNewTask("shell").replace(/<zeebe:taskDefinition[^/]*\/>/, "");
+    const result = await checkSplice(base, noType, known);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/no zeebe:taskDefinition/);
+  });
+
+  it("does not check job type when no known set is given -- existing callers are unaffected", async () => {
+    const result = await checkSplice(base, withNewTask("shell:exec"));
+    expect(result.ok).toBe(true);
+  });
+
+  it("does not re-validate an existing service task that was already there", async () => {
+    // Only *new* activities are checked -- an existing one already ran once as
+    // part of a graph someone approved.
+    const already = withNewTask("shell:exec");
+    const result = await checkSplice(already, already, known);
+    expect(result.ok).toBe(true);
+  });
+});
+
 describe("elementIds", () => {
   it("collects flow element ids, plus the definitions and process ids", async () => {
     const ids = await elementIds(v1);
