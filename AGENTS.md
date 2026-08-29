@@ -113,9 +113,7 @@ overrides the directory -- and `graph-agent` inherits it:
 Verified: with the header present the error changes from *"...is required..."*
 to *"...must be a valid workspace ID."*, which is how you tell a missing header
 apart from a wrong id. If you have the key but not the id, **ask** -- there is
-nothing to work around. Three of the four keys handed to this project so far
-were identity-linked, so run the curl above **first**, every time; it costs one
-call and saves a debugging session chasing a graph bug that is not there.
+nothing to work around.
 
 ### Egress
 
@@ -133,30 +131,12 @@ the code is at fault.
 the tool batch, `agent:collect-tools`, `agent:prepare-next-turn` and the
 loop-back never run. Three real defects lived there behind a green `make test`
 (#25 prompt re-sent every iteration, 110 billed turns; #26 tool schemas hidden
-from the model; #27 a two-call batch running the first call twice). All three
-are fixed and confirmed against live Haiku: the 110-turn prompt now converges
-in 2 turns, and a parallel two-call batch runs each call with its own
-arguments. The lesson stands: verify anything touching this path against a real
-model, and do it in a **throwaway workspace** -- `createPiToolExecutor` gives
-the model real `read`/`write`/`edit`/`bash` rooted at the cwd, so never run it
-in this checkout.
-
-Still live: `agent:turn` offers every session tool regardless of whether the
-graph has an `agent:tool` to run them, so a graph without one wedges the moment
-the model tries a call -- and it surfaces two activities later as `a turn is
-already in flight with unanswered tool calls` (#36). `craft-graph` hits this on
-the most natural prompt there is, "change this graph", because the model reads
-before editing.
-
-### The self-extension path does not yet land a splice
-
-`craft-graph` runs, bounds itself at three attempts and reports honestly, but
-every draft is rejected for reasons unrelated to the model's BPMN (#37):
-`agent_role: graph_architect` is parsed and never consumed, so the drafting
-turn gets no format instruction at all; and nothing strips the markdown fence
-models wrap XML in. "Fragment" also means a bare element in the prompt and a
-complete `<bpmn:definitions>` to `graph:layout`/`checkSplice`. Don't read a
-`craft_rejected` outcome as the model being bad at BPMN.
+from the model; #27 a two-call batch running the first call twice) -- all fixed
+now, and `runner.test.ts` covers a two-call batch and a multi-turn tool run.
+The lesson stands: verify anything touching this path against a real model, and
+do it in a **throwaway workspace** -- `createPiToolExecutor` gives the model
+real `read`/`write`/`edit`/`bash` rooted at the cwd, so never run it in this
+checkout.
 
 Scripting tool calls with the faux provider: `fauxToolCall(name, args)` takes
 **two** arguments, not an id first. Getting that wrong parks nothing and the
@@ -164,29 +144,13 @@ run hangs rather than failing, which reads like a deadlock in the engine.
 
 ### The bundled graphs
 
-`pi-default-loop`, `shell-demo` and `craft-graph` are drivable from the CLI.
-`session-skeleton` parks on a user task and `resume --answer key=value` answers
-it, but the `craft-graph` redraft loop it then enters does not terminate: 1671
-iterations in 45s, no result line, and **neither Ctrl-C nor SIGTERM stops it**
--- only `kill -9` (issue #34). Never point that path at a real model; it is
-~37 billed calls a second from a command that reports nothing. The same
-scenario is bounded when driven in-process through `runSession`'s `onWait`,
-which is why the suite stays green -- **a test that only calls `onWait` cannot
-cover the `run` -> park -> `resume --answer` route the CLI actually takes**,
-and that gap has now hidden two separate bugs.
-
-### The graph library goes stale, silently
-
-`graph-agent init` seeds `$XDG_CONFIG_HOME/graph-agent/workflows` and never
-overwrites (issue #35). A library seeded before a fix keeps running the old
-graph, `init` says nothing, and `run` names the graph but not its provenance.
-**Before concluding a bundled graph is still broken, diff your library copy
-against `workflows/`.** That trap made #22 look open here when it was fixed,
-and left `pi-default-loop` running without the #25 fix that had stopped it
-billing 110 turns:
-
-```
-for f in workflows/*.bpmn; do
-  diff -q "$f" "$(graph-agent where | awk '/^graphs/{print $2}')/$(basename "$f")"
-done
-```
+Only `pi-default-loop` and `shell-demo` are drivable end to end.
+`session-skeleton` parks on a user task; `resume --answer key=value` answers it
+(issue #21, fixed) but the `callActivity` after it fails with `cannot resume
+running process <craft_graph>` and the run then keeps executing forever after
+the CLI has printed its result -- 1065 iterations in 40s, ignores SIGTERM,
+needs `kill -9` (issue #30). The loop is unbounded because `craft-graph`'s
+`lint_attempts >= 3` cap never trips on the `failed()` path (issue #31).
+**Never point that at a real model.** `craft-graph` standalone still maps
+`=intent`, which only that form supplies (issue #22). Don't spend time
+debugging any of it as if it were broken locally.

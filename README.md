@@ -62,20 +62,13 @@ walkthrough and its troubleshooting notes, and
 [`docs/harnesses.md`](docs/harnesses.md) for every job type a graph can
 dispatch to.
 
-`pi-default-loop`, `shell-demo` and `craft-graph` run from the CLI, tool calls
-included -- parallel calls in one response too. `craft-graph` runs and bounds
-itself but does not yet land a splice with a real model
-([#37](https://github.com/datakurre/graph-agent/issues/37),
-[#36](https://github.com/datakurre/graph-agent/issues/36)). `session-skeleton` parks on a human gate that `resume --answer`
-answers, but the loop it then enters never terminates and ignores Ctrl-C --
-don't point that one at a real model
-([#34](https://github.com/datakurre/graph-agent/issues/34)).
-
-`init` never overwrites your graph library, so a bundled graph fixed upstream
-keeps running its old copy with no warning
-([#35](https://github.com/datakurre/graph-agent/issues/35)) -- diff
-`workflows/` against `graph-agent where`'s graphs directory before concluding
-a graph is still broken.
+Of the four bundled graphs, `pi-default-loop` and `shell-demo` run from the
+CLI, tool calls included. `session-skeleton` parks on a human gate that
+`resume --answer` can now answer, but the step after it still cannot be
+reached, and the loop it lands in is unbounded -- don't point that one at a
+real model ([#30](https://github.com/datakurre/graph-agent/issues/30),
+[#31](https://github.com/datakurre/graph-agent/issues/31),
+[#22](https://github.com/datakurre/graph-agent/issues/22)).
 
 (Under Nix: `nix develop --command make <target>`.)
 

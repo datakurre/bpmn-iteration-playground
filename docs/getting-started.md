@@ -134,8 +134,8 @@ model  anthropic/claude-haiku-4-5
 session 497c0b40  completed  1 turn(s)
 ```
 
-Runs that call tools work too, including parallel calls in one response -- see
-[Tool calls](#tool-calls).
+Runs that call tools work too -- see [Tool calls](#tool-calls) for what that
+path exercises and how it was verified.
 
 ### Naming a model
 
@@ -226,60 +226,26 @@ workspace -- run it after any studio change to refresh them.
 
 `--dry-run` answers once and stops, so it never exercises the half of
 `pi-default-loop` that matters most: the tool batch, `agent:collect-tools`,
-`agent:prepare-next-turn`, and the loop back for another turn. Against a real
-model that path converges:
+`agent:prepare-next-turn`, and the loop back for another turn. That path is
+where three defects lived, all of them found by pointing a real model at it and
+all now fixed:
 
-```
-$ graph-agent run "Use the bash tool to count the lines in notes.txt, then tell me the number." \
-    --model anthropic/claude-haiku-4-5
-  inject_pending  agent:steer  nothing queued
-  llm_turn  agent:turn  I'll count the lines in notes.txt for you.
-  run_tool  agent:tool  bash: ok
-  collect_batch  agent:collect-tools  tool results recorded
-  prepare_next_turn  agent:prepare-next-turn  another turn
-  inject_pending  agent:steer  nothing queued
-  llm_turn  agent:turn  The file **notes.txt** contains **3 lines**.
-  drain_followup  agent:follow-up  no follow-up
+- the initial prompt was re-sent on every iteration, so a tool-using run never
+  converged -- one observed run reached 110 billed turns
+  ([#25](https://github.com/datakurre/graph-agent/issues/25));
+- the model was never told what arguments a tool takes, so it guessed
+  ([#26](https://github.com/datakurre/graph-agent/issues/26));
+- a batch of more than one tool call ran the first call twice and never ran the
+  second ([#27](https://github.com/datakurre/graph-agent/issues/27)).
 
-session 43e3f970  completed  2 turn(s)
-```
-
-That exact prompt used to run **110 turns** without ever answering, because the
-initial prompt was re-sent on every iteration. A batch of parallel calls works
-too -- each instance now runs with its own arguments rather than repeating the
-first:
-
-```
-$ graph-agent run "Read both a.txt and b.txt using the read tool, in parallel ..." \
-    --model anthropic/claude-haiku-4-5
-  llm_turn  agent:turn  I'll read both files in parallel for you.
-  run_tool  agent:tool  read: ok
-  run_tool  agent:tool  read: ok
-  collect_batch  agent:collect-tools  tool results recorded
-  ...
-  llm_turn  agent:turn  - **a.txt** has **2 lines** ... - **b.txt** has **4 lines**
-
-session c369b71f  completed  2 turn(s)
-```
-
-Three defects lived on this path
-([#25](https://github.com/datakurre/graph-agent/issues/25),
-[#26](https://github.com/datakurre/graph-agent/issues/26),
-[#27](https://github.com/datakurre/graph-agent/issues/27)) and **`make test`
-was green through all of them**, because the suite scripted tool calls one at a
-time and `--dry-run` stops before the loop iterates. Anything new on this path
-still deserves a real model, run against a throwaway workspace:
-`createPiToolExecutor` hands the model real `read`/`write`/`edit`/`bash` rooted
-at the working directory, so never run those checks in your own checkout.
-
-### One trap that is still live
-
-`agent:turn` offers the model every tool in the session, whether or not the
-graph has an `agent:tool` activity to run them. A graph without one wedges as
-soon as the model tries a tool call -- and the error surfaces two activities
-later as `a turn is already in flight with unanswered tool calls`, naming
-neither the tool nor the activity that should have answered it
-([#36](https://github.com/datakurre/graph-agent/issues/36)).
+The lesson worth keeping: **`make test` was green through all three**, because
+the suite scripted tool calls one at a time and `--dry-run` stops before the
+loop ever iterates. `src/agent/runner.test.ts` now covers a two-call batch and
+a multi-turn tool run, but anything new on this path still deserves a real
+model against a throwaway workspace before you trust it. `createPiToolExecutor`
+hands the model real `read`/`write`/`edit`/`bash` rooted at the working
+directory, so run those checks somewhere disposable, never in your own
+checkout.
 
 ## The bundled graphs
 
@@ -290,10 +256,10 @@ cannot finish:
 |---|---|
 | `pi-default-loop` | yes -- the default, tool calls included |
 | `shell-demo` | yes |
-| `craft-graph` | yes -- falls back to the seeded prompt when there is no session `intent` |
-| `session-skeleton` | parks on a gate; answering it runs away (see below) |
+| `session-skeleton` | starts, then parks on a gate you cannot get past |
+| `craft-graph` | no -- called by `session-skeleton`, not run directly |
 
-A run that reaches a `zeebe:userTask` says so and tells you how to continue:
+A run that reaches a `zeebe:userTask` now says so and tells you how to continue:
 
 ```
 $ graph-agent run "hi" --dry-run --graph session-skeleton
@@ -302,66 +268,22 @@ waiting on await_intent
 resume with: graph-agent resume eacee704 --answer key=value
 ```
 
-**Do not answer that gate against a real model.** `resume --answer intent=...`
-now reaches `craft-graph`, but its redraft loop does not terminate: 1671
-iterations in 45 seconds, no result line, and neither Ctrl-C nor `SIGTERM`
-stops it -- only `kill -9`
-([#34](https://github.com/datakurre/graph-agent/issues/34)). That is one billed
-call per iteration, roughly 37 a second, from a command that never reports
-anything. The same path is bounded when driven in-process through
-`runSession`'s `onWait`, which is why the regression suite does not catch it.
+Answering it, though, does not yet get you into `craft-graph`:
+`resume --answer intent=...` fails with `cannot resume running process
+<craft_graph>` and then keeps executing the graph forever *after* printing that
+result -- 1065 iterations in 40 seconds, needing `kill -9`
+([#30](https://github.com/datakurre/graph-agent/issues/30)). The loop it lands
+in is unbounded because `craft-graph`'s `lint_attempts >= 3` cap never trips
+([#31](https://github.com/datakurre/graph-agent/issues/31)). **Do not run that
+against a real model** -- it is one billed call per iteration.
 
-`craft-graph` on its own runs and stays bounded -- its first activity falls
-back to the prompt you type when no `intent` is in scope, and `gw_lint`'s
-three-attempt cap holds. It does not yet *succeed*, though: with a real model
-every draft is rejected, for two reasons that have nothing to do with the
-model's BPMN skills
-([#37](https://github.com/datakurre/graph-agent/issues/37)).
+`craft-graph` standalone still starts a turn with nothing to say, because its
+first activity maps `=intent` and only `session-skeleton`'s form supplies it
+([#22](https://github.com/datakurre/graph-agent/issues/22)).
 
-The drafting turn is told nothing about the format it must produce -- the
-`agent_role: graph_architect` header on `draft_fragment` is parsed but never
-consumed by anything, so the model sees only the generic session prompt. And
-nothing strips a markdown code fence, which is how models emit XML by default:
-
-```
-  draft_fragment  agent:turn  ```xml
-<bpmn:serviceTask id="run_tests" name="Run tests"/>
-```
-  layout_fragment  graph:layout  auto-layout failed: failed to parse document as <bpmn:Definitions>
-  lint_fragment  graph:lint  nothing to lint
-  ... three attempts, then craft_rejected
-```
-
-The element drafted there is exactly what was asked for. It fails on the fence,
-and then on "fragment" meaning a bare element to the prompt but a complete
-`<bpmn:definitions>` document to `graph:layout` and `checkSplice`.
-
-Ask it to modify an existing graph and it fails earlier still: the model tries
-to *read* the graph first, and `craft-graph` has no `agent:tool` activity to
-answer with ([#36](https://github.com/datakurre/graph-agent/issues/36)).
-
-So the self-extension loop runs, bounds itself and reports honestly -- but a
-splice has not yet landed from a real model.
-
-## Keeping the graph library current
-
-`graph-agent init` seeds `$XDG_CONFIG_HOME/graph-agent/workflows` but **never
-overwrites**, by design: the library is yours and shared across projects. The
-cost is that a bundled graph fixed upstream never reaches a library seeded
-before the fix, and nothing warns you
-([#35](https://github.com/datakurre/graph-agent/issues/35)). A graph that
-"still" misbehaves after a fix landed is worth checking first:
-
-```
-for f in workflows/*.bpmn; do
-  diff -q "$f" "$(graph-agent where | awk '/^graphs/{print $2}')/$(basename "$f")"
-done
-```
-
-Copy the bundled file over your library copy to take the fix (back up first if
-you have edited it). This is not hypothetical: it made a fixed defect look open
-here, and it left the default graph running without a fix that had stopped it
-billing 110 turns.
+Both are worth reading in the studio -- they are the design for the
+self-extending session -- but `pi-default-loop` and `shell-demo` are what you
+can drive from a terminal right now.
 
 ## Troubleshooting
 
