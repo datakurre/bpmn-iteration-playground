@@ -14,6 +14,77 @@ import type { ToolExecutor } from "./tool-executor.ts";
 import type { SessionStore } from "./session-store.ts";
 import type { TurnRecord } from "../studio/types.ts";
 
+/** Matches craft-graph.bpmn's own `gw_lint` condition (`lint_attempts >= 3`). */
+const MAX_LINT_ATTEMPTS = 3;
+
+/**
+ * Canned instructions for `zeebe:taskHeaders`' `agent_role` header, layered in
+ * front of whatever the graph maps as the turn's own `prompt`. draft_fragment
+ * has always carried `agent_role="graph_architect"`, but nothing ever read it
+ * (issue #37): the model drafting a splice got only the generic session
+ * prompt, with no hint that the output must be a complete, parseable
+ * `<bpmn:definitions>` document, that ids must be additive and stable, or
+ * that prose and markdown fences are not acceptable -- so the first attempt,
+ * and every attempt after it, was a blind guess.
+ */
+const AGENT_ROLES: Record<string, string> = {
+  graph_architect:
+    "You are drafting a replacement for the session graph below. " +
+    "Respond with ONLY a complete, valid <bpmn:definitions> XML document -- " +
+    "no markdown code fences, no prose before or after, nothing but the XML. " +
+    "Define exactly one <bpmn:process> in it. What you return REPLACES the " +
+    "current graph outright, so it must be the current graph's own content " +
+    "in full, verbatim, with your new elements woven in -- do not return only " +
+    "the new or changed pieces, and do not reference an existing element (by " +
+    "id, sourceRef, or targetRef) without also copying its own full " +
+    "definition into your output. Everything currently in the graph keeps " +
+    "its exact id and its <bpmn:definitions id>; give every new element a " +
+    "brand-new id -- nothing existing may be renamed or removed. Auto-layout " +
+    "adds visual positioning afterward, so omit the <bpmndi:BPMNDiagram> " +
+    "section entirely; do not invent one.\n\n" +
+    "The <bpmn:definitions> root must declare exactly these namespaces, " +
+    "copied verbatim -- inventing a different BPMN namespace URI is the most " +
+    "common way this fails:\n" +
+    '<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" ' +
+    'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" ' +
+    'xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="..." targetNamespace="http://graph-agent/bpmn">',
+};
+
+/**
+ * Strips a single wrapping markdown code fence, if there is one -- models
+ * fence XML by default even when told not to, and neither bpmn-auto-layout
+ * nor the BPMN parser tolerates the fence markers.
+ */
+function stripCodeFence(text: string): string {
+  const match = /^```[a-zA-Z0-9_-]*\r?\n([\s\S]*?)\r?\n?```\s*$/.exec(text.trim());
+  return match ? (match[1] ?? "") : text;
+}
+
+/**
+ * Roles whose prompt must also carry the session's current graph -- a
+ * real-model run showed `graph_architect` cannot draft an *additive*
+ * fragment (checkSplice's core requirement) without knowing which element
+ * ids already exist to preserve; every attempt reused nothing and got
+ * rejected as "removed or renamed" everything. Capped well under a typical
+ * context window: the graph a splice targets is a single session graph, not
+ * the whole shared library, so this is a safety margin against a pathological
+ * one, not an expected truncation.
+ */
+const ROLES_NEEDING_CURRENT_GRAPH = new Set(["graph_architect"]);
+const MAX_CURRENT_GRAPH_CHARS = 20_000;
+
+function currentGraphBlock(xml: string): string {
+  const truncated = xml.length > MAX_CURRENT_GRAPH_CHARS;
+  const body = truncated ? xml.slice(0, MAX_CURRENT_GRAPH_CHARS) : xml;
+  return (
+    "The current graph you are splicing into is:\n\n" +
+    "```xml\n" +
+    body +
+    (truncated ? "\n... (truncated)" : "") +
+    "\n```"
+  );
+}
+
 export interface HarnessDeps {
   pi: PiSession;
   tools: ToolExecutor;
@@ -56,13 +127,28 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
 
   const agentTurn: Harness = async (context) => {
     const prompt = context.input.prompt;
-    const text = typeof prompt === "string" && prompt.length > 0 ? prompt : undefined;
-    if (text === undefined && pi.messages.length === 0) {
+    const raw = typeof prompt === "string" && prompt.length > 0 ? prompt : undefined;
+    if (raw === undefined && pi.messages.length === 0) {
       return failed(
         `${context.activityId} starts a turn with nothing to say: map a 'prompt' input, ` +
           `or place it after an activity that has already spoken.`,
       );
     }
+    // Layered in front of the graph's own mapped prompt, never in place of it:
+    // an agent_role header says what kind of work this turn is (draft_fragment's
+    // is "graph_architect"), and lint_feedback -- when a graph maps it, as
+    // craft-graph does -- is the previous redraft attempt's own rejection
+    // reason, so a second guess is not as blind as the first.
+    const agentRole = context.properties.agent_role ?? "";
+    const role = AGENT_ROLES[agentRole];
+    const graphBlock = ROLES_NEEDING_CURRENT_GRAPH.has(agentRole) ? currentGraphBlock(deps.getGraph()) : undefined;
+    const feedback = typeof context.input.lint_feedback === "string" ? context.input.lint_feedback : undefined;
+    const text =
+      raw === undefined
+        ? undefined
+        : [role, graphBlock, raw, feedback && `The previous attempt was rejected: ${feedback}. Fix that and try again.`]
+            .filter((part): part is string => Boolean(part))
+            .join("\n\n");
     const outcome = await pi.beginTurn(text);
     currentToolCalls = outcome.toolCalls;
 
@@ -163,7 +249,7 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
     },
 
     "graph:layout": async (context) => {
-      const source = String(context.input.fragment ?? deps.getGraph());
+      const source = stripCodeFence(String(context.input.fragment ?? deps.getGraph()));
       try {
         return ok("laid out", { fragment: await layoutProcess(source) });
       } catch (error) {
@@ -178,27 +264,60 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
      */
     "graph:lint": async (context) => {
       const attempt = (lintAttempts.get(context.activityId) ?? 0) + 1;
-      // A terminal result (accepted, or the graph is about to give up on this
-      // attempt count) starts the next, unrelated craft invocation fresh
-      // rather than accumulating across it.
+      const exhausted = attempt >= MAX_LINT_ATTEMPTS;
+      // A terminal result (accepted, or exhausted) starts the next, unrelated
+      // craft invocation fresh rather than accumulating across it.
       const settle = (terminal: boolean): void => {
         if (terminal) lintAttempts.delete(context.activityId);
         else lintAttempts.set(context.activityId, attempt);
       };
-      const fragment = String(context.input.fragment ?? "");
+      // gw_lint's own `lint_attempts >= 3` condition exists to catch this and
+      // route to craft_rejected -- but issue #34 found bpmn-elements replay a
+      // stale routing decision from an earlier pass through this same gateway
+      // on a *resumed* run, silently ignoring a live "true" evaluation and
+      // redrafting forever regardless of what the condition says. Throwing
+      // here does not depend on that gateway at all: a harness rejection ends
+      // the whole run (issue #30 made sure the engine actually stops on that
+      // path), so the cap holds even when the graph's own routing cannot be
+      // trusted to.
+      const giveUp = (reason: string): never => {
+        settle(true);
+        const summary = `${context.activityId}: gave up after ${attempt} attempts -- ${reason}`;
+        // bpmn-elements re-wraps a thrown error at every callActivity boundary
+        // it crosses, and craft-graph always crosses at least one (the session
+        // that spliced it in); by the time it reaches the CLI, the original
+        // message is not reliably reachable off `error.message` -- it can end
+        // up on a differently-shaped, arbitrarily-nested property instead.
+        // meta.harnessError is a channel this project actually controls, so
+        // `drive()`'s fallback (and `graph-agent show`) can report it
+        // regardless of how deep that wrapping goes.
+        store.update((meta) => {
+          meta.harnessError = summary;
+        });
+        throw new Error(summary);
+      };
+
+      const fragment = stripCodeFence(String(context.input.fragment ?? ""));
       if (!fragment) {
-        settle(attempt >= 3);
+        if (exhausted) giveUp("nothing to lint");
+        settle(false);
         return failed("nothing to lint", { attempt });
       }
       try {
         const splice = await checkSplice(deps.getGraph(), fragment);
-        settle(splice.ok || attempt >= 3);
-        return splice.ok
-          ? ok(`adds ${splice.added.length} element(s)`, { added: splice.added, attempt })
-          : failed(splice.reason ?? "the fragment is not an additive splice", { attempt });
+        if (splice.ok) {
+          settle(true);
+          return ok(`adds ${splice.added.length} element(s)`, { added: splice.added, attempt });
+        }
+        const reason = splice.reason ?? "the fragment is not an additive splice";
+        if (exhausted) giveUp(reason);
+        settle(false);
+        return failed(reason, { attempt });
       } catch (error) {
-        settle(attempt >= 3);
-        return failed(`the fragment is not valid BPMN: ${message(error)}`, { attempt });
+        const reason = `the fragment is not valid BPMN: ${message(error)}`;
+        if (exhausted) giveUp(reason);
+        settle(false);
+        return failed(reason, { attempt });
       }
     },
 

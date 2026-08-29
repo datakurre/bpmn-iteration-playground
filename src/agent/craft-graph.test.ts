@@ -36,6 +36,7 @@ import { bundledWorkflowsDir, listBpmnFiles, ensurePaths, paths as resolvePaths,
 import { runGraph, resumeGraph, type RunnerOptions } from "./engine.ts";
 import { runSession, type RunSessionOptions } from "./runner.ts";
 import { createNoopToolExecutor } from "./tool-executor.ts";
+import { SessionStore } from "./session-store.ts";
 import { ok } from "./harness.ts";
 
 async function linkedSessionSkeleton(): Promise<string> {
@@ -199,14 +200,17 @@ describe("running craft-graph standalone (issue #22)", () => {
   });
 });
 
-describe("craft-graph's redraft loop is bounded (issue #31)", () => {
-  it("reaches craft_rejected within a bounded number of turns when the model never drafts valid BPMN", async () => {
-    // The end-to-end regression the issue asked for: a model that never drafts
-    // valid BPMN must not run away. harnesses.test.ts pins the specific defect
-    // (graph:lint's attempt count is now the harness's own, not read back from
-    // context.variables.lint_attempts); this is the integration-level check
-    // that the whole self-extension path -- session-skeleton's await_intent
-    // into craft-graph's callActivity -- stays bounded end to end.
+describe("craft-graph's redraft loop is bounded (issues #31, #34)", () => {
+  it("gives up within a bounded number of turns when the model never drafts valid BPMN", async () => {
+    // The end-to-end regression the issues asked for: a model that never
+    // drafts valid BPMN must not run away. harnesses.test.ts pins the
+    // specific defects (graph:lint's attempt count is the harness's own, not
+    // read back from context.variables.lint_attempts; the cap throws rather
+    // than trusting gw_lint's own routing, which a real run found bpmn-elements
+    // can silently ignore on a resumed run -- issue #34). This is the
+    // integration-level check that the whole self-extension path --
+    // session-skeleton's await_intent into craft-graph's callActivity -- stays
+    // bounded end to end rather than looping forever.
     const home = mkdtempSync(join(tmpdir(), "graph-agent-craft-bound-"));
     const paths: Paths = ensurePaths(
       resolvePaths({ XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") } as NodeJS.ProcessEnv),
@@ -232,10 +236,43 @@ describe("craft-graph's redraft loop is bounded (issue #31)", () => {
         activityId === "await_intent" ? { intent: "add a lint step", context: "", done: true } : undefined,
     });
 
-    expect(result.error).toBeUndefined();
-    expect(result.outcome).toBe("completed");
-    // Three draft attempts, matching gw_lint's lint_attempts >= 3 cap.
+    // The cap gives up rather than reaching a graceful craft_rejected --
+    // see harnesses.ts's graph:lint for why routing there cannot be trusted.
+    expect(result.outcome).toBe("error");
+    expect(result.error?.message).toMatch(/gave up after 3 attempts/);
+    // Three draft attempts (agent:turn), matching the cap.
     expect(result.turns).toBe(3);
+  }, 15000);
+
+  it("records the give-up reason in a channel the CLI can find, not only on the thrown error", async () => {
+    // bpmn-elements re-wraps a thrown error at every callActivity boundary it
+    // crosses; craft-graph, spliced into a session, always crosses at least
+    // one. harnesses.test.ts pins the unit-level behaviour; this confirms it
+    // survives the same real, nested topology as the test above.
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-craft-bound-store-"));
+    const paths: Paths = ensurePaths(
+      resolvePaths({ XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") } as NodeJS.ProcessEnv),
+    );
+    const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", name: "Faux" }] });
+    faux.setResponses(
+      Array.from({ length: 10 }, () => fauxAssistantMessage([fauxText("not valid bpmn")], { stopReason: "stop" })) as never,
+    );
+
+    const result = await runSession({
+      paths,
+      project: "/tmp/some-project",
+      graphPath: join(bundledWorkflowsDir(), "session-skeleton.bpmn"),
+      prompt: "",
+      model: faux.getModel(),
+      systemPrompt: "test agent",
+      streamFn: ((m: never, context: never, o: never) => faux.provider.streamSimple(m, context, o)) as RunSessionOptions["streamFn"],
+      tools: createNoopToolExecutor(["read", "bash"]),
+      onWait: (activityId) =>
+        activityId === "await_intent" ? { intent: "add a lint step", context: "", done: true } : undefined,
+    });
+
+    const detail = new SessionStore(paths, result.sessionId).detail();
+    expect(detail.harnessError).toMatch(/gave up after 3 attempts/);
   }, 15000);
 });
 
@@ -248,9 +285,10 @@ describe("running the linked graph with the real harness registry", () => {
     const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", name: "Faux" }] });
     // "a fragment" is not valid BPMN, so the real graph:layout/graph:lint harnesses
     // reject it every time and craft_graph redrafts up to its 3-attempt limit
-    // before giving up via lint_exhausted -- a legitimate "the model never
-    // produced a usable fragment" outcome, not a run error. Three identical
-    // canned replies keep every one of those attempts a normal Pi turn.
+    // before giving up (issue #34: giving up now ends the run rather than
+    // routing to a craft_rejected end event that a resumed run cannot trust
+    // gw_lint to reach). Three identical canned replies keep every one of
+    // those attempts a normal Pi turn.
     faux.setResponses(
       Array.from({ length: 3 }, () => fauxAssistantMessage([fauxText("a fragment")], { stopReason: "stop" })) as never,
     );
@@ -272,7 +310,9 @@ describe("running the linked graph with the real harness registry", () => {
       },
     });
 
-    expect(result.error).toBeUndefined();
+    // The real point of this test: the session's intent reached draft_fragment's
+    // first turn at all, rather than failing immediately on "nothing to say".
     expect(progress.some((line) => line.includes("starts a turn with nothing to say"))).toBe(false);
+    expect(result.error?.message).toMatch(/gave up after 3 attempts/);
   }, 15000);
 });

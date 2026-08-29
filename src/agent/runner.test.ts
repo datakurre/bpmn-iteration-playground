@@ -3,8 +3,9 @@ import { describe, expect, it, beforeEach } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { fauxProvider, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
-import { runSession, resumeSession, type RunSessionOptions } from "./runner.ts";
+import { runSession, resumeSession, graphOffersTools, type RunSessionOptions } from "./runner.ts";
 import { SessionStore } from "./session-store.ts";
 import { createNoopToolExecutor } from "./tool-executor.ts";
 import { ensurePaths, paths as resolvePaths, type Paths } from "./paths.ts";
@@ -259,5 +260,14 @@ describe("resumeSession", () => {
     return expect(
       resumeSession({ ...options(scripted([])), sessionId: "nope" } as never),
     ).rejects.toThrow(/unknown session/);
+  });
+});
+
+describe("graphOffersTools (issue #36)", () => {
+  it("is true for a graph with an agent:tool activity, false for one without", () => {
+    const withTools = readFileSync(join(bundledWorkflowsDir(), "pi-default-loop.bpmn"), "utf8");
+    const withoutTools = readFileSync(join(bundledWorkflowsDir(), "craft-graph.bpmn"), "utf8");
+    expect(graphOffersTools(withTools)).toBe(true);
+    expect(graphOffersTools(withoutTools)).toBe(false);
   });
 });
