@@ -40,6 +40,20 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
   /** Tool calls of the turn in flight, so `agent:tool` can find them by index. */
   let currentToolCalls: ToolCallRequest[] = [];
 
+  /**
+   * `graph:lint`'s own redraft-attempt count, keyed by activity id -- kept here
+   * rather than trusted from `context.variables.lint_attempts` alone. That
+   * variable is meant to round-trip through zeebe:ioMapping (lint_fragment
+   * publishes it, draft_fragment/lint_fragment read it back next time round),
+   * but craft-graph runs as a nested, separately-recovered process behind a
+   * callActivity, and issue #31 found a real run where the round-trip did not
+   * happen: the count stayed at 1 forever and the redraft loop never reached
+   * `lint_exhausted`, burning one model call per iteration with nothing to
+   * stop it. This is the belt-and-braces bound its own suggested fix asked
+   * for -- a count that survives regardless of what the variable graph does.
+   */
+  const lintAttempts = new Map<string, number>();
+
   const agentTurn: Harness = async (context) => {
     const prompt = context.input.prompt;
     const text = typeof prompt === "string" && prompt.length > 0 ? prompt : undefined;
@@ -163,15 +177,27 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
      * spending a turn each time round.
      */
     "graph:lint": async (context) => {
-      const attempt = Number(context.variables.lint_attempts ?? 0) + 1;
+      const attempt = (lintAttempts.get(context.activityId) ?? 0) + 1;
+      // A terminal result (accepted, or the graph is about to give up on this
+      // attempt count) starts the next, unrelated craft invocation fresh
+      // rather than accumulating across it.
+      const settle = (terminal: boolean): void => {
+        if (terminal) lintAttempts.delete(context.activityId);
+        else lintAttempts.set(context.activityId, attempt);
+      };
       const fragment = String(context.input.fragment ?? "");
-      if (!fragment) return failed("nothing to lint", { attempt });
+      if (!fragment) {
+        settle(attempt >= 3);
+        return failed("nothing to lint", { attempt });
+      }
       try {
         const splice = await checkSplice(deps.getGraph(), fragment);
+        settle(splice.ok || attempt >= 3);
         return splice.ok
           ? ok(`adds ${splice.added.length} element(s)`, { added: splice.added, attempt })
           : failed(splice.reason ?? "the fragment is not an additive splice", { attempt });
       } catch (error) {
+        settle(attempt >= 3);
         return failed(`the fragment is not valid BPMN: ${message(error)}`, { attempt });
       }
     },

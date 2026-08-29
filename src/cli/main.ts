@@ -214,6 +214,24 @@ async function resolveRunModel(flags: RunFlags, p: Paths): Promise<Awaited<Retur
   return flags.dryRun ? dryRunModel() : resolveModel(flags.model, readConfiguredModel(p.configFile));
 }
 
+/**
+ * Ctrl-C (or a TERM) aborts the signal `runSession`/`resumeSession` thread down
+ * into the engine instead of leaving a runaway graph to keep spending model
+ * calls after the terminal looks like it gave control back (issue #30).
+ */
+async function withInterrupt<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  const abort = (): void => controller.abort();
+  process.once("SIGINT", abort);
+  process.once("SIGTERM", abort);
+  try {
+    return await fn(controller.signal);
+  } finally {
+    process.off("SIGINT", abort);
+    process.off("SIGTERM", abort);
+  }
+}
+
 async function cmdRun(args: string[]): Promise<number> {
   const p = requirePaths();
   if (!p) return 1;
@@ -236,19 +254,22 @@ async function cmdRun(args: string[]): Promise<number> {
 
   process.stdout.write(`graph  ${flags.graph}\nmodel  ${chosen.label}\n\n`);
 
-  const result = await runSession({
-    paths: p,
-    project,
-    graphPath: graphFile,
-    prompt: flags.positionals.join(" "),
-    ...(flags.name === undefined ? {} : { name: flags.name }),
-    model: chosen.model,
-    systemPrompt: "",
-    streamFn: chosen.streamFn,
-    tools: createPiToolExecutor(project),
-    onProgress: (line) => process.stdout.write(`  ${line}\n`),
-    ...(flags.answer === undefined ? {} : { onWait: () => flags.answer }),
-  });
+  const result = await withInterrupt((signal) =>
+    runSession({
+      paths: p,
+      project,
+      graphPath: graphFile,
+      prompt: flags.positionals.join(" "),
+      ...(flags.name === undefined ? {} : { name: flags.name }),
+      model: chosen.model,
+      systemPrompt: "",
+      streamFn: chosen.streamFn,
+      tools: createPiToolExecutor(project),
+      onProgress: (line) => process.stdout.write(`  ${line}\n`),
+      ...(flags.answer === undefined ? {} : { onWait: () => flags.answer }),
+      signal,
+    }),
+  );
 
   process.stdout.write(`\nsession ${result.sessionId}  ${result.outcome}  ${result.turns} turn(s)\n`);
   reportWait(p, result.sessionId, result.outcome);
@@ -278,17 +299,20 @@ async function cmdResume(args: string[]): Promise<number> {
   }
 
   try {
-    const result = await resumeSession({
-      paths: p,
-      project: projectId(),
-      sessionId,
-      model: chosen.model,
-      systemPrompt: "",
-      streamFn: chosen.streamFn,
-      tools: createPiToolExecutor(projectId()),
-      onProgress: (line) => process.stdout.write(`  ${line}\n`),
-      ...(flags.answer === undefined ? {} : { onWait: () => flags.answer }),
-    });
+    const result = await withInterrupt((signal) =>
+      resumeSession({
+        paths: p,
+        project: projectId(),
+        sessionId,
+        model: chosen.model,
+        systemPrompt: "",
+        streamFn: chosen.streamFn,
+        tools: createPiToolExecutor(projectId()),
+        onProgress: (line) => process.stdout.write(`  ${line}\n`),
+        ...(flags.answer === undefined ? {} : { onWait: () => flags.answer }),
+        signal,
+      }),
+    );
     process.stdout.write(`\nsession ${result.sessionId}  ${result.outcome}  ${result.turns} turn(s)\n`);
     reportWait(p, result.sessionId, result.outcome);
     if (result.error) {
