@@ -105,6 +105,85 @@ describe("runGraph", () => {
   });
 });
 
+const retried = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions ${DEFS}>
+  <process id="p" isExecutable="true">
+    <startEvent id="start" />
+    <sequenceFlow id="f1" sourceRef="start" targetRef="turn" />
+    <serviceTask id="turn" name="Flaky step">
+      <extensionElements>
+        <zeebe:taskDefinition type="agent:turn" retries="3" />
+      </extensionElements>
+    </serviceTask>
+    <sequenceFlow id="f2" sourceRef="turn" targetRef="end" />
+    <endEvent id="end" />
+  </process>
+</definitions>`;
+
+describe("zeebe:taskDefinition retries", () => {
+  it("retries a harness that throws, up to the configured count", async () => {
+    let calls = 0;
+    const result = await runGraph(retried, {
+      harnesses: {
+        "agent:turn": async () => {
+          calls += 1;
+          if (calls < 3) throw new Error(`flaky, attempt ${calls}`);
+          return ok("finally");
+        },
+      },
+    });
+    expect(result.outcome).toBe("completed");
+    expect(calls).toBe(3);
+  });
+
+  it("gives up once the configured retries are exhausted", async () => {
+    let calls = 0;
+    const result = await runGraph(retried, {
+      harnesses: {
+        "agent:turn": async () => {
+          calls += 1;
+          throw new Error(`always flaky, attempt ${calls}`);
+        },
+      },
+    });
+    expect(result.outcome).toBe("error");
+    expect(calls).toBe(3);
+    expect(result.error?.message).toMatch(/always flaky, attempt 3/);
+  });
+
+  it("does not retry when no retries are configured", async () => {
+    let calls = 0;
+    const result = await runGraph(routed, {
+      harnesses: {
+        "agent:turn": async () => {
+          calls += 1;
+          throw new Error("boom");
+        },
+      },
+      variables: { goal: "g" },
+    });
+    expect(result.outcome).toBe("error");
+    expect(calls).toBe(1);
+  });
+
+  it("never retries a harness that returns status: 'failed' rather than throwing", async () => {
+    // A `failed(...)` result is a business error the graph routes on with a
+    // gateway, not a job failure -- retrying it would just run it again
+    // unconditionally, which is not what C8's retries model.
+    let calls = 0;
+    const result = await runGraph(retried, {
+      harnesses: {
+        "agent:turn": async () => {
+          calls += 1;
+          return { status: "failed" as const, summary: "business error", findings: [], artifacts: [], next_action: "stop" as const };
+        },
+      },
+    });
+    expect(result.outcome).toBe("completed");
+    expect(calls).toBe(1);
+  });
+});
+
 /** A user task the process parks on, so a run can be snapshotted mid-flight. */
 const parking = `<?xml version="1.0" encoding="UTF-8"?>
 <definitions ${DEFS}>

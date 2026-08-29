@@ -73,6 +73,10 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
       // FEEL sees a list, so `count(tool_calls)` and the loop over the batch work.
       tool_calls: outcome.toolCalls.map((call) => ({ id: call.id, name: call.name, arguments: call.arguments })),
       usage: outcome.usage,
+      // `summary` above is truncated for the turn log; a graph that needs the
+      // model's full response as data (craft-graph.bpmn's drafted fragment,
+      // say) reads this instead.
+      text: outcome.text,
     });
   };
 
