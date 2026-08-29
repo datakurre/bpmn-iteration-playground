@@ -21,7 +21,7 @@ help:
 	@echo "  make build-css          - build Tailwind CSS -> static/tailwind.css"
 	@echo ""
 	@echo "Run"
-	@echo "  make init               - scaffold .agents/ in the current directory"
+	@echo "  make init               - seed the user-level config and graph library"
 	@echo "  make run                - run the agent CLI (ARGS=...)"
 	@echo "  make studio             - serve the BPMN studio (PORT=0 picks a free port)"
 	@echo "  make dev                - rebuild on change and serve the studio"

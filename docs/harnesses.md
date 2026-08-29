@@ -48,6 +48,15 @@ harness (`activity.end`'s content carries the signaled answer, which
 `engine.ts` maps the same way a harness result would be). A user task has no
 job type, so it is never routed through `createHarnesses()`.
 
+**There is no way to answer one yet.** `runSession` takes an `onWait` callback
+for exactly this, but neither the CLI nor the studio supplies one, so a run
+that reaches a user task parks and `resume` re-parks on the same gate. That
+leaves `session-skeleton.bpmn` -- which opens on `await_intent` -- and
+`craft_graph`'s `review_fragment` approval unreachable from a terminal today;
+see [issue #21](https://github.com/datakurre/graph-agent/issues/21). The
+mapping semantics above are what will apply once an answer path exists, and
+are exercised by `engine.test.ts` rather than by anything a user can drive.
+
 ## Variables across a callActivity
 
 `link.ts` splices a called graph (`craft_graph`, called by `session-skeleton.bpmn`'s

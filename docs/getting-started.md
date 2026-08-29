@@ -25,7 +25,12 @@ Copies the bundled graph library (`workflows/*.bpmn`) into
 `$XDG_CONFIG_HOME/graph-agent/workflows`, and writes a starter
 `config.toml`. The graph library is shared across every project on the
 machine; sessions are recorded under `$XDG_STATE_HOME/graph-agent`, one
-directory per session, each tagged with the project it ran in.
+directory per session, each tagged with the project it ran in. `graph-agent
+where` prints all three paths.
+
+The generated `config.toml` advertises an `[agent] model` key, but nothing
+reads it yet ([issue #20](https://github.com/datakurre/graph-agent/issues/20));
+use `--model` instead.
 
 ## Run the Pi demo loop, without a model
 
@@ -52,8 +57,62 @@ model  dry-run (no model called)
 session 08c358d7  completed  1 turn(s)
 ```
 
-To run against a real model instead, authenticate with Pi first (`pi`, then
-`/login`) and drop `--dry-run`.
+## Run against a real model
+
+Models come from Pi's `ModelRuntime`, so credentials are configured the way Pi
+configures them and nothing is duplicated here: if `pi` can reach a provider,
+so can `graph-agent`. There are two routes.
+
+**An API key in the environment.** Pi maps a provider to a well-known variable
+-- `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`,
+`OPENCODE_API_KEY`, and so on. Exporting one is enough; there is no login step:
+
+```
+export OPENCODE_API_KEY=sk-...
+graph-agent run "say hello" --model opencode-go/gpt-5.6-luna
+```
+
+**Pi's own credential store.** Run `pi`, then `/login`, and pick a provider.
+`graph-agent` reads the same store.
+
+### Naming a model
+
+`--model` takes `provider/model`, or a bare provider (the first model that
+provider offers), or can be omitted.
+
+**Pass it explicitly.** Omitting `--model` today resolves against Pi's whole
+static catalogue rather than the providers you actually hold credentials for,
+so it will happily pick `amazon-bedrock/amazon.nova-2-lite-v1:0` when the only
+key you exported was an OpenCode one -- and the run then fails on a provider
+you never asked for. That is [issue #17](https://github.com/datakurre/graph-agent/issues/17);
+until it is fixed, name the model.
+
+One OpenCode key covers two providers, which are separate catalogues:
+`opencode` is Zen (61 models, including the `claude-*` and `gemini-*` families)
+and `opencode-go` is Go (23 models). So `opencode/gemini-3.7-flash` and
+`opencode-go/gpt-5.6-luna` are both valid, and `--model opencode-go` picks Go's
+first model. To see what a key actually unlocks:
+
+```
+node -e 'import("@earendil-works/pi-coding-agent").then(async ({ModelRuntime}) => {
+  const rt = await ModelRuntime.create();
+  for (const m of await rt.getAvailable()) console.log(m.provider + "/" + m.id);
+})'
+```
+
+`--model` with a name nothing matches prints every id in the catalogue --
+tens of thousands of characters ([issue #19](https://github.com/datakurre/graph-agent/issues/19)).
+Pipe it to `head`.
+
+### Network egress
+
+Every real run is an outbound HTTPS call to the provider's host, so a sandbox
+or CI runner has to allow it. For OpenCode that is `opencode.ai:443` (both
+`https://opencode.ai/zen/...` and `https://opencode.ai/zen/go/...` live there).
+`AGENTS.md`'s `agent-sandbox` block already lists it; other environments need
+their own allowance. A blocked host surfaces as a turn that stops with
+`error` -- see [Troubleshooting](#troubleshooting) for how to read the reason,
+because the CLI does not print it.
 
 ## A deterministic step: `shell`
 
@@ -100,3 +159,56 @@ the properties panel. See the [screenshots on the front page](index.html).
 `scripts/screenshot-docs.mjs` produces the screenshots in this repo's own
 `docs/` by driving the real CLI and a real Chromium against a throwaway
 workspace -- run it after any studio change to refresh them.
+
+## The bundled graphs
+
+`make init` seeds four graphs. Two run from the CLI today, two do not:
+
+| Graph | `graph-agent run --graph …` |
+|---|---|
+| `pi-default-loop` | yes -- the default |
+| `shell-demo` | yes |
+| `session-skeleton` | no -- parks on the `await_intent` user task |
+| `craft-graph` | no -- called by `session-skeleton`, not run directly |
+
+`session-skeleton` opens on a `zeebe:userTask`, and there is currently no way
+to answer one: neither the CLI nor the studio wires the `onWait` hook
+`runSession` provides for it. A run parks, prints nothing, and `resume` parks
+again on the same gate ([issue #21](https://github.com/datakurre/graph-agent/issues/21)).
+
+`craft-graph` is the sub-process `session-skeleton` calls. Its first activity
+maps `=intent`, which the caller supplies from that form, so running it
+standalone starts a turn with no prompt no matter what you type on the command
+line ([issue #22](https://github.com/datakurre/graph-agent/issues/22)).
+
+Both are worth reading in the studio -- they are the design for the
+self-extending session -- but `pi-default-loop` and `shell-demo` are what you
+can actually drive from a terminal right now.
+
+## Troubleshooting
+
+**A turn prints `stopped: error`.** The CLI does not print why, and the run
+still ends `completed` with exit code 0
+([issue #18](https://github.com/datakurre/graph-agent/issues/18)). The reason is
+recorded, in two places you can read:
+
+```
+$ cat "$(graph-agent where | awk '/^sessions/{print $2}')"/<session-id>/meta.json
+...
+"stopReason": "error",
+"error": "OpenAI API error (403): 403 Host not in allowlist: opencode.ai. ..."
+```
+
+or open the session in `graph-agent studio`, whose session view *does* render
+the message under the failing turn. Until #18 is fixed, do not read
+`completed` or a zero exit code as "the run worked" -- check the turn list.
+
+**The run picked a provider you never configured.** See
+[Naming a model](#naming-a-model): pass `--model` explicitly. The `[agent]
+model` key that `init` writes into `config.toml` is not read by anything yet
+([issue #20](https://github.com/datakurre/graph-agent/issues/20)), so it cannot
+stand in for the flag.
+
+**`graph-agent: not set up yet. Run graph-agent init first.`** Every command
+except `init`, `where` and `--help` requires the user-level config directory to
+exist. `make init` creates it.
