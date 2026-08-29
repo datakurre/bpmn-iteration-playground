@@ -26,24 +26,19 @@ harness returns: `status`, `summary`, `findings`, `artifacts`, `next_action`).
 | `graph:extend` | The self-mutation primitive: replaces the session graph with the fragment spliced in. Additive with stable ids only -- `bpmn-engine` replays recovered child state by element id, so a fragment that renames or removes a live element cannot be recovered. | in: `fragment`; out: `added` |
 | `shell` | A deterministic step: runs a command and reports its exit status. No model call. | headers: `command` (required), `fail_on_error` (default `true`); out: `exit_code`, `stdout`, `stderr` |
 
-### Known defects on the tool path
+### Verifying this table
 
-Three of the rows above do not currently behave as documented once a real model
-drives them. `--dry-run` stops after one scripted turn, so none of these is
-visible there, and the suite scripts tool calls one at a time, so `make test`
-stays green through all three.
-
-- `agent:turn`'s `prompt` is documented as *"only needed on the first turn"*,
-  but `pi-default-loop` maps it unconditionally and nothing clears the
-  variable, so it is re-sent every iteration and a tool-using run never
-  converges ([#25](https://github.com/datakurre/graph-agent/issues/25)).
-- The model is told nothing about a tool's arguments: `PiSession.parkingTool`
-  replaces each real schema with an open object and a placeholder description,
-  so it must guess parameter names
-  ([#26](https://github.com/datakurre/graph-agent/issues/26)).
-- `agent:tool`'s `tool_call` input never arrives from the multi-instance
-  `tool_batch`, so a batch of two runs the first call twice and errors
-  ([#27](https://github.com/datakurre/graph-agent/issues/27)).
+`--dry-run` stops after one scripted turn, so it never reaches the tool batch,
+`agent:collect-tools`, `agent:prepare-next-turn` or the loop-back. Three
+defects lived behind that gap while `make test` stayed green, because the suite
+scripted tool calls one at a time: the prompt was re-sent every iteration
+([#25](https://github.com/datakurre/graph-agent/issues/25)), the model was told
+nothing about a tool's arguments
+([#26](https://github.com/datakurre/graph-agent/issues/26)), and a two-call
+batch ran the first call twice
+([#27](https://github.com/datakurre/graph-agent/issues/27)). All three are
+fixed and covered by `runner.test.ts`, but changes to these rows still want a
+real model behind them, run against a throwaway workspace.
 
 `shell` is configured entirely from `zeebe:taskHeaders` rather than
 `zeebe:ioMapping` input, because the command is a fixed part of what the

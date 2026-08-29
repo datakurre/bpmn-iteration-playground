@@ -46,24 +46,16 @@ export OPENCODE_API_KEY=sk-...
 graph-agent run "say hello" --model opencode-go/gpt-5.6-luna
 ```
 
-Name the model. Omitting `--model` currently resolves against Pi's whole
-static catalogue rather than the providers you hold credentials for, so it
-can pick one you never configured ([#17](https://github.com/datakurre/graph-agent/issues/17)),
-and a turn that fails still reports `completed` with exit code 0
-([#18](https://github.com/datakurre/graph-agent/issues/18)) -- the reason is in
-the session's `meta.json`, or in the studio's session view.
+Name the model: `--model` takes `provider/model`, or a bare provider. A turn
+that fails prints its reason and exits non-zero; the full record is in the
+session's `meta.json`, or in the studio's session view.
 
-**Runs that call tools are not ready yet.** A single turn works. Anything that
-reaches the tool batch hits three open defects: the initial prompt is re-sent
-on every iteration so the loop never converges and keeps billing
-([#25](https://github.com/datakurre/graph-agent/issues/25)), the model is never
-told what arguments a tool takes
-([#26](https://github.com/datakurre/graph-agent/issues/26)), and a batch of more
-than one call runs the first call twice and errors
-([#27](https://github.com/datakurre/graph-agent/issues/27)). None of them shows
-up under `--dry-run`. Read
-[Tool calls](docs/getting-started.md#tool-calls) before pointing this at real
-work.
+If your Anthropic key is **identity-linked**, the variable alone is not enough:
+those keys need an `anthropic-workspace-id` header that no environment variable
+supplies, and the first turn fails with `anthropic-workspace-id is required`.
+Put the id in Pi's `~/.pi/agent/models.json` under
+`providers.anthropic.headers` -- see
+[Run against a real model](docs/getting-started.md#run-against-a-real-model).
 
 See [`docs/getting-started.md`](docs/getting-started.md) for the full
 walkthrough and its troubleshooting notes, and
@@ -71,8 +63,12 @@ walkthrough and its troubleshooting notes, and
 dispatch to.
 
 Of the four bundled graphs, `pi-default-loop` and `shell-demo` run from the
-CLI; `session-skeleton` and the `craft-graph` it calls open on a human gate
-that nothing can answer yet ([#21](https://github.com/datakurre/graph-agent/issues/21)).
+CLI, tool calls included. `session-skeleton` parks on a human gate that
+`resume --answer` can now answer, but the step after it still cannot be
+reached, and the loop it lands in is unbounded -- don't point that one at a
+real model ([#30](https://github.com/datakurre/graph-agent/issues/30),
+[#31](https://github.com/datakurre/graph-agent/issues/31),
+[#22](https://github.com/datakurre/graph-agent/issues/22)).
 
 (Under Nix: `nix develop --command make <target>`.)
 

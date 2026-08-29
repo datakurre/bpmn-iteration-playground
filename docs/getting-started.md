@@ -28,9 +28,9 @@ machine; sessions are recorded under `$XDG_STATE_HOME/graph-agent`, one
 directory per session, each tagged with the project it ran in. `graph-agent
 where` prints all three paths.
 
-The generated `config.toml` advertises an `[agent] model` key, but nothing
-reads it yet ([issue #20](https://github.com/datakurre/graph-agent/issues/20));
-use `--model` instead.
+The generated `config.toml` carries an `[agent] model` key that the resolver
+reads, so you can pin a default instead of repeating `--model`. An explicit
+`--model` still wins.
 
 ## Run the Pi demo loop, without a model
 
@@ -75,6 +75,50 @@ graph-agent run "say hello" --model opencode-go/gpt-5.6-luna
 **Pi's own credential store.** Run `pi`, then `/login`, and pick a provider.
 `graph-agent` reads the same store.
 
+**If your Anthropic key is identity-linked, the variable alone is not enough.**
+Anthropic issues two shapes of `sk-ant-api03-...` key. An ordinary one works
+with nothing but the variable. An *identity-linked* one additionally requires
+an `anthropic-workspace-id` header on every request, and Pi does not send one
+from any environment variable, so the run fails on its first turn:
+
+```
+$ graph-agent run "hi" --model anthropic/claude-haiku-4-5
+  llm_turn  agent:turn  error: 400 {"type":"error","error":{"type":"invalid_request_error",
+  "message":"anthropic-workspace-id is required when authenticating with an
+  identity-linked API key; send the id of the workspace this request acts in."}}
+```
+
+Check which kind you have in one call, before blaming the graph:
+
+```
+curl -sS https://api.anthropic.com/v1/messages \
+  -H "x-api-key: $ANTHROPIC_API_KEY" -H "anthropic-version: 2023-06-01" \
+  -H "content-type: application/json" \
+  -d '{"model":"claude-haiku-4-5","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}'
+```
+
+To use an identity-linked key, put the workspace id in Pi's own provider
+config at `~/.pi/agent/models.json` (the directory is `$PI_CODING_AGENT_DIR`
+if you set it). `graph-agent` inherits it, because it builds its models from
+Pi's `ModelRuntime`:
+
+```json
+{
+  "providers": {
+    "anthropic": {
+      "headers": { "anthropic-workspace-id": "wrkspc_YOUR_WORKSPACE_ID" }
+    }
+  }
+}
+```
+
+The workspace id is on the key's page in the Anthropic console; the Admin API
+(`/v1/organizations/workspaces`) can also list them, but only for an admin key
+(`sk-ant-admin...`), not for the identity-linked key itself. A wrong or absent
+id is easy to tell apart from a wrong key: *"...is required..."* means no
+header was sent, *"...must be a valid workspace ID."* means the header arrived
+but the value is wrong.
+
 A single-turn run works end to end:
 
 ```
@@ -90,21 +134,21 @@ model  anthropic/claude-haiku-4-5
 session 497c0b40  completed  1 turn(s)
 ```
 
-**A run that calls tools does not yet.** See [Tool calls](#tool-calls) before
-pointing this at real work -- there are three open defects on that path, one of
-which bills you for an unbounded number of turns.
+Runs that call tools work too -- see [Tool calls](#tool-calls) for what that
+path exercises and how it was verified.
 
 ### Naming a model
 
 `--model` takes `provider/model`, or a bare provider (the first model that
 provider offers), or can be omitted.
 
-**Pass it explicitly.** Omitting `--model` today resolves against Pi's whole
-static catalogue rather than the providers you actually hold credentials for,
-so it will happily pick `amazon-bedrock/amazon.nova-2-lite-v1:0` when the only
-key you exported was an OpenCode one -- and the run then fails on a provider
-you never asked for. That is [issue #17](https://github.com/datakurre/graph-agent/issues/17);
-until it is fixed, name the model.
+**Pass it explicitly.** The resolver now considers only providers with
+credentials, but "has credentials" is Pi's judgement and the first match wins:
+on a machine with ambient `AWS_*` variables, `amazon-bedrock` is considered
+configured and sorts first, so an unqualified `run` still picks
+`amazon-bedrock/amazon.nova-2-lite-v1:0` even when the key you exported was an
+Anthropic one. Name the model, or pin it in `config.toml`'s `[agent] model`,
+which the resolver does now read.
 
 One OpenCode key covers two providers, which are separate catalogues:
 `opencode` is Zen (61 models, including the `claude-*` and `gemini-*` families)
@@ -119,9 +163,8 @@ node -e 'import("@earendil-works/pi-coding-agent").then(async ({ModelRuntime}) =
 })'
 ```
 
-`--model` with a name nothing matches prints every id in the catalogue --
-tens of thousands of characters ([issue #19](https://github.com/datakurre/graph-agent/issues/19)).
-Pipe it to `head`.
+`--model` with a name nothing matches now prints a short, provider-scoped
+hint rather than the whole catalogue.
 
 ### Network egress
 
@@ -129,9 +172,9 @@ Every real run is an outbound HTTPS call to the provider's host, so a sandbox
 or CI runner has to allow it. For OpenCode that is `opencode.ai:443` (both
 `https://opencode.ai/zen/...` and `https://opencode.ai/zen/go/...` live there).
 `AGENTS.md`'s `agent-sandbox` block already lists it; other environments need
-their own allowance. A blocked host surfaces as a turn that stops with
-`error` -- see [Troubleshooting](#troubleshooting) for how to read the reason,
-because the CLI does not print it.
+their own allowance. For Anthropic it is `api.anthropic.com:443`. A blocked
+host surfaces as a failed turn whose message names the host, and the run now
+exits non-zero -- see [Troubleshooting](#troubleshooting).
 
 ## A deterministic step: `shell`
 
@@ -183,38 +226,26 @@ workspace -- run it after any studio change to refresh them.
 
 `--dry-run` answers once and stops, so it never exercises the half of
 `pi-default-loop` that matters most: the tool batch, `agent:collect-tools`,
-`agent:prepare-next-turn`, and the loop back for another turn. Driving that
-path with a real model surfaces three defects, and until they are fixed a run
-that uses tools will not do useful work.
+`agent:prepare-next-turn`, and the loop back for another turn. That path is
+where three defects lived, all of them found by pointing a real model at it and
+all now fixed:
 
-**The prompt is re-sent on every turn**
-([#25](https://github.com/datakurre/graph-agent/issues/25)). `llm_turn` maps
-`=prompt` unconditionally and the variable is never cleared, so the transcript
-grows as `user / assistant / toolResult / user / assistant / toolResult ...`
-with the *same* user message each time. The model answers the tool call, is
-handed its own original request again, and re-issues the call. One
-`graph-agent run` observed here reached **110 turns** -- 110 billed API calls --
-and still reported `completed` with exit code 0. Do not leave a tool-using run
-unattended.
+- the initial prompt was re-sent on every iteration, so a tool-using run never
+  converged -- one observed run reached 110 billed turns
+  ([#25](https://github.com/datakurre/graph-agent/issues/25));
+- the model was never told what arguments a tool takes, so it guessed
+  ([#26](https://github.com/datakurre/graph-agent/issues/26));
+- a batch of more than one tool call ran the first call twice and never ran the
+  second ([#27](https://github.com/datakurre/graph-agent/issues/27)).
 
-**The model is not told what arguments a tool takes**
-([#26](https://github.com/datakurre/graph-agent/issues/26)).
-`PiSession.parkingTool` advertises every tool as
-`{type: "object", additionalProperties: true}` described only as "Deferred to
-the process graph", discarding the real schema (`bash` requires `command`,
-`read` requires `path`, and so on). The model guesses; when it guesses wrong
-the call arrives with `arguments: {}` and the real tool fails with
-`/bin/bash: line 1: undefined: command not found`.
-
-**A batch of more than one tool call is broken**
-([#27](https://github.com/datakurre/graph-agent/issues/27)). The multi-instance
-`tool_call` element variable never reaches the harness, so `resolveToolCall`
-falls back to the first call for every instance. With two calls in a message,
-the first runs twice, the second never runs, and the session ends in `error`.
-Parallel tool calls are normal for current models, so this is the main path.
-
-None of the three is visible under `--dry-run`, and the test suite scripts tool
-calls one at a time, so `make test` stays green through all of them.
+The lesson worth keeping: **`make test` was green through all three**, because
+the suite scripted tool calls one at a time and `--dry-run` stops before the
+loop ever iterates. `src/agent/runner.test.ts` now covers a two-call batch and
+a multi-turn tool run, but anything new on this path still deserves a real
+model against a throwaway workspace before you trust it. `createPiToolExecutor`
+hands the model real `read`/`write`/`edit`/`bash` rooted at the working
+directory, so run those checks somewhere disposable, never in your own
+checkout.
 
 ## The bundled graphs
 
@@ -222,48 +253,66 @@ calls one at a time, so `make test` stays green through all of them.
 
 | Graph | `graph-agent run --graph …` |
 |---|---|
-| `pi-default-loop` | yes -- the default |
+| `pi-default-loop` | yes -- the default, tool calls included |
 | `shell-demo` | yes |
-| `session-skeleton` | no -- parks on the `await_intent` user task |
+| `session-skeleton` | starts, then parks on a gate you cannot get past |
 | `craft-graph` | no -- called by `session-skeleton`, not run directly |
 
-`session-skeleton` opens on a `zeebe:userTask`, and there is currently no way
-to answer one: neither the CLI nor the studio wires the `onWait` hook
-`runSession` provides for it. A run parks, prints nothing, and `resume` parks
-again on the same gate ([issue #21](https://github.com/datakurre/graph-agent/issues/21)).
+A run that reaches a `zeebe:userTask` now says so and tells you how to continue:
 
-`craft-graph` is the sub-process `session-skeleton` calls. Its first activity
-maps `=intent`, which the caller supplies from that form, so running it
-standalone starts a turn with no prompt no matter what you type on the command
-line ([issue #22](https://github.com/datakurre/graph-agent/issues/22)).
+```
+$ graph-agent run "hi" --dry-run --graph session-skeleton
+session eacee704  stopped  0 turn(s)
+waiting on await_intent
+resume with: graph-agent resume eacee704 --answer key=value
+```
+
+Answering it, though, does not yet get you into `craft-graph`:
+`resume --answer intent=...` fails with `cannot resume running process
+<craft_graph>` and then keeps executing the graph forever *after* printing that
+result -- 1065 iterations in 40 seconds, needing `kill -9`
+([#30](https://github.com/datakurre/graph-agent/issues/30)). The loop it lands
+in is unbounded because `craft-graph`'s `lint_attempts >= 3` cap never trips
+([#31](https://github.com/datakurre/graph-agent/issues/31)). **Do not run that
+against a real model** -- it is one billed call per iteration.
+
+`craft-graph` standalone still starts a turn with nothing to say, because its
+first activity maps `=intent` and only `session-skeleton`'s form supplies it
+([#22](https://github.com/datakurre/graph-agent/issues/22)).
 
 Both are worth reading in the studio -- they are the design for the
 self-extending session -- but `pi-default-loop` and `shell-demo` are what you
-can actually drive from a terminal right now.
+can drive from a terminal right now.
 
 ## Troubleshooting
 
-**A turn prints `stopped: error`.** The CLI does not print why, and the run
-still ends `completed` with exit code 0
-([issue #18](https://github.com/datakurre/graph-agent/issues/18)). The reason is
-recorded, in two places you can read:
+**A turn fails and you want to know why.** The message is on the progress line
+and repeated on stderr, and the run exits non-zero:
 
 ```
-$ cat "$(graph-agent where | awk '/^sessions/{print $2}')"/<session-id>/meta.json
-...
-"stopReason": "error",
-"error": "OpenAI API error (403): 403 Host not in allowlist: opencode.ai. ..."
+$ graph-agent run "hi" --model anthropic/claude-haiku-4-5
+  llm_turn  agent:turn  error: 400 {"type":"error",...}
+
+session 9969f280  error  1 turn(s)
+error: 400 {"type":"error",...}
+$ echo $?
+1
 ```
 
-or open the session in `graph-agent studio`, whose session view *does* render
-the message under the failing turn. Until #18 is fixed, do not read
-`completed` or a zero exit code as "the run worked" -- check the turn list.
+For the full record -- usage, tool calls, the graph revision -- read the
+session's `meta.json`, or open it in `graph-agent studio`, whose session view
+renders the error under the failing turn:
 
-**The run picked a provider you never configured.** See
-[Naming a model](#naming-a-model): pass `--model` explicitly. The `[agent]
-model` key that `init` writes into `config.toml` is not read by anything yet
-([issue #20](https://github.com/datakurre/graph-agent/issues/20)), so it cannot
-stand in for the flag.
+```
+cat "$(graph-agent where | awk '/^sessions/{print $2}')"/<session-id>/meta.json
+```
+
+**`anthropic-workspace-id is required ...`** Your key is identity-linked; see
+[Run against a real model](#run-against-a-real-model). This is a property of
+the key, not a bug in the graph, and no environment variable fixes it.
+
+**The run picked a provider you never configured.** Pass `--model` explicitly,
+or set `[agent] model` in `config.toml` -- see [Naming a model](#naming-a-model).
 
 **`graph-agent: not set up yet. Run graph-agent init first.`** Every command
 except `init`, `where` and `--help` requires the user-level config directory to

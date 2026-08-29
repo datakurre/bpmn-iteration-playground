@@ -66,56 +66,91 @@ changed.
 ## Running against a real model
 
 `--dry-run` covers most of what you need: it walks a graph with a scripted
-provider, so no credential and no egress. Reach for a real model only when the
-thing under test is the model call itself.
+provider, so no credential and no egress. Reach for a real model when the thing
+under test is the model call itself, or anything on the tool path (see below).
 
-When you do, credentials come from Pi's `ModelRuntime` -- export the provider's
-key (`OPENCODE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, ...) or use
-`pi` + `/login`. **Always pass `--model provider/model`.** The default resolver
-reads Pi's entire static catalogue rather than the providers you hold
-credentials for, so an unqualified `run` picks `amazon-bedrock/...` and fails
-(issue #17). One OpenCode key covers two separate catalogues: `opencode` (Zen)
-and `opencode-go` (Go).
+### Credentials
 
-A real run needs outbound HTTPS to the provider's host -- `opencode.ai:443` for
-either OpenCode catalogue. The `agent-sandbox` block above declares that, but
-it only governs the agent sandbox: a CI runner or a hosted session enforces its
-own egress policy, and a blocked host shows up as a turn that stops with
-`error`. Confirm reachability (`curl -sS -o /dev/null -w '%{http_code}'
-https://opencode.ai/`) before concluding the code is at fault.
+Credentials come from Pi's `ModelRuntime`; `graph-agent` adds no store of its
+own. Export the provider's key (`ANTHROPIC_API_KEY`, `OPENCODE_API_KEY`,
+`OPENAI_API_KEY`, `GEMINI_API_KEY`, ...) or use `pi` + `/login`.
 
-**A failed run looks like a successful one.** `graph-agent run` exits 0 and
-records `status: completed` even when every turn errored, and neither `run` nor
-`show` prints the reason (issue #18). Read the turn list, not the exit code;
-the message is in the session's `meta.json` under `turns[].error`, and the
-studio's session view renders it. The same silence covers a harness that
-returns `failed()` -- it scrolls past as an ordinary progress line.
+**Always pass `--model provider/model`.** The default resolver reads the
+credentialed subset now, but naming the model still saves a wrong guess.
+One OpenCode key covers two separate catalogues: `opencode` (Zen) and
+`opencode-go` (Go).
 
-**`--dry-run` does not cover the tool path.** Its scripted provider answers
-once and stops, so the tool batch, `agent:collect-tools`,
-`agent:prepare-next-turn` and the loop-back are never exercised; the suite
-scripts tool calls one at a time, so `make test` is green through all three of
-the defects below. Verify anything touching that path against a real model, in
-a throwaway workspace -- `createPiToolExecutor` gives the model real
-`read`/`write`/`edit`/`bash` against the cwd, so do not run it in this
+**An identity-linked `sk-ant-api03-...` key needs a header, and no environment
+variable supplies it.** Anthropic issues two shapes of key. The ordinary one
+works from `ANTHROPIC_API_KEY` alone. The identity-linked one additionally
+requires `anthropic-workspace-id` on every request and fails the first turn
+with:
+
+```
+400 ... "anthropic-workspace-id is required when authenticating with an
+identity-linked API key; send the id of the workspace this request acts in."
+```
+
+This is a property of the key, not a defect in the graph -- do not go looking
+for one. Diagnose it in a single call before running anything:
+
+```
+curl -sS https://api.anthropic.com/v1/messages \
+  -H "x-api-key: $ANTHROPIC_API_KEY" -H "anthropic-version: 2023-06-01" \
+  -H "content-type: application/json" \
+  -d '{"model":"claude-haiku-4-5","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}'
+```
+
+To use such a key you need the workspace id, which only its owner can give you
+(the Admin API that lists workspaces refuses an identity-linked key). Put it in
+Pi's provider config at `~/.pi/agent/models.json` -- `$PI_CODING_AGENT_DIR`
+overrides the directory -- and `graph-agent` inherits it:
+
+```json
+{"providers": {"anthropic": {"headers": {"anthropic-workspace-id": "wrkspc_..."}}}}
+```
+
+Verified: with the header present the error changes from *"...is required..."*
+to *"...must be a valid workspace ID."*, which is how you tell a missing header
+apart from a wrong id. If you have the key but not the id, **ask** -- there is
+nothing to work around.
+
+### Egress
+
+A real run needs outbound HTTPS to the provider's host: `api.anthropic.com:443`
+for Anthropic, `opencode.ai:443` for either OpenCode catalogue. The
+`agent-sandbox` block above declares those, but it only governs the agent
+sandbox -- a CI runner or hosted session enforces its own policy. Confirm
+reachability (`curl -sS -o /dev/null -w '%{http_code}' https://api.anthropic.com/v1/models`;
+a 401 means reachable, a 000/403 means blocked at the proxy) before concluding
+the code is at fault.
+
+### The tool path
+
+`--dry-run` does not cover it. Its scripted provider answers once and stops, so
+the tool batch, `agent:collect-tools`, `agent:prepare-next-turn` and the
+loop-back never run. Three real defects lived there behind a green `make test`
+(#25 prompt re-sent every iteration, 110 billed turns; #26 tool schemas hidden
+from the model; #27 a two-call batch running the first call twice) -- all fixed
+now, and `runner.test.ts` covers a two-call batch and a multi-turn tool run.
+The lesson stands: verify anything touching this path against a real model, and
+do it in a **throwaway workspace** -- `createPiToolExecutor` gives the model
+real `read`/`write`/`edit`/`bash` rooted at the cwd, so never run it in this
 checkout.
 
-- The prompt is re-sent every iteration (`llm_turn` maps `=prompt`
-  unconditionally, nothing clears it), so a tool-using run never converges. One
-  observed run reached 110 billed turns and still reported `completed` with
-  exit 0 (issue #25). Cap or watch any real run.
-- `PiSession.parkingTool` replaces each tool's real schema and description with
-  an open object, so the model guesses argument names and often sends `{}`
-  (issue #26).
-- The multi-instance `tool_call` never reaches `agent:tool`; `resolveToolCall`
-  silently falls back to `calls[0]`, so a two-call batch runs the first call
-  twice and errors (issue #27). Reproduce with two `fauxToolCall`s in one
-  `fauxAssistantMessage` -- note the signature is `fauxToolCall(name, args)`,
-  two arguments, not three.
+Scripting tool calls with the faux provider: `fauxToolCall(name, args)` takes
+**two** arguments, not an id first. Getting that wrong parks nothing and the
+run hangs rather than failing, which reads like a deadlock in the engine.
 
-Of the four bundled graphs, only `pi-default-loop` and `shell-demo` are
-drivable from the CLI. `session-skeleton` opens on a user task and nothing
-wires `runSession`'s `onWait`, so it parks and `resume` re-parks (issue #21);
-`craft-graph` is its callee and maps `=intent`, which only that form supplies,
-so `--graph craft-graph` starts a turn with no prompt (issue #22). Don't spend
-time debugging either as if it were broken locally.
+### The bundled graphs
+
+Only `pi-default-loop` and `shell-demo` are drivable end to end.
+`session-skeleton` parks on a user task; `resume --answer key=value` answers it
+(issue #21, fixed) but the `callActivity` after it fails with `cannot resume
+running process <craft_graph>` and the run then keeps executing forever after
+the CLI has printed its result -- 1065 iterations in 40s, ignores SIGTERM,
+needs `kill -9` (issue #30). The loop is unbounded because `craft-graph`'s
+`lint_attempts >= 3` cap never trips on the `failed()` path (issue #31).
+**Never point that at a real model.** `craft-graph` standalone still maps
+`=intent`, which only that form supplies (issue #22). Don't spend time
+debugging any of it as if it were broken locally.
