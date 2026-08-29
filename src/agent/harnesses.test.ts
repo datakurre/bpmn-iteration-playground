@@ -57,3 +57,33 @@ describe("shell harness", () => {
     expect(result.status).toBe("failed");
   });
 });
+
+describe("graph:lint attempt counter (issue #31)", () => {
+  it("counts attempts from its own closure rather than trusting context.variables.lint_attempts", async () => {
+    const deps: HarnessDeps = {
+      pi: {} as HarnessDeps["pi"],
+      tools: {} as HarnessDeps["tools"],
+      store: {} as HarnessDeps["store"],
+      getGraph: () => "<bpmn:definitions />",
+      setGraph: () => {},
+      takeSteering: () => [],
+      takeFollowUp: () => [],
+    };
+    const lint = createHarnesses(deps)["graph:lint"];
+    if (!lint) throw new Error("no 'graph:lint' harness registered");
+
+    // Every call reports variables exactly as an unresolved cross-process
+    // round-trip would: lint_attempts is never there. The old implementation
+    // read that as "no attempts yet" every single time and never reached
+    // gw_lint's lint_attempts >= 3 cap (issue #31).
+    const call = (): ReturnType<typeof lint> =>
+      lint({ activityId: "lint_fragment", harness: "graph:lint", properties: {}, input: {}, variables: {} });
+
+    const attempts = [await call(), await call(), await call()].map((r) => r.attempt);
+    expect(attempts).toEqual([1, 2, 3]);
+
+    // The cap (attempt 3) is a terminal result for this craft invocation: the
+    // count starts over for whatever comes next, rather than climbing forever.
+    expect((await call()).attempt).toBe(1);
+  });
+});

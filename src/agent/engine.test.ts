@@ -247,4 +247,56 @@ describe("resumeGraph", () => {
     expect(second.activities.map((a) => a.activityId)).toEqual(["added"]);
     expect(second.outcome).toBe("completed");
   });
+
+  it("answers a parked gate into a callActivity's process, reached for the first time (issue #30)", async () => {
+    // Answering synchronously, in the same tick a resumed run reaches a
+    // callActivity it has never entered before, used to throw "cannot resume
+    // running process <callee>": bpmn-elements' own message-redelivery
+    // handling races with instantiating that brand-new child process during a
+    // resume cycle. session-skeleton.bpmn hits this on every self-extending
+    // session, since `craft`'s first callActivity sits right behind the very
+    // gate `resume --answer` exists to answer.
+    const parkingWithCall = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions ${DEFS}>
+  <process id="p" isExecutable="true">
+    <startEvent id="start" />
+    <sequenceFlow id="f1" sourceRef="start" targetRef="gate" />
+    <userTask id="gate" />
+    <sequenceFlow id="f2" sourceRef="gate" targetRef="call" />
+    <callActivity id="call" calledElement="callee" />
+    <sequenceFlow id="f3" sourceRef="call" targetRef="end" />
+    <endEvent id="end" />
+  </process>
+  <process id="callee" isExecutable="false">
+    <startEvent id="c_start" />
+    <sequenceFlow id="cf1" sourceRef="c_start" targetRef="c_turn" />
+    <serviceTask id="c_turn">
+      <extensionElements>
+        <zeebe:taskDefinition type="agent:turn" />
+      </extensionElements>
+    </serviceTask>
+    <sequenceFlow id="cf2" sourceRef="c_turn" targetRef="c_end" />
+    <endEvent id="c_end" />
+  </process>
+</definitions>`;
+
+    const first = await runGraph(parkingWithCall, { harnesses: {} });
+    expect(first.outcome).toBe("stopped");
+
+    const ran: string[] = [];
+    const second = await resumeGraph(first.state, parkingWithCall, {
+      // A plain, synchronous answer -- exactly what `resume --answer` gives.
+      onWait: () => ({ approved: true }),
+      harnesses: {
+        "agent:turn": async (context) => {
+          ran.push(context.activityId);
+          return ok("ran the callee");
+        },
+      },
+    });
+
+    expect(second.error).toBeUndefined();
+    expect(ran).toEqual(["c_turn"]);
+    expect(second.outcome).toBe("completed");
+  });
 });
