@@ -87,8 +87,9 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
 
   const agentTool: Harness = async (context) => {
     const raw = context.input.tool_call;
-    const call = resolveToolCall(raw, currentToolCalls);
-    if (!call) return failed("the activity received no tool call to run");
+    const resolved = resolveToolCall(raw, currentToolCalls, new Set(pi.pendingToolCalls));
+    if (!resolved.ok) return failed(resolved.reason);
+    const call = resolved.call;
 
     const outcome = await tools.run(call.name, call.arguments, context.signal);
     pi.resolveTool(call.id, outcome);
@@ -232,20 +233,44 @@ function runCommand(
   });
 }
 
+export type ResolvedToolCall = { ok: true; call: ToolCallRequest } | { ok: false; reason: string };
+
 /**
- * A multi-instance batch hands each instance its own element. Accept the tool
- * call itself, or an index into the turn's calls, or fall back to the first
- * unanswered one.
+ * A multi-instance batch hands each instance its own element (`content.tool_call`
+ * for pi-default-loop's tool_batch). Accept the tool call itself or an index
+ * into the turn's calls when one was mapped in.
+ *
+ * When nothing was mapped, falling back to `calls[0]` is only ever safe if
+ * there is exactly one call still unanswered -- the ordinary single-call
+ * case. With two or more outstanding, guessing runs the wrong call, runs one
+ * twice, or leaves one never answered (issue #27), so that case fails loudly
+ * instead: a graph with a real multi-instance batch that stops mapping
+ * `tool_call` should be told, not silently misrouted.
  */
-export function resolveToolCall(raw: unknown, calls: ToolCallRequest[]): ToolCallRequest | undefined {
+export function resolveToolCall(
+  raw: unknown,
+  calls: ToolCallRequest[],
+  pending: ReadonlySet<string>,
+): ResolvedToolCall {
   if (raw && typeof raw === "object") {
     const candidate = raw as Partial<ToolCallRequest>;
     if (typeof candidate.id === "string" && typeof candidate.name === "string") {
-      return { id: candidate.id, name: candidate.name, arguments: candidate.arguments ?? {} };
+      return { ok: true, call: { id: candidate.id, name: candidate.name, arguments: candidate.arguments ?? {} } };
     }
   }
-  if (typeof raw === "number" && Number.isInteger(raw)) return calls[raw];
-  return calls[0];
+  if (typeof raw === "number" && Number.isInteger(raw)) {
+    const call = calls[raw];
+    return call ? { ok: true, call } : { ok: false, reason: `no tool call at index ${raw}` };
+  }
+  const unanswered = calls.filter((call) => pending.has(call.id));
+  if (unanswered.length === 1) return { ok: true, call: unanswered[0]! };
+  if (unanswered.length === 0) return { ok: false, reason: "the activity received no tool call to run" };
+  return {
+    ok: false,
+    reason:
+      `${unanswered.length} tool calls are still unanswered and none was mapped in -- ` +
+      `map 'tool_call' (e.g. a multi-instance element variable) to say which one`,
+  };
 }
 
 function message(error: unknown): string {

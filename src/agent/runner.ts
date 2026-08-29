@@ -116,7 +116,7 @@ async function drive(
   const pi = new PiSession({
     model: options.model,
     systemPrompt: options.systemPrompt || DEFAULT_SYSTEM_PROMPT,
-    toolNames: options.tools.names(),
+    tools: options.tools.list(),
     streamFn: options.streamFn,
     sessionId: store.id,
   });
