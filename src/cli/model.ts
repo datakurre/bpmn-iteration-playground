@@ -5,9 +5,10 @@
  * thin resolver over it rather than a second place to configure models: if `pi`
  * can talk to a provider, so can we.
  */
+import { existsSync, readFileSync } from "node:fs";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { Agent } from "@earendil-works/pi-agent-core";
 
 export interface ResolvedModel {
@@ -36,12 +37,65 @@ export function dryRunModel(turns = 1): ResolvedModel {
 }
 
 /**
- * `spec` is `provider/model`, or just a provider, or omitted for the first model
- * that has credentials.
+ * Reads `[agent] model` out of `config.toml`. Deliberately not a general TOML
+ * parser -- the file has exactly one setting worth reading -- so a stray `#`
+ * inside a quoted value or a `[agent.sub]` table is not handled; both are
+ * outside what `init` ever writes.
  */
-export async function resolveModel(spec?: string): Promise<ResolvedModel> {
+export function readConfiguredModel(configFile: string): string | undefined {
+  if (!existsSync(configFile)) return undefined;
+  const text = readFileSync(configFile, "utf8");
+
+  let inAgentSection = false;
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.replace(/#.*$/, "").trim();
+    if (!line) continue;
+
+    const section = /^\[([^\]]+)\]$/.exec(line);
+    if (section) {
+      inAgentSection = section[1]?.trim() === "agent";
+      continue;
+    }
+    if (!inAgentSection) continue;
+
+    const setting = /^model\s*=\s*(.+)$/.exec(line);
+    if (setting) return setting[1]?.trim().replace(/^["']|["']$/g, "");
+  }
+  return undefined;
+}
+
+/** Caps a long list for an error message: `n` items, then a "…and N more" tail. */
+function capList(items: readonly string[], max = 20): string {
+  if (items.length <= max) return items.join(", ");
+  return `${items.slice(0, max).join(", ")}, …and ${items.length - max} more`;
+}
+
+/** Describes what `spec` could have meant, without dumping the whole catalogue. */
+function describeAvailable(available: readonly Model<Api>[], spec: string): string {
+  const providers = [...new Set(available.map((m) => m.provider))];
+  const slash = spec.indexOf("/");
+  if (slash === -1) {
+    return `available providers: ${capList(providers)}. Pass 'provider/model', e.g. '${providers[0]}/${available[0]?.id}'.`;
+  }
+
+  const provider = spec.slice(0, slash);
+  const inProvider = available.filter((m) => m.provider === provider);
+  if (inProvider.length === 0) {
+    return `no provider '${provider}' has credentials configured. Available providers: ${capList(providers)}.`;
+  }
+  return `available in '${provider}': ${capList(inProvider.map((m) => `${m.provider}/${m.id}`))}.`;
+}
+
+/**
+ * `spec` is `provider/model`, or just a provider, or omitted to fall back to
+ * `configuredModel` (typically `[agent] model` from config.toml), or omitted
+ * entirely for the first model that has credentials.
+ */
+export async function resolveModel(spec?: string, configuredModel?: string): Promise<ResolvedModel> {
   const runtime = await ModelRuntime.create();
-  const available = runtime.getModels();
+  // Credential-filtered, unlike getModels(): that returns every model of every
+  // provider Pi knows about, whether or not this machine can actually call it.
+  const available = await runtime.getAvailable();
 
   if (available.length === 0) {
     throw new Error(
@@ -49,17 +103,17 @@ export async function resolveModel(spec?: string): Promise<ResolvedModel> {
     );
   }
 
-  let model: Model<any> | undefined;
-  if (spec) {
-    const slash = spec.indexOf("/");
+  const effectiveSpec = spec ?? configuredModel;
+
+  let model: Model<Api> | undefined;
+  if (effectiveSpec) {
+    const slash = effectiveSpec.indexOf("/");
     model =
       slash === -1
-        ? available.find((m) => m.provider === spec || m.id === spec)
-        : runtime.getModel(spec.slice(0, slash), spec.slice(slash + 1));
+        ? available.find((m) => m.provider === effectiveSpec || m.id === effectiveSpec)
+        : available.find((m) => m.provider === effectiveSpec.slice(0, slash) && m.id === effectiveSpec.slice(slash + 1));
     if (!model) {
-      throw new Error(
-        `no model matches '${spec}'. Available: ${available.map((m) => `${m.provider}/${m.id}`).join(", ")}`,
-      );
+      throw new Error(`no model matches '${effectiveSpec}'. ${describeAvailable(available, effectiveSpec)}`);
     }
   } else {
     model = available[0];

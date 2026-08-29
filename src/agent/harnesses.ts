@@ -68,7 +68,12 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
       meta.turns.push(record);
     });
 
-    return ok(outcome.text.slice(0, 200) || `stopped: ${outcome.stopReason}`, {
+    const summary =
+      outcome.stopReason === "error" && outcome.errorMessage
+        ? `error: ${outcome.errorMessage}`
+        : outcome.text.slice(0, 200) || `stopped: ${outcome.stopReason}`;
+
+    return ok(summary, {
       stop_reason: outcome.stopReason,
       // FEEL sees a list, so `count(tool_calls)` and the loop over the batch work.
       tool_calls: outcome.toolCalls.map((call) => ({ id: call.id, name: call.name, arguments: call.arguments })),

@@ -113,9 +113,12 @@ describe("runSession on the built-in loop", () => {
     const faux = scripted([fauxAssistantMessage([fauxText("")], { stopReason: "error" })]);
     const result = await runSession(options(faux, { prompt: "go" }));
 
-    // the loop terminates on error rather than looping forever
-    expect(result.outcome).toBe("completed");
+    // the loop terminates rather than looping forever, and reports the failure
+    // rather than looking like any other completed run (issue #18)
+    expect(result.outcome).toBe("error");
+    expect(result.error?.message).toContain("llm_turn");
     const detail = new SessionStore(paths, result.sessionId).detail();
+    expect(detail.status).toBe("error");
     expect(detail.turns[0]?.stopReason).toBe("error");
   });
 });

@@ -173,6 +173,32 @@ describe("running the linked graph (mock harnesses, matching the real contract)"
   });
 });
 
+describe("running craft-graph standalone (issue #22)", () => {
+  it("falls back to the seeded prompt when there is no session intent", async () => {
+    // `graph-agent run --graph craft-graph` seeds only `{ prompt, project }` --
+    // there is no session-skeleton await_intent ahead of it to publish `intent`.
+    const xml = readFileSync(join(bundledWorkflowsDir(), "craft-graph.bpmn"), "utf8");
+    const draftPrompts: unknown[] = [];
+
+    const result = await runGraph(xml, {
+      variables: { prompt: "add a lint step", project: "/tmp/some-project" },
+      harnesses: {
+        "agent:turn": async (context) => {
+          draftPrompts.push(context.input.prompt);
+          return ok("drafted", { text: "a fragment" });
+        },
+        "graph:layout": async (context) => ok("laid out", { fragment: context.input.fragment }),
+        "graph:lint": async () => ok("lint result", { status: "success", summary: "ok", attempt: 1 }),
+        "graph:extend": async () => ok("extended", { status: "success" }),
+      },
+      onWait: (activityId) => (activityId === "review_fragment" ? { approval: "apply", notes: "" } : undefined),
+    });
+
+    expect(draftPrompts).toEqual(["add a lint step"]);
+    expect(result.outcome).toBe("completed");
+  });
+});
+
 describe("running the linked graph with the real harness registry", () => {
   it("carries the session's intent into the crafting graph's first turn", async () => {
     const home = mkdtempSync(join(tmpdir(), "graph-agent-craft-"));
@@ -180,7 +206,14 @@ describe("running the linked graph with the real harness registry", () => {
       resolvePaths({ XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") } as NodeJS.ProcessEnv),
     );
     const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", name: "Faux" }] });
-    faux.setResponses([fauxAssistantMessage([fauxText("a fragment")], { stopReason: "stop" })] as never);
+    // "a fragment" is not valid BPMN, so the real graph:layout/graph:lint harnesses
+    // reject it every time and craft_graph redrafts up to its 3-attempt limit
+    // before giving up via lint_exhausted -- a legitimate "the model never
+    // produced a usable fragment" outcome, not a run error. Three identical
+    // canned replies keep every one of those attempts a normal Pi turn.
+    faux.setResponses(
+      Array.from({ length: 3 }, () => fauxAssistantMessage([fauxText("a fragment")], { stopReason: "stop" })) as never,
+    );
 
     const progress: string[] = [];
     const result = await runSession({

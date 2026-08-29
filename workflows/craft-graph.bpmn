@@ -54,7 +54,7 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
           <zeebe:header key="agent_role" value="graph_architect" />
         </zeebe:taskHeaders>
         <zeebe:ioMapping>
-          <zeebe:input source="=intent" target="prompt" />
+          <zeebe:input source="=if intent = null then prompt else intent" target="prompt" />
           <zeebe:input source="=lint_feedback" target="lint_feedback" />
           <zeebe:output source="=text" target="fragment" />
         </zeebe:ioMapping>
