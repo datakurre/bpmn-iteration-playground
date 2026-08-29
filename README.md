@@ -63,7 +63,10 @@ walkthrough and its troubleshooting notes, and
 dispatch to.
 
 `pi-default-loop`, `shell-demo` and `craft-graph` run from the CLI, tool calls
-included. `session-skeleton` parks on a human gate that `resume --answer`
+included -- parallel calls in one response too. `craft-graph` runs and bounds
+itself but does not yet land a splice with a real model
+([#37](https://github.com/datakurre/graph-agent/issues/37),
+[#36](https://github.com/datakurre/graph-agent/issues/36)). `session-skeleton` parks on a human gate that `resume --answer`
 answers, but the loop it then enters never terminates and ignores Ctrl-C --
 don't point that one at a real model
 ([#34](https://github.com/datakurre/graph-agent/issues/34)).

@@ -113,7 +113,9 @@ overrides the directory -- and `graph-agent` inherits it:
 Verified: with the header present the error changes from *"...is required..."*
 to *"...must be a valid workspace ID."*, which is how you tell a missing header
 apart from a wrong id. If you have the key but not the id, **ask** -- there is
-nothing to work around.
+nothing to work around. Three of the four keys handed to this project so far
+were identity-linked, so run the curl above **first**, every time; it costs one
+call and saves a debugging session chasing a graph bug that is not there.
 
 ### Egress
 
@@ -131,12 +133,30 @@ the code is at fault.
 the tool batch, `agent:collect-tools`, `agent:prepare-next-turn` and the
 loop-back never run. Three real defects lived there behind a green `make test`
 (#25 prompt re-sent every iteration, 110 billed turns; #26 tool schemas hidden
-from the model; #27 a two-call batch running the first call twice) -- all fixed
-now, and `runner.test.ts` covers a two-call batch and a multi-turn tool run.
-The lesson stands: verify anything touching this path against a real model, and
-do it in a **throwaway workspace** -- `createPiToolExecutor` gives the model
-real `read`/`write`/`edit`/`bash` rooted at the cwd, so never run it in this
-checkout.
+from the model; #27 a two-call batch running the first call twice). All three
+are fixed and confirmed against live Haiku: the 110-turn prompt now converges
+in 2 turns, and a parallel two-call batch runs each call with its own
+arguments. The lesson stands: verify anything touching this path against a real
+model, and do it in a **throwaway workspace** -- `createPiToolExecutor` gives
+the model real `read`/`write`/`edit`/`bash` rooted at the cwd, so never run it
+in this checkout.
+
+Still live: `agent:turn` offers every session tool regardless of whether the
+graph has an `agent:tool` to run them, so a graph without one wedges the moment
+the model tries a call -- and it surfaces two activities later as `a turn is
+already in flight with unanswered tool calls` (#36). `craft-graph` hits this on
+the most natural prompt there is, "change this graph", because the model reads
+before editing.
+
+### The self-extension path does not yet land a splice
+
+`craft-graph` runs, bounds itself at three attempts and reports honestly, but
+every draft is rejected for reasons unrelated to the model's BPMN (#37):
+`agent_role: graph_architect` is parsed and never consumed, so the drafting
+turn gets no format instruction at all; and nothing strips the markdown fence
+models wrap XML in. "Fragment" also means a bare element in the prompt and a
+complete `<bpmn:definitions>` to `graph:layout`/`checkSplice`. Don't read a
+`craft_rejected` outcome as the model being bad at BPMN.
 
 Scripting tool calls with the faux provider: `fauxToolCall(name, args)` takes
 **two** arguments, not an id first. Getting that wrong parks nothing and the
