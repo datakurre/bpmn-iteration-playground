@@ -62,13 +62,21 @@ walkthrough and its troubleshooting notes, and
 [`docs/harnesses.md`](docs/harnesses.md) for every job type a graph can
 dispatch to.
 
-Of the four bundled graphs, `pi-default-loop` and `shell-demo` run from the
-CLI, tool calls included. `session-skeleton` parks on a human gate that
-`resume --answer` can now answer, but the step after it still cannot be
-reached, and the loop it lands in is unbounded -- don't point that one at a
-real model ([#30](https://github.com/datakurre/graph-agent/issues/30),
-[#31](https://github.com/datakurre/graph-agent/issues/31),
-[#22](https://github.com/datakurre/graph-agent/issues/22)).
+All four bundled graphs run. `pi-default-loop` and `shell-demo` drive tool
+calls, parallel ones included. `craft-graph` drafts a BPMN fragment and splices
+it into the running session -- verified end to end against real Haiku, approval
+gate and all -- so the agent really does rewrite its own control flow
+mid-session.
+
+Two things to know. `graph:lint` checks that a fragment is valid and additive,
+but not that its `zeebe:taskDefinition type` names a harness that exists, so an
+approved splice can be inert until something runs it
+([#40](https://github.com/datakurre/graph-agent/issues/40)) -- review the
+fragment at the approval gate. And `init` never overwrites your graph library,
+so a bundled graph fixed upstream keeps running its old copy with no warning
+([#35](https://github.com/datakurre/graph-agent/issues/35)) -- diff
+`workflows/` against `graph-agent where`'s graphs directory before concluding a
+graph is still broken.
 
 (Under Nix: `nix develop --command make <target>`.)
 

@@ -249,41 +249,92 @@ checkout.
 
 ## The bundled graphs
 
-`make init` seeds four graphs. Three run from the CLI; the fourth starts but
-cannot finish:
+`make init` seeds four graphs. All four run:
 
-| Graph | `graph-agent run --graph …` |
+| Graph | What it is |
 |---|---|
-| `pi-default-loop` | yes -- the default, tool calls included |
-| `shell-demo` | yes |
-| `session-skeleton` | starts, then parks on a gate you cannot get past |
-| `craft-graph` | no -- called by `session-skeleton`, not run directly |
+| `pi-default-loop` | the default -- Pi's loop drawn, tool calls included |
+| `shell-demo` | one Pi turn paired with a deterministic `shell` step |
+| `craft-graph` | drafts a BPMN fragment and splices it into the running session |
+| `session-skeleton` | asks for an intent, then calls `craft-graph` |
 
-A run that reaches a `zeebe:userTask` now says so and tells you how to continue:
+### Extending a graph from inside a session
+
+This is the thing the project is for, and it works end to end against a real
+model. `craft-graph` drafts a fragment, lays it out, checks the splice, and
+parks for a human to approve:
 
 ```
-$ graph-agent run "hi" --dry-run --graph session-skeleton
-session eacee704  stopped  0 turn(s)
-waiting on await_intent
-resume with: graph-agent resume eacee704 --answer key=value
+$ graph-agent run "Add a service task that runs 'npm test' after the LLM turn" \
+    --graph craft-graph --model anthropic/claude-haiku-4-5
+  draft_fragment  agent:turn  ```xml <?xml version="1.0" ...
+  layout_fragment  graph:layout  laid out
+  lint_fragment  graph:lint  adds 2 element(s)
+
+session 61801712  stopped  1 turn(s)
+waiting on lint_fragment, gw_lint, review_fragment
+resume with: graph-agent resume 61801712 --answer key=value
 ```
 
-Answering it, though, does not yet get you into `craft-graph`:
-`resume --answer intent=...` fails with `cannot resume running process
-<craft_graph>` and then keeps executing the graph forever *after* printing that
-result -- 1065 iterations in 40 seconds, needing `kill -9`
-([#30](https://github.com/datakurre/graph-agent/issues/30)). The loop it lands
-in is unbounded because `craft-graph`'s `lint_attempts >= 3` cap never trips
-([#31](https://github.com/datakurre/graph-agent/issues/31)). **Do not run that
-against a real model** -- it is one billed call per iteration.
+Approve it and the session's own control flow changes:
 
-`craft-graph` standalone still starts a turn with nothing to say, because its
-first activity maps `=intent` and only `session-skeleton`'s form supplies it
-([#22](https://github.com/datakurre/graph-agent/issues/22)).
+```
+$ graph-agent resume 61801712 --answer approval=apply --model anthropic/claude-haiku-4-5
+  apply_extension  graph:extend  spliced in 2 element(s)
 
-Both are worth reading in the studio -- they are the design for the
-self-extending session -- but `pi-default-loop` and `shell-demo` are what you
-can drive from a terminal right now.
+session 61801712  completed  1 turn(s)
+```
+
+`graph-agent show` then reports `graph revisions: 2`, and revision `001.bpmn`
+really does contain the new element. `--answer approval=reject` leaves the
+graph at one revision, as it should.
+
+### Review an approved fragment yourself
+
+`graph:lint` verifies that a fragment is valid BPMN and an *additive* splice.
+It does **not** check that each new activity's `zeebe:taskDefinition type`
+names a harness that exists
+([#40](https://github.com/datakurre/graph-agent/issues/40)). In the run above
+the model wrote:
+
+```xml
+<zeebe:taskDefinition type="shell:exec" />
+<zeebe:input source="=&quot;npm test&quot;" target="command" />
+<zeebe:output source="=exitCode" target="test_exit_code" />
+```
+
+The registry has `shell`, not `shell:exec`; `shell` takes its command from
+`zeebe:taskHeaders`, not `ioMapping`; and its output is `exit_code`, not
+`exitCode`. Lint reported `adds 2 element(s)` and the splice was applied. It
+surfaces only when something runs the extended graph:
+
+```
+error: no harness registered for 'shell:exec' (activity run_npm_test)
+```
+
+The drafting model is not given the list of real job types, so it invents
+plausible-looking ones. Read [the harness reference](harnesses.html) and check
+the fragment at the `review_fragment` gate before approving.
+
+## Keeping the graph library current
+
+`graph-agent init` seeds `$XDG_CONFIG_HOME/graph-agent/workflows` but **never
+overwrites**, by design: the library is yours and shared across projects. The
+cost is that a bundled graph fixed upstream never reaches a library seeded
+before the fix, and nothing warns you
+([#35](https://github.com/datakurre/graph-agent/issues/35)). A graph that
+"still" misbehaves after a fix landed is worth checking first:
+
+```
+for f in workflows/*.bpmn; do
+  diff -q "$f" "$(graph-agent where | awk '/^graphs/{print $2}')/$(basename "$f")"
+done
+```
+
+Copy the bundled file over your library copy to take the fix (back up first if
+you have edited it). This is not hypothetical: it made a fixed defect look open
+here, and it left the default graph running without a fix that had stopped it
+billing 110 turns.
 
 ## Troubleshooting
 
