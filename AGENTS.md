@@ -144,13 +144,36 @@ run hangs rather than failing, which reads like a deadlock in the engine.
 
 ### The bundled graphs
 
-Only `pi-default-loop` and `shell-demo` are drivable end to end.
-`session-skeleton` parks on a user task; `resume --answer key=value` answers it
-(issue #21, fixed) but the `callActivity` after it fails with `cannot resume
-running process <craft_graph>` and the run then keeps executing forever after
-the CLI has printed its result -- 1065 iterations in 40s, ignores SIGTERM,
-needs `kill -9` (issue #30). The loop is unbounded because `craft-graph`'s
-`lint_attempts >= 3` cap never trips on the `failed()` path (issue #31).
-**Never point that at a real model.** `craft-graph` standalone still maps
-`=intent`, which only that form supplies (issue #22). Don't spend time
-debugging any of it as if it were broken locally.
+All four run. `pi-default-loop` and `shell-demo` drive tool calls, parallel
+ones included. `craft-graph` drafts a fragment and splices it into the live
+session, and `session-skeleton` calls it after a `resume --answer` gate. The
+whole self-extension path is verified end to end against real Haiku: draft ->
+layout -> lint -> approval gate -> `graph:extend spliced in 2 element(s)`, with
+`show` reporting two graph revisions. #21, #22, #30, #31, #34, #36 and #37 are
+all closed and re-verified on a clean clone.
+
+**But a splice is not checked against the harness registry** (#40).
+`checkSplice` only compares element ids for additiveness; nothing resolves
+`zeebe:taskDefinition type` against `createHarnesses()`. Haiku wrote
+`type="shell:exec"` (the registry has `shell`), passed `command` through
+`ioMapping` (the real harness reads `zeebe:taskHeaders`) and read back
+`exitCode` (it publishes `exit_code`). Lint said `adds 2 element(s)`, the
+splice applied, and it only failed when something ran the result:
+`no harness registered for 'shell:exec'`. So a `graph:lint` pass is not
+evidence a fragment will run, and the redraft loop can never correct a wrong
+job type because lint never rejects one.
+
+### Re-verifying a closed issue
+
+Two traps have each produced a false "still broken" here, so check both before
+reopening anything:
+
+- **A stale graph library** (#35). `init` never overwrites, so your
+  `$XDG_CONFIG_HOME/graph-agent/workflows` copy can predate the fix. Diff it
+  against `workflows/` first. This is why #22 looked open when it was not, and
+  why the default graph once ran without the fix that stopped it billing 110
+  turns.
+- **Testing a path the CLI cannot take.** A regression test that drives
+  `runSession`'s `onWait` in-process does not cover `run` -> park -> persist ->
+  `resume --answer`. That gap hid two separate bugs (#31, #34) behind a green
+  suite. When a fix is for CLI behaviour, drive the CLI.

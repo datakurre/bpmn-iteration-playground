@@ -19,11 +19,13 @@ TypeScript that actually does the work an activity names.
 - [Harness reference](harnesses.html) -- every job type a graph can dispatch to,
   and what it expects on the activity.
 
-The CLI drives `pi-default-loop` and `shell-demo` end to end against a real
-model, tool calls included. The other two bundled graphs --
-`session-skeleton` and the `craft-graph` it calls -- open on a human gate that
-nothing can answer yet; see [the bundled
-graphs](getting-started.html#the-bundled-graphs).
+The CLI drives all four bundled graphs against a real model, tool calls and
+parallel batches included -- and `craft-graph` really does splice new elements
+into the session it is running in, approval gate and all. One caveat worth
+knowing before you approve a fragment: `graph:lint` does not check that a new
+activity's job type exists, so a splice can be inert until you run it (see
+[reviewing an approved
+fragment](getting-started.html#review-an-approved-fragment-yourself)).
 
 ## Screenshots
 
