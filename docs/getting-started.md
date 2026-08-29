@@ -249,7 +249,8 @@ checkout.
 
 ## The bundled graphs
 
-`make init` seeds four graphs. Two run from the CLI today, two do not:
+`make init` seeds four graphs. Three run from the CLI; the fourth starts but
+cannot finish:
 
 | Graph | `graph-agent run --graph …` |
 |---|---|
