@@ -104,6 +104,11 @@ a steering message once a turn is under way; `/follow <text>` queues a
 follow-up instead. `run` stays exactly as it is -- non-interactive, scriptable,
 what CI uses.
 
+A session that parked -- on a gate it declined, on a Ctrl-C, on anything else
+that stopped it -- reattaches with `graph-agent tui --resume <session-id>`,
+no `--graph`/prompt needed: it opens straight onto the prior transcript and
+whatever it is still waiting on ([#67](https://github.com/datakurre/graph-agent/issues/67)).
+
 ## Studio
 
 ```

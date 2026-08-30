@@ -342,6 +342,24 @@ would from another terminal, since it goes through the same
 `graph-agent run` is unchanged: non-interactive, scriptable, what CI uses.
 The TUI is a new command, not a flag on `run`.
 
+A session the TUI (or anything else) left parked reattaches with
+`--resume <session-id>` instead of `--graph`/a prompt -- a resumed session
+already has both ([#67](https://github.com/datakurre/graph-agent/issues/67)):
+
+```
+graph-agent tui --resume 61801712 --model anthropic/claude-haiku-4-5
+```
+
+This is `resumeSession`, the same as `graph-agent resume 61801712`, just
+driven from the terminal instead of `--answer`. The screen opens already
+showing what happened before -- the prior activity trail, seeded from
+`meta.turns` rather than replayed live (Pi's own transcript is scoped to one
+process's lifetime, not persisted across a restart, so this is a summary of
+what ran, not the original messages) -- and whatever the session is still
+parked on gets prompted for immediately, the same `onWait` seam a fresh run
+uses, since a resumed engine re-announces its own postponed activity as soon
+as it resumes.
+
 ## The bundled graphs
 
 `make init` seeds six graphs. All six run:

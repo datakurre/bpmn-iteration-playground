@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
 import { createNoopToolExecutor } from "../agent/tool-executor.ts";
 import { ensurePaths, paths as resolvePaths, type Paths } from "../agent/paths.ts";
+import { runSession } from "../agent/runner.ts";
 import { startTui, type TuiHandles } from "./app.ts";
 import type { Terminal } from "./pi-bridge.ts";
 
@@ -80,6 +81,51 @@ const SMOKE_GRAPH = `<?xml version="1.0" encoding="UTF-8"?>
   </bpmn:process>
 </bpmn:definitions>`;
 
+/**
+ * start -> one `agent:turn` (recorded, so a resume has something to seed
+ * its transcript from) -> a human gate -> end. Used by the resume test
+ * below: the first leg runs and parks non-interactively, the second
+ * reattaches via the TUI.
+ */
+const RESUME_GRAPH = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_tui_resume" xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" targetNamespace="http://graph-agent/bpmn">
+  <bpmn:process id="tui_resume" isExecutable="true">
+    <bpmn:extensionElements>
+      <zeebe:userTaskForm id="gate_form">{"components":[{"key":"value","label":"Say something","type":"textfield"}]}</zeebe:userTaskForm>
+    </bpmn:extensionElements>
+    <bpmn:startEvent id="start">
+      <bpmn:outgoing>to_turn</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="to_turn" sourceRef="start" targetRef="turn" />
+    <bpmn:serviceTask id="turn" name="Greet">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="agent:turn" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=prompt" target="prompt" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>to_turn</bpmn:incoming>
+      <bpmn:outgoing>to_gate</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="to_gate" sourceRef="turn" targetRef="gate" />
+    <bpmn:userTask id="gate" name="Say something">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:formDefinition formId="gate_form" />
+        <zeebe:ioMapping>
+          <zeebe:output source="=value" target="value" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>to_gate</bpmn:incoming>
+      <bpmn:outgoing>to_end</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="to_end" sourceRef="gate" targetRef="end" />
+    <bpmn:endEvent id="end">
+      <bpmn:incoming>to_end</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+
 let home: string;
 let paths: Paths;
 let graphFile: string;
@@ -102,8 +148,7 @@ describe("graph-agent tui (issue #50)", () => {
     const outcomePromise = startTui({
       paths,
       project: home,
-      graphPath: graphFile,
-      graphLabel: "smoke",
+      start: { kind: "run", graphPath: graphFile, graphLabel: "smoke" },
       model: faux.getModel(),
       modelLabel: "faux",
       systemPrompt: "test agent",
@@ -131,5 +176,66 @@ describe("graph-agent tui (issue #50)", () => {
     const rendered = handles?.root.render(80).join("\n") ?? "";
     expect(rendered).toContain("Hello from the agent.");
     expect(rendered).not.toContain("waiting on gate");
+  });
+});
+
+describe("graph-agent tui --resume (issue #67)", () => {
+  it("reattaches a parked session, shows its prior turn and the parked gate, and answers it", async () => {
+    const resumeGraphFile = join(home, "resume.bpmn");
+    writeFileSync(resumeGraphFile, RESUME_GRAPH);
+
+    const firstLeg = fauxProvider({ provider: "faux", models: [{ id: "faux-1", name: "Faux" }] });
+    firstLeg.setResponses([fauxAssistantMessage([fauxText("Hello from the first leg.")], { stopReason: "stop" })] as never);
+
+    // Runs and parks non-interactively -- the TUI never touches this leg,
+    // the same way a real terminal that Ctrl-Cs or a process that just exits
+    // never gets a chance to answer the gate it stopped on either.
+    const parked = await runSession({
+      paths,
+      project: home,
+      graphPath: resumeGraphFile,
+      prompt: "say hi",
+      model: firstLeg.getModel(),
+      systemPrompt: "test agent",
+      streamFn: (model, context, options) => firstLeg.provider.streamSimple(model, context, options),
+      tools: createNoopToolExecutor([]),
+      onWait: () => undefined,
+    });
+    expect(parked.outcome).toBe("stopped");
+
+    const secondLeg = fauxProvider({ provider: "faux", models: [{ id: "faux-1", name: "Faux" }] });
+
+    let handles: TuiHandles | undefined;
+    const outcomePromise = startTui({
+      paths,
+      project: home,
+      start: { kind: "resume", sessionId: parked.sessionId },
+      model: secondLeg.getModel(),
+      modelLabel: "faux",
+      systemPrompt: "test agent",
+      streamFn: (model, context, options) => secondLeg.provider.streamSimple(model, context, options),
+      tools: createNoopToolExecutor([]),
+      terminal: new FakeTerminal(),
+      onReady: (ready) => {
+        handles = ready;
+      },
+    });
+
+    // The prior leg's own turn shows up immediately, seeded from meta.turns
+    // rather than a live event -- and so does the gate it parked on, without
+    // this test ever calling `onWait` itself: `resumeSession` re-announces
+    // whatever the snapshot is still parked on the moment it resumes.
+    await vi.waitFor(() => {
+      const rendered = handles?.root.render(80).join("\n") ?? "";
+      expect(rendered).toContain("Hello from the first leg");
+      expect(rendered).toContain("waiting on gate");
+    });
+
+    handles?.editor.onSubmit?.("hello from the reattached gate");
+
+    const result = await outcomePromise;
+    expect(result.error).toBeUndefined();
+    expect(result.outcome).toBe("completed");
+    expect(result.sessionId).toBe(parked.sessionId);
   });
 });

@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import { graphPath, startStudio } from "../studio/server.ts";
 import { resumeSession, runSession } from "../agent/runner.ts";
 import { ProcessTerminal } from "../tui/pi-bridge.ts";
-import { startTui } from "../tui/app.ts";
+import { startTui, type TuiStart } from "../tui/app.ts";
 import { firstActivity, pendingGates, processId, withDefinitionsId, withProcessId } from "../agent/graph.ts";
 import { formFields } from "../tui/form-fields.ts";
 import { unlinkGraph } from "../agent/link.ts";
@@ -292,6 +292,8 @@ interface RunFlags {
   steer: string[];
   followUp: string[];
   positionals: string[];
+  /** `tui --resume <id>` reattaches instead of starting a new session (issue #67). */
+  resume?: string;
 }
 
 /**
@@ -317,6 +319,7 @@ function runFlags(args: string[]): RunFlags {
       answer: { type: "string", multiple: true },
       steer: { type: "string", multiple: true },
       "follow-up": { type: "string", multiple: true },
+      resume: { type: "string" },
     },
     allowPositionals: true,
     strict: false,
@@ -330,6 +333,7 @@ function runFlags(args: string[]): RunFlags {
     steer: (values.steer as string[] | undefined) ?? [],
     followUp: (values["follow-up"] as string[] | undefined) ?? [],
     positionals: positionals.map(String),
+    ...(values.resume === undefined ? {} : { resume: String(values.resume) }),
   };
 }
 
@@ -519,21 +523,37 @@ async function cmdTui(args: string[]): Promise<number> {
   const flags = runFlags(args);
   const project = projectId();
 
-  const graphFile = graphPath(p, flags.graph);
-  if (!graphFile) {
-    process.stderr.write(`graph-agent: no graph named '${flags.graph}' in ${p.workflowsDir}\n`);
-    return 1;
-  }
-
-  const prompt = flags.positionals.join(" ");
-  if (prompt) {
-    const first = await firstActivity(readFileSync(graphFile, "utf8"));
-    if (first?.type === "bpmn:UserTask") {
-      process.stderr.write(
-        `graph-agent: '${flags.graph}' starts on '${first.id}', a human gate that reads its own form, ` +
-          `not the initial prompt -- the tui will prompt for it interactively instead.\n`,
-      );
+  let start: TuiStart;
+  if (flags.resume !== undefined) {
+    // A resumed session already carries its own graph, model choice and
+    // prompt history -- `--graph`/a positional prompt would be meaningless
+    // here, unlike `graph-agent resume`, which never took a graph flag
+    // either (issue #67).
+    start = { kind: "resume", sessionId: flags.resume };
+  } else {
+    const graphFile = graphPath(p, flags.graph);
+    if (!graphFile) {
+      process.stderr.write(`graph-agent: no graph named '${flags.graph}' in ${p.workflowsDir}\n`);
+      return 1;
     }
+
+    const prompt = flags.positionals.join(" ");
+    if (prompt) {
+      const first = await firstActivity(readFileSync(graphFile, "utf8"));
+      if (first?.type === "bpmn:UserTask") {
+        process.stderr.write(
+          `graph-agent: '${flags.graph}' starts on '${first.id}', a human gate that reads its own form, ` +
+            `not the initial prompt -- the tui will prompt for it interactively instead.\n`,
+        );
+      }
+    }
+    start = {
+      kind: "run",
+      graphPath: graphFile,
+      graphLabel: flags.graph,
+      prompt,
+      ...(flags.name === undefined ? {} : { name: flags.name }),
+    };
   }
 
   let chosen;
@@ -544,24 +564,27 @@ async function cmdTui(args: string[]): Promise<number> {
     return 1;
   }
 
-  const result = await withInterrupt((signal) =>
-    startTui({
-      paths: p,
-      project,
-      graphPath: graphFile,
-      graphLabel: flags.graph,
-      prompt,
-      ...(flags.name === undefined ? {} : { name: flags.name }),
-      model: chosen.model,
-      modelLabel: chosen.label,
-      systemPrompt: "",
-      streamFn: chosen.streamFn,
-      tools: createPiToolExecutor(project),
-      terminal: new ProcessTerminal(),
-      coerceValue: coerceAnswerValue,
-      signal,
-    }),
-  );
+  let result;
+  try {
+    result = await withInterrupt((signal) =>
+      startTui({
+        paths: p,
+        project,
+        start,
+        model: chosen.model,
+        modelLabel: chosen.label,
+        systemPrompt: "",
+        streamFn: chosen.streamFn,
+        tools: createPiToolExecutor(project),
+        terminal: new ProcessTerminal(),
+        coerceValue: coerceAnswerValue,
+        signal,
+      }),
+    );
+  } catch (error) {
+    process.stderr.write(`graph-agent: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
 
   process.stdout.write(`\nsession ${result.sessionId}  ${result.outcome}  ${result.turns} turn(s)\n`);
   if (result.error) {
