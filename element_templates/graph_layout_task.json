@@ -1,0 +1,34 @@
+[
+  {
+    "$schema": "https://unpkg.com/@camunda/zeebe-element-templates-json-schema/resources/schema.json",
+    "name": "Auto-layout Fragment",
+    "id": "graph-agent.graph-layout",
+    "version": 1,
+    "description": "Runs bpmn-auto-layout over a fragment (or the current session graph, if no fragment is given), producing <bpmndi:> positioning for it.",
+    "category": { "id": "graph-agent.graph", "name": "Graph" },
+    "appliesTo": ["bpmn:ServiceTask"],
+    "elementType": { "value": "bpmn:ServiceTask" },
+    "properties": [
+      {
+        "type": "Hidden",
+        "value": "graph:layout",
+        "binding": { "type": "zeebe:taskDefinition", "property": "type" }
+      },
+      {
+        "label": "Fragment",
+        "description": "FEEL expression yielding the BPMN fragment to lay out. Leave the default to lay out the session's current graph instead.",
+        "type": "String",
+        "feel": "optional",
+        "value": "=fragment",
+        "binding": { "type": "zeebe:input", "name": "fragment" }
+      },
+      {
+        "label": "Laid out fragment",
+        "description": "Process variable the laid-out fragment is published to.",
+        "type": "String",
+        "value": "fragment",
+        "binding": { "type": "zeebe:output", "source": "=fragment" }
+      }
+    ]
+  }
+]

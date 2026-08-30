@@ -1,0 +1,21 @@
+[
+  {
+    "$schema": "https://unpkg.com/@camunda/zeebe-element-templates-json-schema/resources/schema.json",
+    "name": "Call Graph",
+    "id": "graph-agent.call-graph",
+    "version": 1,
+    "description": "Calls another graph from the shared library by its process id, the way session-skeleton.bpmn's craft callActivity calls craft_graph. `linkGraph` resolves and inlines the target into the session at start, so it must be a plain string naming a process id, not a dynamic FEEL expression.",
+    "category": { "id": "graph-agent.graph", "name": "Graph" },
+    "appliesTo": ["bpmn:CallActivity"],
+    "elementType": { "value": "bpmn:CallActivity" },
+    "properties": [
+      {
+        "label": "Graph to call",
+        "description": "The process id of a graph in the shared library (its bpmn:process id, not the file name).",
+        "type": "String",
+        "constraints": { "notEmpty": true },
+        "binding": { "type": "zeebe:calledElement", "property": "processId" }
+      }
+    ]
+  }
+]

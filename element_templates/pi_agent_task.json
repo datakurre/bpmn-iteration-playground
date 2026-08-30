@@ -5,6 +5,7 @@
     "id": "graph-agent.pi-agent-turn",
     "version": 1,
     "description": "One LLM turn, run by Pi. The BPMN token moves once per turn.",
+    "category": { "id": "graph-agent.pi-agent", "name": "Pi Agent" },
     "appliesTo": ["bpmn:ServiceTask"],
     "elementType": { "value": "bpmn:ServiceTask" },
     "properties": [

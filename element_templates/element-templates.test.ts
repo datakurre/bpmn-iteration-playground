@@ -54,8 +54,9 @@ describe.each(files)("%s", (file) => {
     }
   });
 
-  it("binds a job type, so the harness registry can dispatch it", () => {
+  it("binds a job type, so the harness registry can dispatch it -- unless it isn't a service task", () => {
     for (const template of templatesIn(file)) {
+      if (!template.appliesTo.includes("bpmn:ServiceTask")) continue;
       const jobType = template.properties.find(
         (p) => p.binding.type === "zeebe:taskDefinition" && p.binding.property === "type",
       );
@@ -95,13 +96,36 @@ describe("harness I/O contract (issue #49)", () => {
     expect(Object.keys(HARNESS_IO).sort()).toEqual(registered);
   });
 
+  it("every registered job type has an element template (issue #54)", () => {
+    const registered = Object.keys(createHarnesses(stubDeps()));
+    const templated = new Set(
+      files.flatMap((file) =>
+        templatesIn(file)
+          .map((template) => jobTypeOf(template))
+          .filter((jobType): jobType is string => jobType !== undefined),
+      ),
+    );
+    const missing = registered.filter((jobType) => !templated.has(jobType));
+    expect(missing, `no element template names job type(s): ${missing.join(", ")}`).toEqual([]);
+  });
+
   function jobTypeOf(template: Template): string | undefined {
     return template.properties.find((p) => p.binding.type === "zeebe:taskDefinition" && p.binding.property === "type")
       ?.value;
   }
 
-  describe.each(files)("%s", (file) => {
+  // Only a bpmn:ServiceTask dispatches to a harness via zeebe:taskDefinition
+  // type -- a bpmn:UserTask/bpmn:CallActivity template has no job type at all,
+  // and the checks below do not apply to it. Filtering the file list (rather
+  // than skipping per-template inside the loop) avoids an empty describe
+  // block for a file with no service-task template in it.
+  const serviceTaskFiles = files.filter((file) =>
+    templatesIn(file).some((template) => template.appliesTo.includes("bpmn:ServiceTask")),
+  );
+
+  describe.each(serviceTaskFiles)("%s", (file) => {
     for (const template of templatesIn(file)) {
+      if (!template.appliesTo.includes("bpmn:ServiceTask")) continue;
       const jobType = jobTypeOf(template);
 
       it(`${template.id} names a job type a harness actually handles`, () => {

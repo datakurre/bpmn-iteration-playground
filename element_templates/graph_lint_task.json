@@ -1,0 +1,48 @@
+[
+  {
+    "$schema": "https://unpkg.com/@camunda/zeebe-element-templates-json-schema/resources/schema.json",
+    "name": "Lint and Check Splice",
+    "id": "graph-agent.graph-lint",
+    "version": 1,
+    "description": "Checks that a fragment is valid BPMN, an additive splice into the current session graph, and that every new activity's job type is registered. Does not check that a real job type is wired to the right inputs, outputs or headers -- review the fragment before approving it.",
+    "category": { "id": "graph-agent.graph", "name": "Graph" },
+    "appliesTo": ["bpmn:ServiceTask"],
+    "elementType": { "value": "bpmn:ServiceTask" },
+    "properties": [
+      {
+        "type": "Hidden",
+        "value": "graph:lint",
+        "binding": { "type": "zeebe:taskDefinition", "property": "type" }
+      },
+      {
+        "label": "Fragment",
+        "description": "FEEL expression yielding the BPMN fragment to check.",
+        "type": "String",
+        "feel": "required",
+        "value": "=fragment",
+        "binding": { "type": "zeebe:input", "name": "fragment" }
+      },
+      {
+        "label": "Result",
+        "description": "Process variable the lint status is published to.",
+        "type": "String",
+        "value": "lint_status",
+        "binding": { "type": "zeebe:output", "source": "=status" }
+      },
+      {
+        "label": "Feedback",
+        "description": "Process variable the rejection reason (if any) is published to -- map this back into the drafting turn's prompt so a redraft is not as blind as the first attempt.",
+        "type": "String",
+        "value": "lint_feedback",
+        "binding": { "type": "zeebe:output", "source": "=summary" }
+      },
+      {
+        "label": "Attempt",
+        "description": "Process variable this redraft attempt's number is published to, for bounding a redraft loop (see gw_lint in craft-graph.bpmn).",
+        "type": "String",
+        "value": "lint_attempts",
+        "binding": { "type": "zeebe:output", "source": "=attempt" }
+      }
+    ]
+  }
+]

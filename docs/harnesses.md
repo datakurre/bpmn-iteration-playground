@@ -49,9 +49,14 @@ template](../element_templates/shell_task.json) for the studio's property
 panel binding.
 
 Adding a new job type means adding an entry to the `HarnessRegistry` returned
-by `createHarnesses()` in `src/agent/harnesses.ts`, and -- if the studio should
-offer it from the properties panel -- an element template under
-`element_templates/`.
+by `createHarnesses()` in `src/agent/harnesses.ts`, **and** an element
+template under `element_templates/` -- a test in
+`element_templates/element-templates.test.ts` fails the build if a registered
+job type has no template, and a second checks every existing template's
+`zeebe:input`/`zeebe:output`/`zeebe:taskHeader` bindings against `HARNESS_IO`
+(the same file), so a new harness and a new template are expected to land
+together and drift between them fails fast rather than only against a real
+model (issue #54; issue #49 found the class of bug this closes).
 
 ## User tasks
 
@@ -62,14 +67,14 @@ harness (`activity.end`'s content carries the signaled answer, which
 `engine.ts` maps the same way a harness result would be). A user task has no
 job type, so it is never routed through `createHarnesses()`.
 
-**There is no way to answer one yet.** `runSession` takes an `onWait` callback
-for exactly this, but neither the CLI nor the studio supplies one, so a run
-that reaches a user task parks and `resume` re-parks on the same gate. That
-leaves `session-skeleton.bpmn` -- which opens on `await_intent` -- and
-`craft_graph`'s `review_fragment` approval unreachable from a terminal today;
-see [issue #21](https://github.com/datakurre/graph-agent/issues/21). The
-mapping semantics above are what will apply once an answer path exists, and
-are exercised by `engine.test.ts` rather than by anything a user can drive.
+`--answer [activity:]key=value` on `run`/`resume` is how a terminal answers
+one (see [Getting started](getting-started.html#extending-a-graph-from-inside-a-session)),
+and `graph-agent run "..."` refuses rather than silently dropping a prompt on
+a graph whose first stop is a user task ([#47](https://github.com/datakurre/graph-agent/issues/47)).
+The `element_templates/human_gate_user_task.json` template wires the
+`zeebe:userTask` marker and a form id binding for one, though the form's own
+fields still need a hand-written (or form-editor-authored)
+`zeebe:userTaskForm` elsewhere in the diagram.
 
 ## Variables across a callActivity
 

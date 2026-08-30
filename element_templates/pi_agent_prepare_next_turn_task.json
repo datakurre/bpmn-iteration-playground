@@ -1,0 +1,26 @@
+[
+  {
+    "$schema": "https://unpkg.com/@camunda/zeebe-element-templates-json-schema/resources/schema.json",
+    "name": "Pi Prepare Next Turn",
+    "id": "graph-agent.pi-agent-prepare-next-turn",
+    "version": 1,
+    "description": "Pi's prepareNextTurn seam: decides whether the inner loop should stop. Reads the 'stop_reason' process variable a prior turn already published -- map no input here, it does not take one.",
+    "category": { "id": "graph-agent.pi-agent", "name": "Pi Agent" },
+    "appliesTo": ["bpmn:ServiceTask"],
+    "elementType": { "value": "bpmn:ServiceTask" },
+    "properties": [
+      {
+        "type": "Hidden",
+        "value": "agent:prepare-next-turn",
+        "binding": { "type": "zeebe:taskDefinition", "property": "type" }
+      },
+      {
+        "label": "Should stop",
+        "description": "Process variable set when the inner turn loop should stop rather than take another turn.",
+        "type": "String",
+        "value": "should_stop",
+        "binding": { "type": "zeebe:output", "source": "=should_stop" }
+      }
+    ]
+  }
+]

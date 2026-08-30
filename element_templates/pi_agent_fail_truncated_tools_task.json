@@ -1,0 +1,33 @@
+[
+  {
+    "$schema": "https://unpkg.com/@camunda/zeebe-element-templates-json-schema/resources/schema.json",
+    "name": "Pi Fail Truncated Tools",
+    "id": "graph-agent.pi-agent-fail-truncated-tools",
+    "version": 1,
+    "description": "Settles a turn whose response was cut off by the output token limit -- every tool call in it is failed unexecuted, since its arguments may be incomplete.",
+    "category": { "id": "graph-agent.pi-agent", "name": "Pi Agent" },
+    "appliesTo": ["bpmn:ServiceTask"],
+    "elementType": { "value": "bpmn:ServiceTask" },
+    "properties": [
+      {
+        "type": "Hidden",
+        "value": "agent:fail-truncated-tools",
+        "binding": { "type": "zeebe:taskDefinition", "property": "type" }
+      },
+      {
+        "label": "Batch terminate",
+        "description": "Process variable set when every tool result in the batch asked to terminate.",
+        "type": "String",
+        "value": "batch_terminate",
+        "binding": { "type": "zeebe:output", "source": "=batch_terminate" }
+      },
+      {
+        "label": "Tool result count",
+        "description": "Process variable the number of (failed) tool results is published to.",
+        "type": "String",
+        "value": "tool_results",
+        "binding": { "type": "zeebe:output", "source": "=tool_results" }
+      }
+    ]
+  }
+]
