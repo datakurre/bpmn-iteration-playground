@@ -45,7 +45,19 @@ matches a snapshot to a graph on that id.</bpmn:documentation>
     <bpmn:startEvent id="session_craft_start" name="Session start">
       <bpmn:outgoing>to_craft</bpmn:outgoing>
     </bpmn:startEvent>
-    <bpmn:sequenceFlow id="to_craft" sourceRef="session_craft_start" targetRef="craft" />
+    <bpmn:sequenceFlow id="to_craft" sourceRef="session_craft_start" targetRef="gw_craft_entry" />
+    <bpmn:exclusiveGateway id="gw_craft_entry" name="Enter craft">
+      <bpmn:documentation>A plain merge of the two ways this lap reaches craft -- a fresh session
+start, or looping back after "more work?" -- explicit rather than the
+two-way implicit merge bpmnlint's fake-join rule used to only warn about
+(now an error). A plain activity with more than one incoming edge does not
+join at all in this engine, it just runs again per arrival, which is
+exactly the behaviour this gateway keeps.</bpmn:documentation>
+      <bpmn:incoming>to_craft</bpmn:incoming>
+      <bpmn:incoming>back_to_craft</bpmn:incoming>
+      <bpmn:outgoing>into_craft</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="into_craft" sourceRef="gw_craft_entry" targetRef="craft" />
     <bpmn:callActivity id="craft" name="Craft an extension" calledElement="craft_graph">
       <bpmn:documentation>Calls the crafting graph, which is spliced into this definition when the
 session is created -- bpmn-elements resolves calledElement within the same
@@ -78,8 +90,7 @@ true.</bpmn:documentation>
           <zeebe:output source="=extend_status" target="extend_status" />
         </zeebe:ioMapping>
       </bpmn:extensionElements>
-      <bpmn:incoming>to_craft</bpmn:incoming>
-      <bpmn:incoming>back_to_craft</bpmn:incoming>
+      <bpmn:incoming>into_craft</bpmn:incoming>
       <bpmn:outgoing>craft_to_route</bpmn:outgoing>
     </bpmn:callActivity>
     <bpmn:sequenceFlow id="craft_to_route" sourceRef="craft" targetRef="gw_crafted" />
@@ -139,7 +150,7 @@ no-gateway-join-fork) even though bpmn-elements would run it.</bpmn:documentatio
       <bpmn:incoming>continue</bpmn:incoming>
       <bpmn:outgoing>back_to_craft</bpmn:outgoing>
     </bpmn:userTask>
-    <bpmn:sequenceFlow id="back_to_craft" sourceRef="await_intent" targetRef="craft" />
+    <bpmn:sequenceFlow id="back_to_craft" sourceRef="await_intent" targetRef="gw_craft_entry" />
     <bpmn:endEvent id="session_craft_end" name="Session ended">
       <bpmn:incoming>session_over</bpmn:incoming>
     </bpmn:endEvent>
@@ -149,67 +160,74 @@ no-gateway-join-fork) even though bpmn-elements would run it.</bpmn:documentatio
       <bpmndi:BPMNShape id="session_craft_start_di" bpmnElement="session_craft_start">
         <dc:Bounds x="57" y="52" width="36" height="36" />
       </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_craft_entry_di" bpmnElement="gw_craft_entry" isMarkerVisible="true">
+        <dc:Bounds x="200" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="craft_di" bpmnElement="craft">
-        <dc:Bounds x="175" y="30" width="100" height="80" />
+        <dc:Bounds x="325" y="30" width="100" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_crafted_di" bpmnElement="gw_crafted" isMarkerVisible="true">
-        <dc:Bounds x="350" y="45" width="50" height="50" />
+        <dc:Bounds x="500" y="45" width="50" height="50" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_craft_done_di" bpmnElement="gw_craft_done" isMarkerVisible="true">
-        <dc:Bounds x="650" y="45" width="50" height="50" />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="gw_more_di" bpmnElement="gw_more" isMarkerVisible="true">
         <dc:Bounds x="800" y="45" width="50" height="50" />
       </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_more_di" bpmnElement="gw_more" isMarkerVisible="true">
+        <dc:Bounds x="950" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="await_intent_di" bpmnElement="await_intent">
-        <dc:Bounds x="925" y="30" width="100" height="80" />
+        <dc:Bounds x="1075" y="30" width="100" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="run_default_di" bpmnElement="run_default">
-        <dc:Bounds x="475" y="170" width="100" height="80" />
+        <dc:Bounds x="625" y="170" width="100" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="session_craft_end_di" bpmnElement="session_craft_end">
-        <dc:Bounds x="957" y="192" width="36" height="36" />
+        <dc:Bounds x="1107" y="192" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNEdge id="to_craft_di" bpmnElement="to_craft">
         <di:waypoint x="93" y="70" />
-        <di:waypoint x="175" y="70" />
+        <di:waypoint x="200" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="into_craft_di" bpmnElement="into_craft">
+        <di:waypoint x="250" y="70" />
+        <di:waypoint x="325" y="70" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="craft_to_route_di" bpmnElement="craft_to_route">
-        <di:waypoint x="275" y="70" />
-        <di:waypoint x="350" y="70" />
+        <di:waypoint x="425" y="70" />
+        <di:waypoint x="500" y="70" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="crafted_ok_di" bpmnElement="crafted_ok">
-        <di:waypoint x="400" y="70" />
-        <di:waypoint x="650" y="70" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="fallback_default_di" bpmnElement="fallback_default">
-        <di:waypoint x="375" y="95" />
-        <di:waypoint x="375" y="210" />
-        <di:waypoint x="475" y="210" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="to_gw_more_di" bpmnElement="to_gw_more">
-        <di:waypoint x="700" y="70" />
+        <di:waypoint x="550" y="70" />
         <di:waypoint x="800" y="70" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="continue_di" bpmnElement="continue">
+      <bpmndi:BPMNEdge id="fallback_default_di" bpmnElement="fallback_default">
+        <di:waypoint x="525" y="95" />
+        <di:waypoint x="525" y="210" />
+        <di:waypoint x="625" y="210" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_gw_more_di" bpmnElement="to_gw_more">
         <di:waypoint x="850" y="70" />
-        <di:waypoint x="925" y="70" />
+        <di:waypoint x="950" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="continue_di" bpmnElement="continue">
+        <di:waypoint x="1000" y="70" />
+        <di:waypoint x="1075" y="70" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="session_over_di" bpmnElement="session_over">
-        <di:waypoint x="825" y="95" />
-        <di:waypoint x="825" y="210" />
-        <di:waypoint x="957" y="210" />
+        <di:waypoint x="975" y="95" />
+        <di:waypoint x="975" y="210" />
+        <di:waypoint x="1107" y="210" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="back_to_craft_di" bpmnElement="back_to_craft">
-        <di:waypoint x="975" y="110" />
-        <di:waypoint x="975" y="140" />
+        <di:waypoint x="1125" y="110" />
+        <di:waypoint x="1125" y="140" />
         <di:waypoint x="225" y="140" />
-        <di:waypoint x="225" y="110" />
+        <di:waypoint x="225" y="95" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="default_done_di" bpmnElement="default_done">
-        <di:waypoint x="575" y="210" />
-        <di:waypoint x="675" y="210" />
-        <di:waypoint x="675" y="95" />
+        <di:waypoint x="725" y="210" />
+        <di:waypoint x="825" y="210" />
+        <di:waypoint x="825" y="95" />
       </bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>

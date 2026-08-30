@@ -327,10 +327,21 @@ describe("pi-default-loop.bpmn is faithful to runLoop()", () => {
     const target = (id: string) =>
       flows.find((f) => f.id === id)?.targetRef as { id: string } | undefined;
 
-    // the inner loop: another turn goes back to the steering drain
-    expect(target("next_turn")?.id).toBe("inject_pending");
-    // the outer loop: a queued follow-up re-enters the same place
-    expect(target("followup_again")?.id).toBe("inject_pending");
+    // Both loop-backs land on gw_inject_entry, the merge gateway in front of
+    // inject_pending -- an explicit exclusive gateway now stands where an
+    // implicit multi-incoming merge used to (bpmnlint's fake-join rule is an
+    // error, not just a warning, as of this graph), but it is still a plain
+    // merge with exactly one outgoing, so it reaches inject_pending in one
+    // more hop with no decision in between.
+    for (const loopBack of ["next_turn", "followup_again"]) {
+      const gateway = target(loopBack);
+      expect(gateway?.id).toBe("gw_inject_entry");
+      const gatewayOutgoing = elements.find((e) => e.id === gateway?.id) as
+        | { outgoing?: Array<{ targetRef?: { id: string } }> }
+        | undefined;
+      expect(gatewayOutgoing?.outgoing).toHaveLength(1);
+      expect(gatewayOutgoing?.outgoing?.[0]?.targetRef?.id).toBe("inject_pending");
+    }
   });
 
   it("aborts with a terminate end event rather than an ordinary one", async () => {

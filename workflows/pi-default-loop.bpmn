@@ -25,16 +25,27 @@ or tools. See docs/research/05-pi-loops-and-token-cache.md.</bpmn:documentation>
     <bpmn:startEvent id="loop_start" name="Prompt">
       <bpmn:outgoing>to_inject</bpmn:outgoing>
     </bpmn:startEvent>
-    <bpmn:sequenceFlow id="to_inject" sourceRef="loop_start" targetRef="inject_pending" />
+    <bpmn:sequenceFlow id="to_inject" sourceRef="loop_start" targetRef="gw_inject_entry" />
+    <bpmn:exclusiveGateway id="gw_inject_entry" name="Loop entry">
+      <bpmn:documentation>A plain merge of the three ways the inner/outer loop re-enters: a fresh
+start, another turn, or a follow-up restarting the outer loop. Explicit
+rather than the three-way implicit merge bpmnlint's fake-join rule used to
+only warn about (now an error) -- a plain activity with more than one
+incoming edge does not join at all in this engine, it just runs again per
+arrival, which is exactly the behaviour this gateway keeps.</bpmn:documentation>
+      <bpmn:incoming>to_inject</bpmn:incoming>
+      <bpmn:incoming>next_turn</bpmn:incoming>
+      <bpmn:incoming>followup_again</bpmn:incoming>
+      <bpmn:outgoing>into_inject_pending</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="into_inject_pending" sourceRef="gw_inject_entry" targetRef="inject_pending" />
     <bpmn:serviceTask id="inject_pending" name="Inject pending messages">
       <bpmn:documentation>Drains the steering queue and appends those messages before the next
 provider request, matching the top of runLoop's inner while.</bpmn:documentation>
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="agent:steer" />
       </bpmn:extensionElements>
-      <bpmn:incoming>to_inject</bpmn:incoming>
-      <bpmn:incoming>next_turn</bpmn:incoming>
-      <bpmn:incoming>followup_again</bpmn:incoming>
+      <bpmn:incoming>into_inject_pending</bpmn:incoming>
       <bpmn:outgoing>to_turn</bpmn:outgoing>
     </bpmn:serviceTask>
     <bpmn:sequenceFlow id="to_turn" sourceRef="inject_pending" targetRef="llm_turn" />
@@ -92,7 +103,7 @@ and the model is invited to re-issue them.</bpmn:documentation>
       <bpmn:incoming>truncated</bpmn:incoming>
       <bpmn:outgoing>failed_to_prepare</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:sequenceFlow id="failed_to_prepare" sourceRef="fail_tool_batch" targetRef="prepare_next_turn" />
+    <bpmn:sequenceFlow id="failed_to_prepare" sourceRef="fail_tool_batch" targetRef="gw_prepare_entry" />
     <bpmn:subProcess id="tool_batch" name="Execute tool batch">
       <bpmn:documentation>One instance per tool call in the assistant message. isSequential mirrors
 Pi's toolExecution setting; the default there is parallel.</bpmn:documentation>
@@ -144,10 +155,20 @@ terminate, so this is an all, not an any.</bpmn:documentation>
       <bpmn:outgoing>batch_terminates</bpmn:outgoing>
       <bpmn:outgoing>batch_continues</bpmn:outgoing>
     </bpmn:exclusiveGateway>
-    <bpmn:sequenceFlow id="batch_terminates" name="all terminate" sourceRef="gw_terminate" targetRef="end_stopped">
+    <bpmn:sequenceFlow id="batch_terminates" name="all terminate" sourceRef="gw_terminate" targetRef="gw_end_stopped_entry">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=batch_terminate = true</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
-    <bpmn:sequenceFlow id="batch_continues" name="continue" sourceRef="gw_terminate" targetRef="prepare_next_turn" />
+    <bpmn:sequenceFlow id="batch_continues" name="continue" sourceRef="gw_terminate" targetRef="gw_prepare_entry" />
+    <bpmn:exclusiveGateway id="gw_prepare_entry" name="Turn settled">
+      <bpmn:documentation>A plain merge of the two ways a turn's tool batch settles -- the whole
+batch ran, or it was failed outright for a truncated response -- onto the
+one place that decides whether to loop again, the same reasoning as
+gw_inject_entry above.</bpmn:documentation>
+      <bpmn:incoming>batch_continues</bpmn:incoming>
+      <bpmn:incoming>failed_to_prepare</bpmn:incoming>
+      <bpmn:outgoing>into_prepare_next_turn</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="into_prepare_next_turn" sourceRef="gw_prepare_entry" targetRef="prepare_next_turn" />
     <bpmn:serviceTask id="prepare_next_turn" name="Prepare next turn">
       <bpmn:documentation>Pi's prepareNextTurn hook: swap context, model or thinking level before the
 next provider request. This is also where compaction belongs -- under BPMN
@@ -158,8 +179,7 @@ control it is a visible step rather than an invisible transformContext.</bpmn:do
           <zeebe:output source="=should_stop" target="should_stop" />
         </zeebe:ioMapping>
       </bpmn:extensionElements>
-      <bpmn:incoming>batch_continues</bpmn:incoming>
-      <bpmn:incoming>failed_to_prepare</bpmn:incoming>
+      <bpmn:incoming>into_prepare_next_turn</bpmn:incoming>
       <bpmn:outgoing>to_gw_stop</bpmn:outgoing>
     </bpmn:serviceTask>
     <bpmn:sequenceFlow id="to_gw_stop" sourceRef="prepare_next_turn" targetRef="gw_should_stop" />
@@ -168,10 +188,10 @@ control it is a visible step rather than an invisible transformContext.</bpmn:do
       <bpmn:outgoing>stop_now</bpmn:outgoing>
       <bpmn:outgoing>next_turn</bpmn:outgoing>
     </bpmn:exclusiveGateway>
-    <bpmn:sequenceFlow id="stop_now" name="yes" sourceRef="gw_should_stop" targetRef="end_stopped">
+    <bpmn:sequenceFlow id="stop_now" name="yes" sourceRef="gw_should_stop" targetRef="gw_end_stopped_entry">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=should_stop = true</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
-    <bpmn:sequenceFlow id="next_turn" name="another turn" sourceRef="gw_should_stop" targetRef="inject_pending" />
+    <bpmn:sequenceFlow id="next_turn" name="another turn" sourceRef="gw_should_stop" targetRef="gw_inject_entry" />
     <bpmn:serviceTask id="drain_followup" name="Drain follow-up queue">
       <bpmn:documentation>The agent would stop here. runLoop's outer while asks for queued follow-up
 messages; if any arrive the inner loop starts again.</bpmn:documentation>
@@ -190,16 +210,24 @@ messages; if any arrive the inner loop starts again.</bpmn:documentation>
       <bpmn:outgoing>followup_again</bpmn:outgoing>
       <bpmn:outgoing>no_followup</bpmn:outgoing>
     </bpmn:exclusiveGateway>
-    <bpmn:sequenceFlow id="followup_again" name="yes" sourceRef="gw_followup" targetRef="inject_pending">
+    <bpmn:sequenceFlow id="followup_again" name="yes" sourceRef="gw_followup" targetRef="gw_inject_entry">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=has_followup = true</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="no_followup" name="no" sourceRef="gw_followup" targetRef="end_done" />
     <bpmn:endEvent id="end_done" name="Agent done">
       <bpmn:incoming>no_followup</bpmn:incoming>
     </bpmn:endEvent>
-    <bpmn:endEvent id="end_stopped" name="Stopped">
+    <bpmn:exclusiveGateway id="gw_end_stopped_entry" name="Stopping">
+      <bpmn:documentation>A plain merge of the two ways this run stops early -- shouldStopAfterTurn
+said so, or the whole tool batch asked to terminate -- onto one end event,
+the same reasoning as gw_inject_entry above.</bpmn:documentation>
       <bpmn:incoming>stop_now</bpmn:incoming>
       <bpmn:incoming>batch_terminates</bpmn:incoming>
+      <bpmn:outgoing>into_end_stopped</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="into_end_stopped" sourceRef="gw_end_stopped_entry" targetRef="end_stopped" />
+    <bpmn:endEvent id="end_stopped" name="Stopped">
+      <bpmn:incoming>into_end_stopped</bpmn:incoming>
     </bpmn:endEvent>
     <bpmn:endEvent id="end_error" name="Turn failed">
       <bpmn:incoming>turn_failed</bpmn:incoming>
@@ -211,144 +239,165 @@ messages; if any arrive the inner loop starts again.</bpmn:documentation>
       <bpmndi:BPMNShape id="loop_start_di" bpmnElement="loop_start">
         <dc:Bounds x="57" y="52" width="36" height="36" />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="inject_pending_di" bpmnElement="inject_pending">
-        <dc:Bounds x="175" y="30" width="100" height="80" />
+      <bpmndi:BPMNShape id="gw_inject_entry_di" bpmnElement="gw_inject_entry" isMarkerVisible="true">
+        <dc:Bounds x="200" y="45" width="50" height="50" />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="llm_turn_di" bpmnElement="llm_turn">
+      <bpmndi:BPMNShape id="inject_pending_di" bpmnElement="inject_pending">
         <dc:Bounds x="325" y="30" width="100" height="80" />
       </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="llm_turn_di" bpmnElement="llm_turn">
+        <dc:Bounds x="475" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_failed_di" bpmnElement="gw_failed" isMarkerVisible="true">
-        <dc:Bounds x="500" y="45" width="50" height="50" />
+        <dc:Bounds x="650" y="45" width="50" height="50" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="end_error_di" bpmnElement="end_error">
-        <dc:Bounds x="657" y="52" width="36" height="36" />
+        <dc:Bounds x="807" y="52" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_tools_di" bpmnElement="gw_tools" isMarkerVisible="true">
-        <dc:Bounds x="800" y="45" width="50" height="50" />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="gw_truncated_di" bpmnElement="gw_truncated" isMarkerVisible="true">
         <dc:Bounds x="950" y="45" width="50" height="50" />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="fail_tool_batch_di" bpmnElement="fail_tool_batch">
-        <dc:Bounds x="1075" y="30" width="100" height="80" />
+      <bpmndi:BPMNShape id="gw_truncated_di" bpmnElement="gw_truncated" isMarkerVisible="true">
+        <dc:Bounds x="1100" y="45" width="50" height="50" />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="prepare_next_turn_di" bpmnElement="prepare_next_turn">
+      <bpmndi:BPMNShape id="fail_tool_batch_di" bpmnElement="fail_tool_batch">
         <dc:Bounds x="1225" y="30" width="100" height="80" />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="gw_should_stop_di" bpmnElement="gw_should_stop" isMarkerVisible="true">
+      <bpmndi:BPMNShape id="gw_prepare_entry_di" bpmnElement="gw_prepare_entry" isMarkerVisible="true">
         <dc:Bounds x="1400" y="45" width="50" height="50" />
       </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="prepare_next_turn_di" bpmnElement="prepare_next_turn">
+        <dc:Bounds x="1525" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_should_stop_di" bpmnElement="gw_should_stop" isMarkerVisible="true">
+        <dc:Bounds x="1700" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_end_stopped_entry_di" bpmnElement="gw_end_stopped_entry" isMarkerVisible="true">
+        <dc:Bounds x="1850" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="end_stopped_di" bpmnElement="end_stopped">
-        <dc:Bounds x="1557" y="52" width="36" height="36" />
+        <dc:Bounds x="2007" y="52" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="tool_batch_di" bpmnElement="tool_batch">
-        <dc:Bounds x="1075" y="170" width="100" height="80" />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="collect_batch_di" bpmnElement="collect_batch">
         <dc:Bounds x="1225" y="170" width="100" height="80" />
       </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="collect_batch_di" bpmnElement="collect_batch">
+        <dc:Bounds x="1375" y="170" width="100" height="80" />
+      </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_terminate_di" bpmnElement="gw_terminate" isMarkerVisible="true">
-        <dc:Bounds x="1400" y="185" width="50" height="50" />
+        <dc:Bounds x="1550" y="185" width="50" height="50" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="drain_followup_di" bpmnElement="drain_followup">
-        <dc:Bounds x="925" y="310" width="100" height="80" />
+        <dc:Bounds x="1075" y="310" width="100" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_followup_di" bpmnElement="gw_followup" isMarkerVisible="true">
-        <dc:Bounds x="1100" y="325" width="50" height="50" />
+        <dc:Bounds x="1250" y="325" width="50" height="50" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="end_done_di" bpmnElement="end_done">
-        <dc:Bounds x="1257" y="332" width="36" height="36" />
+        <dc:Bounds x="1407" y="332" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNEdge id="to_inject_di" bpmnElement="to_inject">
         <di:waypoint x="93" y="70" />
-        <di:waypoint x="175" y="70" />
+        <di:waypoint x="200" y="70" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="to_turn_di" bpmnElement="to_turn">
-        <di:waypoint x="275" y="70" />
+      <bpmndi:BPMNEdge id="into_inject_pending_di" bpmnElement="into_inject_pending">
+        <di:waypoint x="250" y="70" />
         <di:waypoint x="325" y="70" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="to_gw_failed_di" bpmnElement="to_gw_failed">
+      <bpmndi:BPMNEdge id="to_turn_di" bpmnElement="to_turn">
         <di:waypoint x="425" y="70" />
-        <di:waypoint x="500" y="70" />
+        <di:waypoint x="475" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_gw_failed_di" bpmnElement="to_gw_failed">
+        <di:waypoint x="575" y="70" />
+        <di:waypoint x="650" y="70" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="turn_failed_di" bpmnElement="turn_failed">
-        <di:waypoint x="550" y="70" />
-        <di:waypoint x="657" y="70" />
+        <di:waypoint x="700" y="70" />
+        <di:waypoint x="807" y="70" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="turn_ok_di" bpmnElement="turn_ok">
-        <di:waypoint x="525" y="95" />
-        <di:waypoint x="525" y="140" />
-        <di:waypoint x="825" y="140" />
-        <di:waypoint x="825" y="95" />
+        <di:waypoint x="675" y="95" />
+        <di:waypoint x="675" y="140" />
+        <di:waypoint x="975" y="140" />
+        <di:waypoint x="975" y="95" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="has_tools_di" bpmnElement="has_tools">
-        <di:waypoint x="850" y="70" />
-        <di:waypoint x="950" y="70" />
+        <di:waypoint x="1000" y="70" />
+        <di:waypoint x="1100" y="70" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="no_tools_di" bpmnElement="no_tools">
-        <di:waypoint x="825" y="95" />
-        <di:waypoint x="825" y="350" />
-        <di:waypoint x="925" y="350" />
+        <di:waypoint x="975" y="95" />
+        <di:waypoint x="975" y="350" />
+        <di:waypoint x="1075" y="350" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="truncated_di" bpmnElement="truncated">
-        <di:waypoint x="1000" y="70" />
-        <di:waypoint x="1075" y="70" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="not_truncated_di" bpmnElement="not_truncated">
-        <di:waypoint x="975" y="95" />
-        <di:waypoint x="975" y="210" />
-        <di:waypoint x="1075" y="210" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="failed_to_prepare_di" bpmnElement="failed_to_prepare">
-        <di:waypoint x="1175" y="70" />
+        <di:waypoint x="1150" y="70" />
         <di:waypoint x="1225" y="70" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="to_gw_stop_di" bpmnElement="to_gw_stop">
+      <bpmndi:BPMNEdge id="not_truncated_di" bpmnElement="not_truncated">
+        <di:waypoint x="1125" y="95" />
+        <di:waypoint x="1125" y="210" />
+        <di:waypoint x="1225" y="210" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="failed_to_prepare_di" bpmnElement="failed_to_prepare">
         <di:waypoint x="1325" y="70" />
         <di:waypoint x="1400" y="70" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="stop_now_di" bpmnElement="stop_now">
+      <bpmndi:BPMNEdge id="into_prepare_next_turn_di" bpmnElement="into_prepare_next_turn">
         <di:waypoint x="1450" y="70" />
-        <di:waypoint x="1557" y="70" />
+        <di:waypoint x="1525" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_gw_stop_di" bpmnElement="to_gw_stop">
+        <di:waypoint x="1625" y="70" />
+        <di:waypoint x="1700" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="stop_now_di" bpmnElement="stop_now">
+        <di:waypoint x="1750" y="70" />
+        <di:waypoint x="1850" y="70" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="next_turn_di" bpmnElement="next_turn">
-        <di:waypoint x="1425" y="95" />
-        <di:waypoint x="1425" y="140" />
+        <di:waypoint x="1725" y="95" />
+        <di:waypoint x="1725" y="140" />
         <di:waypoint x="225" y="140" />
-        <di:waypoint x="225" y="110" />
+        <di:waypoint x="225" y="95" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="into_end_stopped_di" bpmnElement="into_end_stopped">
+        <di:waypoint x="1900" y="70" />
+        <di:waypoint x="2007" y="70" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="batch_done_di" bpmnElement="batch_done">
-        <di:waypoint x="1175" y="210" />
-        <di:waypoint x="1225" y="210" />
+        <di:waypoint x="1325" y="210" />
+        <di:waypoint x="1375" y="210" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="collected_di" bpmnElement="collected">
-        <di:waypoint x="1325" y="210" />
-        <di:waypoint x="1400" y="210" />
+        <di:waypoint x="1475" y="210" />
+        <di:waypoint x="1550" y="210" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="batch_terminates_di" bpmnElement="batch_terminates">
-        <di:waypoint x="1450" y="210" />
-        <di:waypoint x="1575" y="210" />
-        <di:waypoint x="1575" y="88" />
+        <di:waypoint x="1600" y="210" />
+        <di:waypoint x="1875" y="210" />
+        <di:waypoint x="1875" y="95" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="batch_continues_di" bpmnElement="batch_continues">
-        <di:waypoint x="1425" y="235" />
+        <di:waypoint x="1575" y="235" />
+        <di:waypoint x="1575" y="280" />
         <di:waypoint x="1425" y="280" />
-        <di:waypoint x="1275" y="280" />
-        <di:waypoint x="1275" y="110" />
+        <di:waypoint x="1425" y="95" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="to_gw_followup_di" bpmnElement="to_gw_followup">
-        <di:waypoint x="1025" y="350" />
-        <di:waypoint x="1100" y="350" />
+        <di:waypoint x="1175" y="350" />
+        <di:waypoint x="1250" y="350" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="followup_again_di" bpmnElement="followup_again">
-        <di:waypoint x="1125" y="375" />
-        <di:waypoint x="1125" y="420" />
+        <di:waypoint x="1275" y="375" />
+        <di:waypoint x="1275" y="420" />
         <di:waypoint x="225" y="420" />
-        <di:waypoint x="225" y="110" />
+        <di:waypoint x="225" y="95" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="no_followup_di" bpmnElement="no_followup">
-        <di:waypoint x="1150" y="350" />
-        <di:waypoint x="1257" y="350" />
+        <di:waypoint x="1300" y="350" />
+        <di:waypoint x="1407" y="350" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNShape id="tool_start_di" bpmnElement="tool_start">
         <dc:Bounds x="57" y="52" width="36" height="36" />

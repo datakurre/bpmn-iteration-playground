@@ -7,6 +7,7 @@ import {
   checkSplice,
   definitionsId,
   elementIds,
+  firstActivity,
   pendingGates,
   recoverWithGraph,
   stripEmbeddedSource,
@@ -443,5 +444,97 @@ describe("elementIds", () => {
 describe("toSourceContext", () => {
   it("keys the context on the definitions id, which recovery matches on", async () => {
     expect((await toSourceContext(v1)).id).toBe("Defs_session");
+  });
+});
+
+describe("firstActivity sees through a plain merge gateway (issue: forbid implicit merges)", () => {
+  const DEFS =
+    'xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"';
+
+  it("reports the real first stop, not the merge gateway placed in front of it", async () => {
+    // The merging-exclusive-gateway pattern this project now requires instead
+    // of an implicit multi-incoming merge (bpmnlint's fake-join, an error):
+    // start and a loop-back both feed the gateway, which forwards
+    // unconditionally to the human gate. A caller asking "does this graph's
+    // first stop need an interactive answer" should see the gate, not the
+    // gateway in front of it.
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions id="Defs_1" ${DEFS}>
+  <process id="p" isExecutable="true">
+    <startEvent id="start">
+      <outgoing>f1</outgoing>
+    </startEvent>
+    <sequenceFlow id="f1" sourceRef="start" targetRef="gw_entry" />
+    <exclusiveGateway id="gw_entry">
+      <incoming>f1</incoming>
+      <incoming>loop_back</incoming>
+      <outgoing>f2</outgoing>
+    </exclusiveGateway>
+    <sequenceFlow id="f2" sourceRef="gw_entry" targetRef="gate" />
+    <userTask id="gate">
+      <incoming>f2</incoming>
+      <outgoing>f3</outgoing>
+    </userTask>
+    <sequenceFlow id="f3" sourceRef="gate" targetRef="end" />
+    <sequenceFlow id="loop_back" sourceRef="gate" targetRef="gw_entry" />
+    <endEvent id="end" />
+  </process>
+</definitions>`;
+
+    expect(await firstActivity(xml)).toEqual({ id: "gate", type: "bpmn:UserTask" });
+  });
+
+  it("follows a chain of more than one merge gateway", async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions id="Defs_1" ${DEFS}>
+  <process id="p" isExecutable="true">
+    <startEvent id="start">
+      <outgoing>f1</outgoing>
+    </startEvent>
+    <sequenceFlow id="f1" sourceRef="start" targetRef="gw_a" />
+    <exclusiveGateway id="gw_a">
+      <incoming>f1</incoming>
+      <outgoing>f2</outgoing>
+    </exclusiveGateway>
+    <sequenceFlow id="f2" sourceRef="gw_a" targetRef="gw_b" />
+    <exclusiveGateway id="gw_b">
+      <incoming>f2</incoming>
+      <outgoing>f3</outgoing>
+    </exclusiveGateway>
+    <sequenceFlow id="f3" sourceRef="gw_b" targetRef="gate" />
+    <userTask id="gate">
+      <incoming>f3</incoming>
+    </userTask>
+  </process>
+</definitions>`;
+
+    expect(await firstActivity(xml)).toEqual({ id: "gate", type: "bpmn:UserTask" });
+  });
+
+  it("does not follow a genuine decision gateway (more than one outgoing)", async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions id="Defs_1" ${DEFS}>
+  <process id="p" isExecutable="true">
+    <startEvent id="start">
+      <outgoing>f1</outgoing>
+    </startEvent>
+    <sequenceFlow id="f1" sourceRef="start" targetRef="gw_decide" />
+    <exclusiveGateway id="gw_decide">
+      <incoming>f1</incoming>
+      <outgoing>f2</outgoing>
+      <outgoing>f3</outgoing>
+    </exclusiveGateway>
+    <sequenceFlow id="f2" sourceRef="gw_decide" targetRef="a" />
+    <sequenceFlow id="f3" sourceRef="gw_decide" targetRef="b" />
+    <userTask id="a">
+      <incoming>f2</incoming>
+    </userTask>
+    <userTask id="b">
+      <incoming>f3</incoming>
+    </userTask>
+  </process>
+</definitions>`;
+
+    expect(await firstActivity(xml)).toEqual({ id: "gw_decide", type: "bpmn:ExclusiveGateway" });
   });
 });

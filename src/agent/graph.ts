@@ -97,9 +97,16 @@ export async function firstActivity(xml: string): Promise<{ id: string; type: st
   for (const process of processes) {
     const all = flattenFlowElements(process.flowElements);
     const start = all.find((node) => node.$type === "bpmn:StartEvent");
-    const outgoing = (start as unknown as { outgoing?: Array<{ targetRef?: { id: string; $type: string } }> })
-      ?.outgoing;
-    const target = outgoing?.[0]?.targetRef;
+    const outgoing = (start as unknown as { outgoing?: Array<{ targetRef?: ModdleFlowElement }> })?.outgoing;
+    let target = outgoing?.[0]?.targetRef;
+    // A plain merge gateway (fake-join's replacement -- see scripts/bpmn-tools.mjs)
+    // is not a real "first stop": it exists only to make an implicit
+    // multi-incoming merge explicit, and unconditionally forwards to whatever
+    // is really first. Follow it (and any chain of them) rather than reporting
+    // the gateway itself, the same way a human reading the diagram would.
+    while (target?.$type === "bpmn:ExclusiveGateway" && (target.outgoing as unknown[] | undefined)?.length === 1) {
+      target = (target.outgoing as Array<{ targetRef?: ModdleFlowElement }>)[0]?.targetRef;
+    }
     if (target) return { id: target.id, type: target.$type };
   }
   return undefined;

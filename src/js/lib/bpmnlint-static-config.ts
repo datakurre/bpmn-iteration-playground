@@ -67,6 +67,17 @@ const resolver = new StaticResolver({
 
 // Shape expected by `bpmn-js-bpmnlint`'s `linting.bpmnlint` option.
 export const recommendedLintConfig = {
-  config: recommendedConfig,
+  config: {
+    ...recommendedConfig,
+    rules: {
+      ...recommendedConfig.rules,
+      // Matches scripts/bpmn-tools.mjs's CLI config: an implicit merge (more
+      // than one incoming flow into a plain activity or event) is forbidden
+      // here too, not just flagged at "warn" -- see that file's own comment
+      // for why, and any workflows/*.bpmn's gw_*_entry gateways for the
+      // merging-exclusive-gateway pattern to use instead.
+      "fake-join": "error",
+    },
+  },
   resolver,
 };

@@ -49,6 +49,14 @@ gets those checks for free. Author semantics by hand and regenerate the
 `<bpmndi:>` layout with `make layout` (`scripts/bpmn-tools.mjs`) rather than
 hand-writing coordinates.
 
+`make lint`'s bpmnlint pass forbids an implicit merge (bpmnlint's `fake-join`
+rule, an error): a plain activity or event with more than one incoming
+`<bpmn:sequenceFlow>` looks like a BPMN join but is not one -- this engine
+re-triggers it once per arriving token instead of waiting for all of them.
+Route two converging paths into an `<bpmn:exclusiveGateway>` with a single
+outgoing flow to the shared target instead; every `gw_*_entry` gateway in
+`workflows/*.bpmn` is that pattern.
+
 `docs/` is a small Jekyll site (`.github/workflows/docs.yml` builds and
 deploys it to GitHub Pages on push to `main`). Its screenshots
 (`docs/screenshots/*.png`) come from `scripts/screenshot-docs.mjs`, which

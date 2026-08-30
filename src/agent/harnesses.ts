@@ -45,7 +45,13 @@ const AGENT_ROLES: Record<string, string> = {
     "its exact id and its <bpmn:definitions id>; give every new element a " +
     "brand-new id -- nothing existing may be renamed or removed. Auto-layout " +
     "adds visual positioning afterward, so omit the <bpmndi:BPMNDiagram> " +
-    "section entirely; do not invent one.\n\n" +
+    "section entirely; do not invent one. Never give a plain activity or " +
+    "event more than one incoming <bpmn:sequenceFlow> -- that looks like a " +
+    "join but is not one, and bpmnlint's fake-join rule (an error) rejects a " +
+    "graph promoted to the shared library with one still in it. Where two " +
+    "paths need to reconverge (a loop-back alongside a fresh entry, say), " +
+    "route both into an <bpmn:exclusiveGateway> with a single outgoing flow " +
+    "to the shared target instead.\n\n" +
     "The <bpmn:definitions> root must declare exactly these namespaces, " +
     "copied verbatim -- inventing a different BPMN namespace URI is the most " +
     "common way this fails:\n" +
