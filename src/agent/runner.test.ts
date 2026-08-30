@@ -480,6 +480,72 @@ describe("hang guard and phantom-running status (issue #52)", () => {
   });
 });
 
+describe("studio-queued answers (issue #51)", () => {
+  const NS =
+    'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"';
+  const gateGraph = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_answer_test" ${NS}>
+  <bpmn:process id="answer_test" isExecutable="true">
+    <bpmn:extensionElements>
+      <zeebe:userTaskForm id="gate_form">{"components":[{"key":"key","type":"textfield"}]}</zeebe:userTaskForm>
+    </bpmn:extensionElements>
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="gate" />
+    <bpmn:userTask id="gate" name="Gate">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:formDefinition formId="gate_form" />
+        <zeebe:ioMapping><zeebe:output source="=key" target="answered_key" /></zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="gate" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+
+  it("onWait consumes a studio-queued answer before falling back to the caller's own onWait", async () => {
+    const graphPath = join(home, "answer_test.bpmn");
+    writeFileSync(graphPath, gateGraph);
+
+    const first = await runSession(options(scripted([]), { graphPath, hangGuardMs: 50 }));
+    expect(first.outcome).toBe("stopped");
+
+    const store = new SessionStore(paths, first.sessionId);
+    store.queueAnswer("gate", { key: "from the studio" });
+
+    let callerOnWaitCalled = false;
+    const second = await resumeSession({
+      ...options(scripted([]), { hangGuardMs: 50 }),
+      sessionId: first.sessionId,
+      onWait: () => {
+        callerOnWaitCalled = true;
+        return undefined;
+      },
+    });
+
+    expect(second.outcome).toBe("completed");
+    expect(callerOnWaitCalled).toBe(false);
+    // Consumed, not left behind for a second resume to replay.
+    expect(store.takeAnswer("gate")).toBeUndefined();
+  });
+
+  it("falls back to the caller's own onWait when nothing is queued", async () => {
+    const graphPath = join(home, "answer_test2.bpmn");
+    writeFileSync(graphPath, gateGraph);
+
+    const first = await runSession(options(scripted([]), { graphPath, hangGuardMs: 50 }));
+    expect(first.outcome).toBe("stopped");
+
+    const second = await resumeSession({
+      ...options(scripted([]), { hangGuardMs: 50 }),
+      sessionId: first.sessionId,
+      onWait: () => ({ key: "from --answer" }),
+    });
+    expect(second.outcome).toBe("completed");
+  });
+});
+
 describe("steering and follow-up queues (issue #48)", () => {
   it("a seeded follow-up drives a second outer iteration", async () => {
     // With no tool calls the agent would stop here -- pi-default-loop's own

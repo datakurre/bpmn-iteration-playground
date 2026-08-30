@@ -25,7 +25,7 @@ import {
   staticDir,
   type Paths,
 } from "../agent/paths.ts";
-import { checkMigration } from "../agent/graph.ts";
+import { checkMigration, pendingGates } from "../agent/graph.ts";
 import { createHarnesses, type HarnessDeps } from "../agent/harnesses.ts";
 import type { GraphSummary, ProjectInfo, StudioEvent } from "./types.ts";
 
@@ -207,6 +207,38 @@ async function handle(
     const xml = store.currentGraph();
     if (xml === null) return sendJson(res, 404, { error: "session has no graph" });
     return send(res, 200, "application/xml; charset=utf-8", xml);
+  }
+
+  // ---- human gates a session is currently parked on, and answering one
+  // (issue #51). The studio never runs a model itself: an answer is queued
+  // here for whichever process is -- or next is -- driving the session.
+  const pendingMatch = /^\/api\/sessions\/([^/]+)\/pending$/.exec(path);
+  if (pendingMatch) {
+    const store = new SessionStore(paths, decodeURIComponent(pendingMatch[1] as string));
+    if (!store.exists()) return sendJson(res, 404, { error: "unknown session" });
+    const xml = store.currentGraph();
+    if (xml === null) return sendJson(res, 200, []);
+    const meta = store.readMeta();
+    const gates = await pendingGates(xml, meta.tokens);
+    const answered = new Set(store.pendingAnswers());
+    return sendJson(
+      res,
+      200,
+      gates.map((gate) => ({ ...gate, answered: answered.has(gate.id) })),
+    );
+  }
+
+  const answerMatch = /^\/api\/sessions\/([^/]+)\/answer$/.exec(path);
+  if (answerMatch && req.method === "POST") {
+    const store = new SessionStore(paths, decodeURIComponent(answerMatch[1] as string));
+    if (!store.exists()) return sendJson(res, 404, { error: "unknown session" });
+    const body = (await readJson(req)) as { activityId?: string; payload?: Record<string, unknown> };
+    if (!body.activityId || typeof body.payload !== "object" || body.payload === null) {
+      return sendJson(res, 400, { error: "activityId and payload are required" });
+    }
+    store.queueAnswer(body.activityId, body.payload);
+    broadcast({ type: "session_changed", sessionId: store.id });
+    return sendJson(res, 200, { queued: true });
   }
 
   // ---- the shared graph library

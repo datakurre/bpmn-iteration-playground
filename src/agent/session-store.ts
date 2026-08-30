@@ -58,6 +58,13 @@ export interface InboxEntry {
   at: number;
 }
 
+/** One queued human-gate answer, as stored in `answers.jsonl` (issue #51). */
+export interface AnswerEntry {
+  activityId: string;
+  payload: Record<string, unknown>;
+  at: number;
+}
+
 export class SessionStore {
   constructor(
     private readonly paths: Paths,
@@ -112,6 +119,53 @@ export class SessionStore {
     const remaining = entries.filter((entry) => entry.kind !== kind);
     writeAtomic(this.inboxPath, remaining.map((entry) => JSON.stringify(entry)).join("\n") + (remaining.length > 0 ? "\n" : ""));
     return matching;
+  }
+
+  /**
+   * Answers to a parked human gate, queued from the studio (issue #51) for
+   * whichever process is -- or next is -- driving this session. A run only
+   * resumes when a process resumes it, so the studio never runs a model
+   * itself: it queues the answered form here, and `runSession`/`resumeSession`
+   * consume a matching one from `onWait(activityId)` before falling back to
+   * `--answer`.
+   */
+  get answersPath(): string {
+    return join(this.dir, "answers.jsonl");
+  }
+
+  /** Queue an answer for one activity. A later queueAnswer for the same activity id replaces the earlier one. */
+  queueAnswer(activityId: string, payload: Record<string, unknown>): void {
+    mkdirSync(this.dir, { recursive: true });
+    const entries = this.readAnswers().filter((entry) => entry.activityId !== activityId);
+    entries.push({ activityId, payload, at: Date.now() });
+    this.writeAnswers(entries);
+  }
+
+  /** Every activity id with a queued answer. */
+  pendingAnswers(): string[] {
+    return this.readAnswers().map((entry) => entry.activityId);
+  }
+
+  /** Consumes (removes) the queued answer for one activity, if any, so it cannot be replayed (see issue #44 on why that matters). */
+  takeAnswer(activityId: string): Record<string, unknown> | undefined {
+    const entries = this.readAnswers();
+    const index = entries.findIndex((entry) => entry.activityId === activityId);
+    if (index === -1) return undefined;
+    const [taken] = entries.splice(index, 1);
+    this.writeAnswers(entries);
+    return taken?.payload;
+  }
+
+  private readAnswers(): AnswerEntry[] {
+    if (!existsSync(this.answersPath)) return [];
+    return readFileSync(this.answersPath, "utf8")
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as AnswerEntry);
+  }
+
+  private writeAnswers(entries: AnswerEntry[]): void {
+    writeAtomic(this.answersPath, entries.map((entry) => JSON.stringify(entry)).join("\n") + (entries.length > 0 ? "\n" : ""));
   }
 
   exists(): boolean {

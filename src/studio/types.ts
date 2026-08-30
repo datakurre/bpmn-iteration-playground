@@ -81,6 +81,16 @@ export interface SessionDetail extends SessionSummary {
   harnessError?: string;
 }
 
+/** A parked human gate (`GET /api/sessions/:id/pending`, issue #51). */
+export interface PendingGateInfo {
+  id: string;
+  name?: string;
+  documentation?: string;
+  form?: { formId: string; schema: string };
+  /** An answer is already queued for this gate, waiting for a runner to consume it. */
+  answered: boolean;
+}
+
 /** Pushed over the studio WebSocket when a session advances or its graph changes. */
 export type StudioEvent =
   | { type: "session_changed"; sessionId: string }

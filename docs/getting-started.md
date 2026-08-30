@@ -240,6 +240,15 @@ edit`, and a running session picks it up the next time it stops and resumes
 (see ["a spliced-in step" above](#extending-a-graph-from-inside-a-session)
 for what "the next time" means for a run already in flight).
 
+A parked human gate -- `session-skeleton`'s `await_intent`, `craft-graph`'s
+`review_fragment` approval -- shows up on the session page as a real form-js
+form, built from the same `zeebe:userTaskForm` schema the graph itself
+carries ([#51](https://github.com/datakurre/graph-agent/issues/51)).
+Submitting it does not run a model from the browser: it queues the answer in
+the session's own state, and `graph-agent resume <session>` (no `--answer`
+needed) picks it up the next time it starts. A gate with no form defined
+still tells you how to answer it from a terminal instead.
+
 `scripts/screenshot-docs.mjs` produces the screenshots in this repo's own
 `docs/` by driving the real CLI and a real Chromium against a throwaway
 workspace -- run it after any studio change to refresh them.

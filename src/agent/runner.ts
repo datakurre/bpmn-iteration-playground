@@ -263,7 +263,16 @@ async function drive(
         meta.visited = visited;
       });
     },
-    ...(options.onWait === undefined ? {} : { onWait: options.onWait }),
+    // A queued studio answer (issue #51) always takes precedence over --answer:
+    // the studio never runs a model itself, it only queues the submitted form
+    // here for whichever process is driving the session to pick up. Consuming
+    // it removes it, so it cannot be replayed the way an unscoped --answer can
+    // (issue #44).
+    onWait: (activityId: string) => {
+      const queued = store.takeAnswer(activityId);
+      if (queued !== undefined) return queued;
+      return options.onWait?.(activityId);
+    },
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(options.hangGuardMs === undefined ? {} : { hangGuardMs: options.hangGuardMs }),
     onExpressionWarning: (warning: { expression: string; message: string }) => {

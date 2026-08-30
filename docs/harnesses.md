@@ -87,6 +87,15 @@ The `element_templates/human_gate_user_task.json` template wires the
 fields still need a hand-written (or form-editor-authored)
 `zeebe:userTaskForm` elsewhere in the diagram.
 
+The studio can answer one too ([#51](https://github.com/datakurre/graph-agent/issues/51)):
+the session page renders every activity in `meta.tokens` that resolves to a
+`zeebe:userTaskForm` as a real form-js form, and submitting it
+`POST`s to `/api/sessions/:id/answer`, which queues the payload in the
+session's own `answers.jsonl` rather than running a model itself. Whichever
+process next drives the session (`run`/`resume`) consumes a matching queued
+answer from its `onWait(activityId)` seam before falling back to `--answer`,
+and deletes it once consumed so it cannot be replayed.
+
 ## Variables across a callActivity
 
 `link.ts` splices a called graph (`craft_graph`, called by `session-skeleton.bpmn`'s

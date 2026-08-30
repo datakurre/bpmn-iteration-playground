@@ -1,9 +1,10 @@
 import { $, escapeHtml } from "../../js/lib/dom";
 import { fitDiagram, wireZoomControls } from "../../js/lib/bpmn-viewer-controls";
 import type { BpmnDiagramInstance } from "../../js/lib/bpmn-types";
+import type { FormInstance } from "../../js/types/globals";
 import { connectStudioEvents } from "./live";
 import { mountShell, statusChip } from "./shell";
-import type { SessionDetail, TurnRecord } from "../types";
+import type { PendingGateInfo, SessionDetail, TurnRecord } from "../types";
 
 let viewer: BpmnDiagramInstance | null = null;
 let renderedGraph: string | null = null;
@@ -12,6 +13,9 @@ let markedElements: Array<{ id: string; marker: string }> = [];
 let modeler: BpmnDiagramInstance | null = null;
 let editing = false;
 let latestDetail: SessionDetail | null = null;
+
+/** One form-js instance per currently-rendered pending gate, keyed by activity id -- never recreated on refresh, so mid-answer input survives a websocket-triggered poll. */
+const pendingForms = new Map<string, FormInstance>();
 
 const sessionId = new URLSearchParams(location.search).get("id") ?? "";
 
@@ -166,6 +170,128 @@ async function refresh(): Promise<void> {
   paintTokens(detail);
   renderTurns(detail.turns);
   renderRevisions(detail);
+  void refreshPending();
+}
+
+/** Sanitized so a `data-gate-id` (unquoted attribute-safe) and an element id can carry an arbitrary activity id. */
+function pendingElementId(gateId: string): string {
+  return `pending-form-${gateId.replace(/[^A-Za-z0-9_-]/g, "_")}`;
+}
+
+/**
+ * Renders every parked human gate as its own form-js instance -- created
+ * once and left alone on later refreshes, so a websocket-triggered poll
+ * never clobbers input someone is mid-way through answering (issue #51).
+ */
+async function refreshPending(): Promise<void> {
+  const host = $("pending-gates");
+  const section = $("pending-section");
+  if (!host || !section) return;
+  const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/pending`);
+  if (!res.ok) return;
+  const gates: PendingGateInfo[] = await res.json();
+
+  section.classList.toggle("hidden", gates.length === 0);
+  if (gates.length === 0) {
+    for (const form of pendingForms.values()) form.destroy();
+    pendingForms.clear();
+    host.innerHTML = "";
+    return;
+  }
+
+  const wanted = new Set(gates.map((g) => g.id));
+  for (const [id, form] of [...pendingForms]) {
+    if (wanted.has(id)) continue;
+    form.destroy();
+    pendingForms.delete(id);
+    $(pendingElementId(id))?.remove();
+  }
+
+  for (const gate of gates) {
+    const existing = $(pendingElementId(gate.id));
+    if (existing) {
+      // Leave an in-progress form alone (do not clobber typed input), but a
+      // gate answered since it was rendered has nothing left to preserve --
+      // swap in the "answered" message so submitting is not silently a no-op
+      // from the viewer's own perspective.
+      if (gate.answered && existing.dataset.answered !== "true") {
+        pendingForms.get(gate.id)?.destroy();
+        pendingForms.delete(gate.id);
+        existing.dataset.answered = "true";
+        for (const el of existing.querySelectorAll(".fjs-host, .answer-btn, .answer-err")) el.remove();
+        existing.insertAdjacentHTML(
+          "beforeend",
+          `<p class="text-accent text-[11px]">Answered -- waiting for the session to resume.</p>`,
+        );
+      }
+      continue;
+    }
+
+    const wrapper = document.createElement("div");
+    wrapper.id = pendingElementId(gate.id);
+    wrapper.className = "px-3 py-3 border-b border-line-subtle";
+    wrapper.dataset.answered = String(gate.answered);
+    const body = gate.answered
+      ? `<p class="text-accent text-[11px]">Answered -- waiting for the session to resume.</p>`
+      : gate.form
+        ? `<div class="fjs-host mb-2"></div>
+           <button class="btn px-2.5 py-1 text-xs answer-btn">Answer</button>
+           <p class="hidden mt-1 text-danger text-[11px] answer-err"></p>`
+        : `<p class="text-muted text-[11px]">No form defined for this gate. Answer it from a terminal:
+           <code class="block mt-1 font-mono text-[10px] break-all">graph-agent resume ${escapeHtml(sessionId)} --answer ${escapeHtml(gate.id)}:key=value</code></p>`;
+    wrapper.innerHTML = `
+      <div class="font-semibold text-ink mb-1">${escapeHtml(gate.name || gate.id)}</div>
+      ${gate.documentation ? `<p class="text-ink-secondary text-[11px] mb-2">${escapeHtml(gate.documentation)}</p>` : ""}
+      ${body}`;
+    host.appendChild(wrapper);
+
+    if (gate.answered || !gate.form) continue;
+    const FormCtor = window.FormViewer?.Form ?? window.FormJS?.Form;
+    if (!FormCtor) continue;
+    const form = new FormCtor({ container: wrapper.querySelector(".fjs-host") as HTMLElement });
+    pendingForms.set(gate.id, form);
+    try {
+      await form.importSchema(JSON.parse(gate.form.schema));
+    } catch {
+      wrapper.querySelector(".fjs-host")?.replaceWith(
+        Object.assign(document.createElement("p"), {
+          className: "text-danger text-[11px]",
+          textContent: "This gate's form schema is not valid JSON.",
+        }),
+      );
+      continue;
+    }
+
+    const errEl = wrapper.querySelector<HTMLElement>(".answer-err");
+    const answerBtn = wrapper.querySelector<HTMLButtonElement>(".answer-btn");
+    if (answerBtn) {
+      answerBtn.onclick = async () => {
+        const { data, errors } = form.submit();
+        if (Object.keys(errors).length > 0) {
+          if (errEl) {
+            errEl.textContent = "Fix the highlighted field(s) before answering.";
+            errEl.classList.remove("hidden");
+          }
+          return;
+        }
+        answerBtn.disabled = true;
+        const submitRes = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/answer`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ activityId: gate.id, payload: data }),
+        });
+        if (!submitRes.ok) {
+          answerBtn.disabled = false;
+          if (errEl) {
+            errEl.textContent = "Could not queue the answer.";
+            errEl.classList.remove("hidden");
+          }
+          return;
+        }
+        void refreshPending();
+      };
+    }
+  }
 }
 
 function editMsg(message: string, tone: "ok" | "error" | "none" = "none"): void {

@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="/static/diagram-js-minimap.css">
   <link rel="stylesheet" href="/static/properties-panel.css">
   <link rel="stylesheet" href="/static/element-template-chooser.css">
+  <link rel="stylesheet" href="/static/vendor/form-js/assets/form-js.css">
 </head>
 <body class="bg-bg text-ink font-sans antialiased min-h-screen overflow-x-hidden">
 <main class="max-w-[1600px] mx-auto px-5 py-4 pb-6">
@@ -67,6 +68,10 @@
     </div>
 
     <aside class="w-full lg:w-[420px] shrink-0 flex flex-col gap-3 min-h-0">
+      <section id="pending-section" class="hidden bg-panel border border-line rounded-lg overflow-hidden">
+        <h3 class="px-3 py-2 bg-panel-header border-b border-line text-[11.5px] font-bold tracking-wider uppercase">Waiting on you</h3>
+        <div id="pending-gates" class="max-h-64 overflow-y-auto text-xs"></div>
+      </section>
       <section class="bg-panel border border-line rounded-lg overflow-hidden flex flex-col min-h-0 flex-1">
         <h3 class="px-3 py-2 bg-panel-header border-b border-line text-[11.5px] font-bold tracking-wider uppercase">Turns</h3>
         <div id="turns" class="flex-1 overflow-y-auto text-xs"></div>
@@ -80,6 +85,7 @@
 </main>
 <script src="/static/bpmn-viewer-bundle.js"></script>
 <script src="/static/bpmn-modeler-bundle.js"></script>
+<script src="/static/vendor/form-js/form-viewer.umd.js"></script>
 <script src="/static/pages/session.js" defer></script>
 </body>
 </html>

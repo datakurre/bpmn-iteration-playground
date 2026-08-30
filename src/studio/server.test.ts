@@ -154,3 +154,103 @@ describe("PUT /api/sessions/:id/graph (issue #46)", () => {
     expect(res.status).toBe(404);
   });
 });
+
+const graphWithForm = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_session" ${NS}>
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:extensionElements>
+      <zeebe:userTaskForm id="intent_form">{"components":[{"key":"intent","type":"textfield"}]}</zeebe:userTaskForm>
+    </bpmn:extensionElements>
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="gate" />
+    <bpmn:userTask id="gate" name="What next?">
+      <bpmn:documentation>Say what you want done.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:formDefinition formId="intent_form" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="gate" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+
+function createParkedSession(id: string): SessionStore {
+  const store = new SessionStore(paths, id);
+  store.create(project);
+  store.appendGraph(graphWithForm, "started", []);
+  store.update((meta) => {
+    meta.tokens = ["gate"];
+    meta.visited = ["start"];
+  });
+  return store;
+}
+
+describe("GET /api/sessions/:id/pending (issue #51)", () => {
+  it("describes a parked user task's form", async () => {
+    createParkedSession("p1");
+    const res = await fetch(`${studio.url}/api/sessions/p1/pending`);
+    expect(res.status).toBe(200);
+    const gates = (await res.json()) as Array<{ id: string; name?: string; form?: { formId: string; schema: string } }>;
+    expect(gates).toHaveLength(1);
+    expect(gates[0]?.id).toBe("gate");
+    expect(gates[0]?.name).toBe("What next?");
+    expect(gates[0]?.form?.formId).toBe("intent_form");
+  });
+
+  it("reports a queued answer as already answered", async () => {
+    const store = createParkedSession("p2");
+    store.queueAnswer("gate", { intent: "do the thing" });
+    const res = await fetch(`${studio.url}/api/sessions/p2/pending`);
+    const gates = (await res.json()) as Array<{ id: string; answered: boolean }>;
+    expect(gates[0]?.answered).toBe(true);
+  });
+
+  it("is empty when nothing is parked", async () => {
+    const store = new SessionStore(paths, "p3");
+    store.create(project);
+    store.appendGraph(graphWithForm, "started", []);
+    const res = await fetch(`${studio.url}/api/sessions/p3/pending`);
+    expect(await res.json()).toEqual([]);
+  });
+
+  it("404s for an unknown session", async () => {
+    const res = await fetch(`${studio.url}/api/sessions/nope/pending`);
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("POST /api/sessions/:id/answer (issue #51)", () => {
+  it("queues an answer the running graph can pick up", async () => {
+    const store = createParkedSession("a1");
+    const res = await fetch(`${studio.url}/api/sessions/a1/answer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ activityId: "gate", payload: { intent: "do the thing" } }),
+    });
+    expect(res.status).toBe(200);
+    expect(store.takeAnswer("gate")).toEqual({ intent: "do the thing" });
+    // Consumed, not left behind for a second consumer.
+    expect(store.takeAnswer("gate")).toBeUndefined();
+  });
+
+  it("400s without activityId or payload", async () => {
+    createParkedSession("a2");
+    const res = await fetch(`${studio.url}/api/sessions/a2/answer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ activityId: "gate" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("404s for an unknown session", async () => {
+    const res = await fetch(`${studio.url}/api/sessions/nope/answer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ activityId: "gate", payload: {} }),
+    });
+    expect(res.status).toBe(404);
+  });
+});

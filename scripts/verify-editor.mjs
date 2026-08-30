@@ -162,6 +162,44 @@ try {
     }, sessionId);
     if (revisions !== 2) failures.push(`expected the accepted save to append a revision, saw ${revisions}`);
   }
+  // 7. answering a parked human gate from the studio (issue #51): a fresh
+  // session-skeleton session parks immediately on await_intent, which has a
+  // real zeebe:userTaskForm. Answer it from the studio, then resume from the
+  // CLI and confirm the queued answer is what actually unparked it.
+  const gateRunOutput = spawnSync(
+    process.execPath,
+    [join(import.meta.dirname, "..", "dist", "graph-agent.js"), "run", "--graph", "session-skeleton", "--dry-run"],
+    { cwd: root, env, encoding: "utf8" },
+  ).stdout;
+  const gateSessionId = /^session (\S+)/m.exec(gateRunOutput ?? "")?.[1];
+  if (!gateSessionId) {
+    failures.push(`could not start a session parked on a human gate: ${gateRunOutput}`);
+  } else {
+    await page.goto(`${studio.url}/session?id=${gateSessionId}`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("#pending-section:not(.hidden)", { timeout: 20000 });
+    await page.waitForSelector("#pending-gates textarea.fjs-textarea", { timeout: 20000 });
+    await page.fill("#pending-gates textarea.fjs-textarea", "Say hello and nothing else");
+    await page.click("#pending-gates .answer-btn");
+    await page.waitForFunction(
+      () => (document.querySelector("#pending-gates")?.textContent ?? "").includes("Answered"),
+      { timeout: 10000 },
+    );
+
+    const resumeOutput = spawnSync(
+      process.execPath,
+      [join(import.meta.dirname, "..", "dist", "graph-agent.js"), "resume", gateSessionId, "--dry-run"],
+      { cwd: root, env, encoding: "utf8" },
+    ).stdout;
+    // await_intent only ever reads its answer from the form -- reaching
+    // draft_fragment (inside session-skeleton's "craft" callActivity, the
+    // next step after await_intent) proves the studio-queued answer, not
+    // some other mechanism, is what unparked it. (--dry-run's one scripted,
+    // non-XML response then fails the draft/lint loop, which is expected and
+    // unrelated to what this is checking.)
+    if (!/\bdraft_fragment\b/.test(resumeOutput ?? "")) {
+      failures.push(`resuming after the studio answer did not reach craft: ${resumeOutput}`);
+    }
+  }
 } catch (error) {
   failures.push(`threw: ${error.message}`);
 } finally {
@@ -186,5 +224,6 @@ if (failures.length) {
 }
 console.log(
   "\nOK  editor renders, Camunda 8 templates load, properties panel renders and applies one, " +
-    "session editor locks live elements and the server rejects removing one",
+    "session editor locks live elements and the server rejects removing one, " +
+    "a human gate's form-js form can be answered from the studio and unparks the session",
 );

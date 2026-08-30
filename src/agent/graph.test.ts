@@ -7,6 +7,7 @@ import {
   checkSplice,
   definitionsId,
   elementIds,
+  pendingGates,
   recoverWithGraph,
   stripEmbeddedSource,
   toSourceContext,
@@ -241,6 +242,54 @@ describe("checkMigration (issue #46)", () => {
     const result = await checkMigration(base, withBadTask, new Set(), new Set(["shell"]));
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/'shell:exec'/);
+  });
+});
+
+describe("pendingGates (issue #51)", () => {
+  const NS =
+    'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"';
+  const withGate = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_session" ${NS}>
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:extensionElements>
+      <zeebe:userTaskForm id="intent_form">{"components":[{"key":"intent","type":"textfield"}]}</zeebe:userTaskForm>
+    </bpmn:extensionElements>
+    <bpmn:startEvent id="start" />
+    <bpmn:userTask id="gate" name="What next?">
+      <bpmn:documentation>Say what you want done.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:formDefinition formId="intent_form" />
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:serviceTask id="turn">
+      <bpmn:extensionElements><zeebe:taskDefinition type="agent:turn" /></bpmn:extensionElements>
+    </bpmn:serviceTask>
+  </bpmn:process>
+</bpmn:definitions>`;
+
+  it("resolves a user task's name, documentation and form schema", async () => {
+    const [gate] = await pendingGates(withGate, ["gate"]);
+    expect(gate?.id).toBe("gate");
+    expect(gate?.name).toBe("What next?");
+    expect(gate?.documentation).toBe("Say what you want done.");
+    expect(gate?.form?.formId).toBe("intent_form");
+    expect(JSON.parse(gate?.form?.schema ?? "{}")).toEqual({ components: [{ key: "intent", type: "textfield" }] });
+  });
+
+  it("excludes a token that is not a user task", async () => {
+    const gates = await pendingGates(withGate, ["turn"]);
+    expect(gates).toEqual([]);
+  });
+
+  it("omits form when formId does not resolve to a defined form", async () => {
+    const noForm = withGate.replace('formId="intent_form"', 'formId="missing"');
+    const [gate] = await pendingGates(noForm, ["gate"]);
+    expect(gate?.form).toBeUndefined();
+  });
+
+  it("returns nothing for an id that is not in the graph at all", async () => {
+    expect(await pendingGates(withGate, ["nope"])).toEqual([]);
   });
 });
 

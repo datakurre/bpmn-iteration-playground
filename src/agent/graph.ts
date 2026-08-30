@@ -288,6 +288,67 @@ export async function checkMigration(
   return { ok: true, removed: [] };
 }
 
+export interface PendingGate {
+  id: string;
+  name?: string;
+  documentation?: string;
+  /** The `zeebe:userTaskForm` a `bpmn:UserTask`'s `zeebe:formDefinition formId` names, if it resolves to one. */
+  form?: { formId: string; schema: string };
+}
+
+/**
+ * The parked human gates among `tokenIds` (`meta.tokens`), each with enough
+ * to render a form for it: the activity's own name/documentation, and the
+ * `zeebe:userTaskForm` schema its `zeebe:formDefinition` names -- forms live
+ * on the *process's* `extensionElements`, keyed by id, not on the task itself
+ * (`session-skeleton.bpmn`'s `session_intent_form`, e.g.). Used by the
+ * studio's `GET /api/sessions/:id/pending` (issue #51); a non-`bpmn:UserTask`
+ * token (a service task mid-turn, say) is not a gate and is left out.
+ */
+export async function pendingGates(xml: string, tokenIds: readonly string[]): Promise<PendingGate[]> {
+  const moddle = new BpmnModdle(MODDLE_OPTIONS);
+  const { rootElement } = await moddle.fromXML(xml.trim());
+  const processes = ((rootElement as unknown as { rootElements?: ModdleFlowElement[] }).rootElements ?? []).filter(
+    (node) => node.$type === "bpmn:Process",
+  );
+
+  const forms = new Map<string, string>();
+  for (const process of processes) {
+    const values =
+      (process as unknown as { extensionElements?: { values?: Array<Record<string, unknown>> } }).extensionElements
+        ?.values ?? [];
+    for (const value of values) {
+      if (value.$type === "zeebe:UserTaskForm" && typeof value.id === "string" && typeof value.body === "string") {
+        forms.set(value.id, value.body);
+      }
+    }
+  }
+
+  const byId = new Map(processes.flatMap((process) => flattenFlowElements(process.flowElements)).map((el) => [el.id, el]));
+  const wanted = new Set(tokenIds);
+  const gates: PendingGate[] = [];
+  for (const id of wanted) {
+    const el = byId.get(id);
+    if (!el || el.$type !== "bpmn:UserTask") continue;
+    const docs = (el as unknown as { documentation?: Array<{ text?: string }> }).documentation ?? [];
+    const extValues =
+      (el as unknown as { extensionElements?: { values?: Array<Record<string, unknown>> } }).extensionElements
+        ?.values ?? [];
+    const formDef = extValues.find((value) => value.$type === "zeebe:FormDefinition") as
+      | { formId?: string }
+      | undefined;
+    const schema = formDef?.formId !== undefined ? forms.get(formDef.formId) : undefined;
+
+    gates.push({
+      id,
+      ...(typeof el.name === "string" ? { name: el.name } : {}),
+      ...(docs[0]?.text !== undefined ? { documentation: docs[0].text } : {}),
+      ...(formDef?.formId !== undefined && schema !== undefined ? { form: { formId: formDef.formId, schema } } : {}),
+    });
+  }
+  return gates;
+}
+
 export interface RecoverOptions {
   /** Harness implementations, exposed to the graph as `environment.services`. */
   services?: Record<string, unknown>;
