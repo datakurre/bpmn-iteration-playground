@@ -600,10 +600,67 @@ describe("graph-agent promote (issue #55)", () => {
     expect(xml).toContain('calledElement="promote_callee"');
     expect(xml).not.toContain("Defs_promote_caller\"");
     expect(xml).toContain('id="Defs_promoted_caller"');
+    // Issue #64: the process id itself is rewritten too, not just the
+    // definitions id -- otherwise this and the source graph both define a
+    // process called "promote_caller", and calledElement (which names a
+    // process, not a file) resolves to whichever the library indexes last.
+    expect(xml).toContain('<bpmn:process id="promoted_caller"');
+    expect(promoted.stdout).toContain('calledElement="promoted_caller"');
 
     // Runs as a fresh session, re-linking promote_callee on its own.
     const rerun = runCli(env, ["run", "--graph", "promoted_caller", "--dry-run"]);
     expect(rerun.stdout).toContain("completed");
+  }, 20000);
+
+  it("promotes the same session twice under two names without a process id collision (issue #64)", () => {
+    const { env, workflowsDir } = project();
+    const first = runCli(env, ["run", "--graph", "promote_caller", "--dry-run"]);
+    const sessionId = sessionIdOf(first.stdout);
+
+    const p1 = runCli(env, ["promote", sessionId, "--as", "converged"]);
+    expect(p1.code).toBe(0);
+    const p2 = runCli(env, ["promote", sessionId, "--as", "converged2"]);
+    expect(p2.code).toBe(0);
+
+    const xml1 = readFileSync(join(workflowsDir, "converged.bpmn"), "utf8");
+    const xml2 = readFileSync(join(workflowsDir, "converged2.bpmn"), "utf8");
+    expect(xml1).toContain('<bpmn:process id="converged"');
+    expect(xml2).toContain('<bpmn:process id="converged2"');
+
+    // A third graph calling "converged2" by process id reaches that one
+    // specifically -- not whichever the library happens to index last.
+    const thirdGraph = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_third" ${NS}>
+  <bpmn:process id="third" isExecutable="true">
+    <bpmn:startEvent id="t_start"><bpmn:outgoing>tf1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="tf1" sourceRef="t_start" targetRef="call2" />
+    <bpmn:callActivity id="call2" calledElement="converged2">
+      <bpmn:incoming>tf1</bpmn:incoming><bpmn:outgoing>tf2</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:sequenceFlow id="tf2" sourceRef="call2" targetRef="t_end" />
+    <bpmn:endEvent id="t_end"><bpmn:incoming>tf2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+    writeFileSync(join(workflowsDir, "third.bpmn"), thirdGraph);
+    const rerun = runCli(env, ["run", "--graph", "third", "--dry-run"]);
+    expect(rerun.stdout).toContain("completed");
+  }, 20000);
+
+  it("refuses a process id already used by a different library file, without --force (issue #64)", () => {
+    const { env } = project();
+    const first = runCli(env, ["run", "--graph", "promote_caller", "--dry-run"]);
+    const sessionId = sessionIdOf(first.stdout);
+
+    // "promote-callee" is a different *file* from the existing
+    // "promote_callee.bpmn" (so the file-existence check does not fire
+    // first), but --as normalises '-' to '_' the same way `graph-agent
+    // promote`'s own process id does -- both name the same process.
+    const collision = runCli(env, ["promote", sessionId, "--as", "promote-callee"]);
+    expect(collision.code).not.toBe(0);
+    expect(collision.stderr).toMatch(/process id 'promote_callee' is already used/);
+
+    const withForce = runCli(env, ["promote", sessionId, "--as", "promote-callee", "--force"]);
+    expect(withForce.code).toBe(0);
   }, 20000);
 
   it("requires --as", () => {

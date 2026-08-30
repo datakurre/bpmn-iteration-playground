@@ -119,6 +119,59 @@ export async function withDefinitionsId(xml: string, id: string): Promise<string
   return serialized;
 }
 
+/** The process a session actually runs, and the one `calledElement` should name -- `isExecutable="true"`. */
+function executableProcess(
+  rootElement: unknown,
+): { $type: string; id: string; flowElements?: unknown[]; [key: string]: unknown } | undefined {
+  const processes = (
+    (rootElement as { rootElements?: Array<{ $type: string; [key: string]: unknown }> }).rootElements ?? []
+  ).filter((el) => el.$type === "bpmn:Process") as Array<{ $type: string; id: string; [key: string]: unknown }>;
+  return processes.find((el) => el.isExecutable !== false) ?? processes[0];
+}
+
+/**
+ * Reads `<bpmn:process id>` for the executable process -- the id a
+ * `calledElement` names to reach it, as distinct from `<bpmn:definitions id>`
+ * (which recovery matches a session's snapshot on, not what `calledElement`
+ * ever refers to).
+ */
+export async function processId(xml: string): Promise<string | undefined> {
+  const moddle = new BpmnModdle(MODDLE_OPTIONS);
+  const { rootElement } = await moddle.fromXML(xml.trim());
+  return executableProcess(rootElement)?.id;
+}
+
+/**
+ * Rewrites `<bpmn:process id>` for the executable process, and every
+ * self-referential `calledElement` naming it. `calledElement` is a plain
+ * string attribute, not a reference moddle resolves by object identity the
+ * way `bpmndi:BPMNPlane`'s `bpmnElement` is -- serializing the diagram back
+ * out already picks up a changed process id there for free, but a
+ * self-recursive `callActivity` needs updating by hand.
+ *
+ * A graph promoted out of a session (`graph-agent promote`, issue #55) kept
+ * the session's own process id, so promoting two sessions produced two
+ * library files both defining the same process -- `calledElement` names a
+ * *process*, not a file, and `indexLibrary` resolves it with last-write-wins,
+ * so which of them a `callActivity` actually reaches became a function of
+ * directory order rather than of what the user asked for (issue #64).
+ */
+export async function withProcessId(xml: string, id: string): Promise<string> {
+  const moddle = new BpmnModdle(MODDLE_OPTIONS);
+  const { rootElement } = await moddle.fromXML(xml.trim());
+  const process = executableProcess(rootElement);
+  if (!process) throw new Error("no executable <bpmn:process> to rename");
+  const oldId = process.id;
+  process.id = id;
+  for (const element of flattenFlowElements((process.flowElements ?? []) as ModdleFlowElement[])) {
+    if (element.$type === "bpmn:CallActivity" && element.calledElement === oldId) {
+      element.calledElement = id;
+    }
+  }
+  const { xml: serialized } = await moddle.toXML(rootElement, { format: true });
+  return serialized;
+}
+
 export interface SpliceCheck {
   ok: boolean;
   added: string[];

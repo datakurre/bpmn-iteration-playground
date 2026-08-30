@@ -7,7 +7,7 @@ import { graphPath, startStudio } from "../studio/server.ts";
 import { resumeSession, runSession } from "../agent/runner.ts";
 import { ProcessTerminal } from "../tui/pi-bridge.ts";
 import { startTui } from "../tui/app.ts";
-import { firstActivity, pendingGates, withDefinitionsId } from "../agent/graph.ts";
+import { firstActivity, pendingGates, processId, withDefinitionsId, withProcessId } from "../agent/graph.ts";
 import { formFields } from "../tui/form-fields.ts";
 import { unlinkGraph } from "../agent/link.ts";
 import { lintBpmn } from "../agent/bpmn-lint.ts";
@@ -757,7 +757,11 @@ async function cmdPromote(args: string[]): Promise<number> {
   const revisionXml = readFileSync(join(store.graphDir, revisionFiles[revisionIndex]!), "utf8");
 
   const { xml: unlinkedXml, unlinked } = await unlinkGraph(revisionXml);
-  const promotedXml = await withDefinitionsId(unlinkedXml, `Defs_${sanitizeId(name)}`);
+  const newProcessId = sanitizeId(name);
+  const promotedXml = await withProcessId(
+    await withDefinitionsId(unlinkedXml, `Defs_${newProcessId}`),
+    newProcessId,
+  );
 
   const lint = await lintBpmn(promotedXml);
   if (lint.errors > 0) {
@@ -775,11 +779,27 @@ async function cmdPromote(args: string[]): Promise<number> {
     );
     return 1;
   }
+  // calledElement names a *process*, not a file -- indexLibrary resolves a
+  // shared process id with last-write-wins, so two library files defining
+  // the same process silently make which one a callActivity actually
+  // reaches a function of directory order (issue #64).
+  if (!values.force) {
+    for (const { path: otherPath } of listBpmnFiles(p.workflowsDir)) {
+      if (otherPath === target) continue;
+      if ((await processId(readFileSync(otherPath, "utf8"))) === newProcessId) {
+        process.stderr.write(
+          `graph-agent: process id '${newProcessId}' is already used by ${otherPath}; ` +
+            `pass --force to promote anyway, or choose a different --as\n`,
+        );
+        return 1;
+      }
+    }
+  }
   if (existsSync(target)) copyFileSync(target, `${target}.bak`);
   writeFileSync(target, promotedXml);
 
   process.stdout.write(
-    `promoted revision ${revisionIndex} of ${sessionId} to ${target}\n` +
+    `promoted revision ${revisionIndex} of ${sessionId} to ${target}, callable as calledElement="${newProcessId}"\n` +
       (unlinked.length > 0 ? `unlinked (still callable via calledElement): ${unlinked.join(", ")}\n` : ""),
   );
   return 0;

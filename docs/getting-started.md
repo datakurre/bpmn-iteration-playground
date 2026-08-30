@@ -456,13 +456,13 @@ its own, callable graph instead
 
 ```
 $ graph-agent promote <session> --as my-graph
-promoted revision 3 of <session> to /.../graph-agent/workflows/my-graph.bpmn
+promoted revision 3 of <session> to /.../graph-agent/workflows/my-graph.bpmn, callable as calledElement="my_graph"
 unlinked (still callable via calledElement): craft_graph
 ```
 
 `--as <name>` is required -- there is no good default name for what is, after
 all, a naming decision. `--revision <n>` picks a revision other than the
-latest. Two things happen before the file is written:
+latest. Three things happen before the file is written:
 
 - **Unlinking.** Every process `linkGraph` inlined at session start (the
   non-executable ones) is dropped; a `callActivity` pointing at one, like
@@ -472,6 +472,16 @@ latest. Two things happen before the file is written:
   called.
 - **A fresh `<bpmn:definitions id>`.** A session pins its id for recovery, so
   reusing it verbatim risks a future session colliding with this one's.
+- **A fresh `<bpmn:process id>`, normalised from `--as`.** `calledElement`
+  names a *process*, not a file, and the library resolves a shared process id
+  with last-write-wins -- so a graph promoted under its source session's own
+  (unchanged) process id used to collide with every other graph promoted from
+  a session with the same shape, silently deciding which one a `callActivity`
+  actually reached by directory order rather than by name
+  ([#64](https://github.com/datakurre/graph-agent/issues/64)). The line above
+  reports the id to write into a `calledElement`; promoting into one already
+  used by a *different* library file is refused the same way an existing
+  filename is, with the same `--force`-and-back-up affordance.
 
 The result is validated with the same bpmnlint check `make lint-bpmn` runs;
 a graph that would fail it is not written, and the error names why.
