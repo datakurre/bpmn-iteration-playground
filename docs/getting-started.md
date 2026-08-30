@@ -289,6 +289,28 @@ session 61801712  completed  1 turn(s)
 really does contain the new element. `--answer review_fragment:approval=reject`
 leaves the graph at one revision, as it should.
 
+A splice takes effect immediately, in the same `run`/`resume` invocation: the
+engine driving the session stops and resumes against the new graph the moment
+`graph:extend` applies it, so an element the splice adds downstream of the
+token's current position runs right away rather than waiting for a separate
+`resume` ([#45](https://github.com/datakurre/graph-agent/issues/45)). Nothing
+here reaches such an element -- `craft-graph` run on its own ends at
+`apply_extension` -- but `session-skeleton`'s own splices do, since its
+`craft` callActivity sits well before the session's end:
+
+```
+$ graph-agent run --graph session-skeleton \
+    --answer "await_intent:intent=Add a shell step that runs 'ls -la' after the craft activity" \
+    --answer await_intent:done=true --answer review_fragment:approval=apply \
+    --model anthropic/claude-haiku-4-5
+  ...
+  apply_extension  graph:extend  spliced in 2 element(s)
+    note: graph revision 1 applied, resuming
+  shell_ls  shell  `ls -la` exited 0
+
+session 1a9e3cfc  completed  1 turn(s)
+```
+
 `--answer` accepts a bare `key=value` too, which answers *any* gate that asks
 for that key -- convenient for a graph with one gate, like `craft-graph`
 above, but scope it to one activity (`activity:key=value`, as above) once a

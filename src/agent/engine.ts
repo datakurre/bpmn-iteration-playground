@@ -75,6 +75,17 @@ export interface RunnerOptions {
    * the guard fires without actually waiting out the production value.
    */
   hangGuardMs?: number;
+  /**
+   * Polled after every activity ends; a `true` stops the engine right there
+   * instead of letting the current pass run on to its own end event. Issue
+   * #45: `graph:extend` replaces the definition a *running* engine holds in
+   * memory, which that engine never re-reads -- a splice only takes effect
+   * once whatever is driving it stops and resumes against the new graph. The
+   * runner uses this to force exactly that the moment a splice lands, so the
+   * elements it added get a chance to run before the session can reach a
+   * true end event without them.
+   */
+  checkStopAfterActivity?: () => boolean;
 }
 
 export interface RunResult {
@@ -91,6 +102,14 @@ export interface RunResult {
    * indistinguishable from an ordinary one.
    */
   note?: string;
+  /**
+   * `outcome === "stopped"` because `checkStopAfterActivity` said so, not
+   * because a human gate went unanswered. runner.ts's `drive()` uses this to
+   * tell "resume automatically, a splice just landed" apart from "hand
+   * control back, something is genuinely waiting on a person" -- see issue
+   * #45.
+   */
+  splicePending?: boolean;
 }
 
 /**
@@ -354,11 +373,16 @@ async function drive(
     dispatchedAnything = true;
   });
 
+  let stoppedForSplice = false;
   listener.on("activity.end", (api: { id: string; content?: { output?: unknown } }) => {
     visited.add(api.id);
     waiting.delete(api.id);
     applyUnharnessedOutput(byId.get(api.id), api.content?.output, sharedOutput);
     void options.onTokens?.(currentTokens(), [...visited]);
+    if (options.checkStopAfterActivity?.()) {
+      stoppedForSplice = true;
+      void engine.stop();
+    }
   });
   listener.on("activity.wait", (api: { id: string; signal?: (message?: unknown) => void }) => {
     waiting.add(api.id);
@@ -445,6 +469,7 @@ async function drive(
             note: `the engine dispatched nothing at all within ${hangGuardMs}ms and was stopped rather than hung -- this usually means the resumed snapshot could not be recovered`,
           }
         : {}),
+      ...(outcome === "stopped" && stoppedForSplice ? { splicePending: true } : {}),
     };
   } catch (error) {
     clearTimeout(hangGuardTimer);

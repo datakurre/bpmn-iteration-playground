@@ -278,6 +278,155 @@ describe("graphOffersTools (issue #36)", () => {
   });
 });
 
+describe("a splice executes in the same run that drafted it (issue #45)", () => {
+  const NS =
+    'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"';
+
+  // draft (agent:turn) drafts a whole replacement definition, extend
+  // (graph:extend) splices it in. Mirrors craft-graph.bpmn's own
+  // draft_fragment -> apply_extension shape, minus the layout/lint/approval
+  // steps this test does not need.
+  const original = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_splice_test" ${NS}>
+  <bpmn:process id="splice_test" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="draft" />
+    <bpmn:serviceTask id="draft" name="Draft">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="agent:turn" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=prompt" target="prompt" />
+          <zeebe:output source="=text" target="fragment" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="draft" targetRef="extend" />
+    <bpmn:serviceTask id="extend" name="Extend">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="graph:extend" />
+        <zeebe:ioMapping><zeebe:input source="=fragment" target="fragment" /></zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming><bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="extend" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f3</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+
+  // What the model "drafts": same ids throughout (additive, per checkSplice),
+  // but f3 now targets a new `marker` shell step before reaching `end`.
+  const spliced = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_splice_test" ${NS}>
+  <bpmn:process id="splice_test" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="draft" />
+    <bpmn:serviceTask id="draft" name="Draft">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="agent:turn" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=prompt" target="prompt" />
+          <zeebe:output source="=text" target="fragment" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="draft" targetRef="extend" />
+    <bpmn:serviceTask id="extend" name="Extend">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="graph:extend" />
+        <zeebe:ioMapping><zeebe:input source="=fragment" target="fragment" /></zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming><bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="extend" targetRef="marker" />
+    <bpmn:serviceTask id="marker" name="Marker">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="shell" />
+        <zeebe:taskHeaders>
+          <zeebe:header key="command" value="echo spliced" />
+        </zeebe:taskHeaders>
+        <zeebe:ioMapping><zeebe:output source="=stdout" target="marker_output" /></zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f3</bpmn:incoming><bpmn:outgoing>f4</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f4" sourceRef="marker" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f4</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+
+  it("runs the spliced-in activity within the same run, not just the next resume", async () => {
+    const graphPath = join(home, "splice_test.bpmn");
+    writeFileSync(graphPath, original);
+    const faux = scripted([fauxAssistantMessage([fauxText(spliced)], { stopReason: "stop" })]);
+
+    // `shell`'s marker step needs a real cwd to spawn in -- the shared
+    // `project` constant is a placeholder path that does not exist on disk.
+    const result = await runSession(options(faux, { graphPath, project: home, prompt: "splice in a marker step" }));
+
+    expect(result.error).toBeUndefined();
+    expect(result.outcome).toBe("completed");
+
+    const detail = new SessionStore(paths, result.sessionId).detail();
+    // Before the fix, `marker` never ran in this run -- only a *subsequent*
+    // `resume` would pick up the new revision and reach it.
+    expect(detail.visited).toContain("marker");
+    expect(detail.revisions.length).toBe(2);
+  });
+
+  it("bounds re-entry against a graph that never stops re-splicing", async () => {
+    // draft -> extend loops back to draft unconditionally, with no end event
+    // reachable at all; the "draft" turn re-echoes the graph verbatim each
+    // time, which checkSplice accepts trivially (nothing added or removed).
+    // Left unbounded, a splice-triggered stop that always re-enters would
+    // spin this forever, one model turn per lap.
+    const loopGraph = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_loop_splice" ${NS}>
+  <bpmn:process id="loop_splice" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="draft" />
+    <bpmn:serviceTask id="draft" name="Draft">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="agent:turn" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=prompt" target="prompt" />
+          <zeebe:output source="=text" target="fragment" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:incoming>loop</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="draft" targetRef="extend" />
+    <bpmn:serviceTask id="extend" name="Extend">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="graph:extend" />
+        <zeebe:ioMapping><zeebe:input source="=fragment" target="fragment" /></zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming><bpmn:outgoing>loop</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="loop" sourceRef="extend" targetRef="draft" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+    const graphPath = join(home, "loop_splice_test.bpmn");
+    writeFileSync(graphPath, loopGraph);
+    // The turn echoes back whatever graph it is handed -- always additive,
+    // always accepted, always triggers another splice-forced stop.
+    const faux = scripted(
+      Array.from({ length: 20 }, () => fauxAssistantMessage([fauxText(loopGraph)], { stopReason: "stop" })),
+    );
+
+    const result = await runSession(options(faux, { graphPath, prompt: "splice forever" }));
+
+    // Settles rather than hanging (the test's own timeout would otherwise
+    // catch that) and stops rather than completing, since the graph itself
+    // has no end event this can ever reach.
+    expect(result.outcome).toBe("stopped");
+    expect(result.turns).toBeLessThanOrEqual(6);
+  }, 10000);
+});
+
 describe("hang guard and phantom-running status (issue #52)", () => {
   it("resuming an already-completed session settles instead of hanging forever", async () => {
     // Reproduced against a real session: `graph-agent resume` on a session

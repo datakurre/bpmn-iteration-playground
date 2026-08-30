@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
 import { inspect } from "node:util";
 import { indexLibrary, linkGraph } from "./link.ts";
 import { bundledWorkflowsDir, listBpmnFiles } from "./paths.ts";
-import { runGraph, resumeGraph, type RunResult } from "./engine.ts";
+import { runGraph, resumeGraph, type ActivityOutcome, type RunResult } from "./engine.ts";
 import { createHarnesses } from "./harnesses.ts";
 import { PiSession } from "./pi-session.ts";
 import { SessionStore } from "./session-store.ts";
@@ -212,6 +212,11 @@ async function drive(
   const steering: string[] = [];
   const followUp: string[] = [];
 
+  // Set whenever graph:extend lands a splice; checkStopAfterActivity below
+  // reads it live, and it is reset before each re-entry so only a *new*
+  // splice during that pass triggers another one (issue #45).
+  let splicedThisPass = false;
+
   const harnesses = createHarnesses({
     pi,
     tools: options.tools,
@@ -221,6 +226,7 @@ async function drive(
     setGraph: (xml, reason, added) => {
       graph = xml;
       store.appendGraph(xml, reason, added);
+      splicedThisPass = true;
     },
     takeSteering: () => steering.splice(0, steering.length),
     takeFollowUp: () => followUp.splice(0, followUp.length),
@@ -237,28 +243,53 @@ async function drive(
     meta.startedAt = Date.now();
   });
 
+  const harnessOptions = {
+    harnesses,
+    name: store.id,
+    variables: { prompt: options.prompt ?? "", project: options.project },
+    onActivity: (activity: ActivityOutcome) => {
+      options.onProgress?.(`${activity.activityId}  ${activity.harness}  ${activity.result.summary}`);
+    },
+    onTokens: (tokens: string[], visited: string[]) => {
+      store.update((meta) => {
+        meta.tokens = tokens;
+        meta.visited = visited;
+      });
+    },
+    ...(options.onWait === undefined ? {} : { onWait: options.onWait }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...(options.hangGuardMs === undefined ? {} : { hangGuardMs: options.hangGuardMs }),
+    onExpressionWarning: (warning: { expression: string; message: string }) => {
+      options.onProgress?.(`  FEEL warning: ${warning.message} in ${warning.expression}`);
+    },
+    checkStopAfterActivity: () => splicedThisPass,
+  };
+
+  // `graph:extend` replaces the definition a live engine holds in memory,
+  // which that same engine never re-reads (issue #45): the elements a splice
+  // adds cannot run until whatever is driving the session stops and resumes
+  // against the new graph. checkStopAfterActivity forces exactly that the
+  // instant a splice lands (see engine.ts), reporting it back as
+  // `splicePending` rather than a genuine "nothing answered this gate" stop
+  // -- so re-enter automatically here, against the freshest graph, rather
+  // than handing an artificial stop back to the CLI for a park nobody asked
+  // for. Bounded against a graph that re-splices every time it is entered.
+  const MAX_SPLICE_REENTRIES = 5;
+  let spliceReentries = 0;
   let result: RunResult;
   try {
-    result = await start({
-      harnesses,
-      name: store.id,
-      variables: { prompt: options.prompt ?? "", project: options.project },
-      onActivity: (activity) => {
-        options.onProgress?.(`${activity.activityId}  ${activity.harness}  ${activity.result.summary}`);
-      },
-      onTokens: (tokens, visited) => {
-        store.update((meta) => {
-          meta.tokens = tokens;
-          meta.visited = visited;
-        });
-      },
-      ...(options.onWait === undefined ? {} : { onWait: options.onWait }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(options.hangGuardMs === undefined ? {} : { hangGuardMs: options.hangGuardMs }),
-      onExpressionWarning: (warning) => {
-        options.onProgress?.(`  FEEL warning: ${warning.message} in ${warning.expression}`);
-      },
-    });
+    result = await start(harnessOptions);
+    while (result.outcome === "stopped" && result.splicePending && spliceReentries < MAX_SPLICE_REENTRIES) {
+      spliceReentries++;
+      splicedThisPass = false;
+      options.onProgress?.(`  note: graph revision ${store.readMeta().revisions.length - 1} applied, resuming`);
+      result = await resumeGraph(result.state, graph, harnessOptions);
+    }
+    if (result.outcome === "stopped" && result.splicePending) {
+      options.onProgress?.(
+        `  note: stopped after ${MAX_SPLICE_REENTRIES} splice-triggered re-entries without settling; resume manually to continue`,
+      );
+    }
   } catch (error) {
     // Nothing between here and the ordinary return path below writes a
     // terminal status -- so without this, any throw out of `start()` (engine.ts
