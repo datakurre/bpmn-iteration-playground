@@ -388,6 +388,50 @@ outputs and headers, and check the fragment against it at the
 `review_fragment` gate before approving -- lint checking "additive, and a
 registered job type" is not the same as lint checking "will run correctly".
 
+## Promoting a session's graph back to the library
+
+The premise is to start simple, reproduce the default loop, and iterate
+towards a dedicated, re-usable graph definition -- and `graph-agent promote`
+is the last step of that round trip. A session that spent real turns
+converging on a good extension leaves that graph buried under
+`$XDG_STATE_HOME`, tagged with a revision number and carrying whatever the
+session happened to link in; `promote` writes it into the shared library as
+its own, callable graph instead
+([#55](https://github.com/datakurre/graph-agent/issues/55)):
+
+```
+$ graph-agent promote <session> --as my-graph
+promoted revision 3 of <session> to /.../graph-agent/workflows/my-graph.bpmn
+unlinked (still callable via calledElement): craft_graph
+```
+
+`--as <name>` is required -- there is no good default name for what is, after
+all, a naming decision. `--revision <n>` picks a revision other than the
+latest. Two things happen before the file is written:
+
+- **Unlinking.** Every process `linkGraph` inlined at session start (the
+  non-executable ones) is dropped; a `callActivity` pointing at one, like
+  `craft_graph`, is left exactly as it was, ready to be linked again the next
+  time a session starts from this graph. The promoted file ends up with
+  exactly one executable process, not a copy of everything the session ever
+  called.
+- **A fresh `<bpmn:definitions id>`.** A session pins its id for recovery, so
+  reusing it verbatim risks a future session colliding with this one's.
+
+The result is validated with the same bpmnlint check `make lint-bpmn` runs;
+a graph that would fail it is not written, and the error names why.
+Promoting over an existing library graph fails without `--force`; with it,
+the previous copy is backed up as `<name>.bpmn.bak` first, the same
+convention `graph-agent init --refresh` uses.
+
+```
+$ graph-agent run --graph my-graph "..."
+```
+
+starts a fresh session from the promoted graph, re-linking whatever it calls
+on its own -- the round trip (library → session → mutate → promote → library)
+is complete.
+
 ## Keeping the graph library current
 
 `graph-agent init` seeds `$XDG_CONFIG_HOME/graph-agent/workflows` but **never

@@ -198,3 +198,45 @@ export async function linkGraph(xml: string, index: LibraryIndex): Promise<LinkR
   const { xml: serialized } = await moddle().toXML(definitions, { format: true });
   return { xml: serialized, linked, dynamic };
 }
+
+export interface UnlinkResult {
+  xml: string;
+  /** Process ids removed. */
+  unlinked: string[];
+}
+
+/**
+ * The inverse of `linkGraph`: drop every process `linkGraph` would have
+ * added, leaving only the session's own graph -- `calledElement` references
+ * to a library graph (e.g. `craft_graph`) stay put, ready to be linked again
+ * the next time this graph starts a session. Used by `graph-agent promote`
+ * (issue #55) to take a session's mutated graph back out to the shared
+ * library without shipping a copy of whatever it happened to call.
+ *
+ * Linked processes are identifiable as the ones `linkGraph` marked
+ * `isExecutable="false"` (see its own comment on why); removing anything
+ * else, executable or not, would risk dropping a process the session graph's
+ * own author wrote non-executable on purpose, which `linkGraph` never does.
+ */
+export async function unlinkGraph(xml: string): Promise<UnlinkResult> {
+  const parsed = await moddle().fromXML(xml);
+  const definitions = parsed.rootElement as unknown as Definitions;
+
+  const linkedProcesses = processes(definitions).filter(
+    (process) => (process as unknown as { isExecutable?: boolean }).isExecutable === false,
+  );
+  const unlinkedIds = new Set(linkedProcesses.map((process) => process.id).filter((id): id is string => Boolean(id)));
+
+  if (unlinkedIds.size === 0) return { xml, unlinked: [] };
+
+  definitions.rootElements = (definitions.rootElements ?? []).filter(
+    (element) => !(element.$type === "bpmn:Process" && element.id !== undefined && unlinkedIds.has(element.id)),
+  );
+  definitions.diagrams = (definitions.diagrams ?? []).filter((diagram) => {
+    const planeElementId = (diagram as { plane?: { bpmnElement?: { id?: string } } }).plane?.bpmnElement?.id;
+    return !(planeElementId !== undefined && unlinkedIds.has(planeElementId));
+  });
+
+  const { xml: serialized } = await moddle().toXML(definitions, { format: true });
+  return { xml: serialized, unlinked: [...unlinkedIds] };
+}

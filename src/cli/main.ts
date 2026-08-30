@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { graphPath, startStudio } from "../studio/server.ts";
 import { resumeSession, runSession } from "../agent/runner.ts";
-import { firstActivity } from "../agent/graph.ts";
+import { firstActivity, withDefinitionsId } from "../agent/graph.ts";
+import { unlinkGraph } from "../agent/link.ts";
+import { lintBpmn } from "../agent/bpmn-lint.ts";
 import { createPiToolExecutor } from "../agent/tool-executor.ts";
 import { dryRunModel, readConfiguredModel, resolveModel } from "./model.ts";
 import { listSessions, SessionStore } from "../agent/session-store.ts";
@@ -38,6 +40,12 @@ Commands
                        otherwise stop
   ls                   list this project's sessions (--all for every project)
   show <session>       print a session's turns and current graph revision
+  promote <session> --as <name>
+                       write a session's graph (its own callActivity links
+                       removed) into the shared library, so a fresh session
+                       can start from what it converged on (--revision <n>
+                       picks a revision other than the latest, --force
+                       overwrites an existing library graph, backed up first)
   studio               serve the studio for this project
   where                print the config, graph library and state directories
 
@@ -105,6 +113,8 @@ export async function main(argv: string[]): Promise<number> {
       return cmdQueue("steer", argv.slice(1));
     case "follow-up":
       return cmdQueue("follow-up", argv.slice(1));
+    case "promote":
+      return cmdPromote(argv.slice(1));
     default:
       process.stderr.write(`graph-agent: unknown command '${command}'\n\n${USAGE}`);
       return 2;
@@ -574,6 +584,96 @@ function cmdQueue(kind: "steer" | "follow-up", args: string[]): number {
   store.queueInbox(kind, text);
   process.stdout.write(
     `queued ${kind} message for ${id}; it is drained the next time the graph reaches agent:${kind}\n`,
+  );
+  return 0;
+}
+
+/** Library graph ids/filenames are plain identifiers; sanitize a definitions id the same way. */
+function sanitizeId(name: string): string {
+  return name.replace(/[^A-Za-z0-9_]/g, "_");
+}
+
+/**
+ * Writes a session's graph -- with the processes `linkGraph` inlined into it
+ * removed -- into the shared library, so a fresh session can start from
+ * whatever it converged on instead of that work staying buried in a state
+ * directory (issue #55). The library → session → mutate → promote → library
+ * round trip is the last step "iterate towards re-usable definitions" needs.
+ */
+async function cmdPromote(args: string[]): Promise<number> {
+  const p = requirePaths();
+  if (!p) return 1;
+  const { values, positionals } = parseArgs({
+    args,
+    options: {
+      as: { type: "string" },
+      revision: { type: "string" },
+      force: { type: "boolean", default: false },
+    },
+    allowPositionals: true,
+    strict: false,
+  });
+
+  const sessionId = positionals[0];
+  if (!sessionId) {
+    process.stderr.write("graph-agent: promote requires a session id\n");
+    return 2;
+  }
+  const name = values.as === undefined ? undefined : String(values.as);
+  if (!name) {
+    process.stderr.write("graph-agent: promote requires --as <name> to name the library graph\n");
+    return 2;
+  }
+
+  const store = new SessionStore(p, sessionId);
+  if (!store.exists()) {
+    process.stderr.write(`graph-agent: unknown session '${sessionId}'\n`);
+    return 1;
+  }
+
+  const revisionFiles = store.graphRevisionFiles();
+  if (revisionFiles.length === 0) {
+    process.stderr.write(`graph-agent: session '${sessionId}' has no graph\n`);
+    return 1;
+  }
+  let revisionIndex = revisionFiles.length - 1;
+  if (values.revision !== undefined) {
+    const parsed = Number(values.revision);
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed >= revisionFiles.length) {
+      process.stderr.write(
+        `graph-agent: --revision ${String(values.revision)} is out of range (session '${sessionId}' has revisions 0-${revisionFiles.length - 1})\n`,
+      );
+      return 1;
+    }
+    revisionIndex = parsed;
+  }
+  const revisionXml = readFileSync(join(store.graphDir, revisionFiles[revisionIndex]!), "utf8");
+
+  const { xml: unlinkedXml, unlinked } = await unlinkGraph(revisionXml);
+  const promotedXml = await withDefinitionsId(unlinkedXml, `Defs_${sanitizeId(name)}`);
+
+  const lint = await lintBpmn(promotedXml);
+  if (lint.errors > 0) {
+    process.stderr.write(
+      `graph-agent: revision ${revisionIndex} of '${sessionId}' fails bpmnlint and was not promoted:\n` +
+        lint.lines.map((line) => `  ${line}\n`).join(""),
+    );
+    return 1;
+  }
+
+  const target = join(p.workflowsDir, `${name}.bpmn`);
+  if (existsSync(target) && !values.force) {
+    process.stderr.write(
+      `graph-agent: '${name}.bpmn' already exists in the library; pass --force to overwrite it (backed up as '${name}.bpmn.bak' first)\n`,
+    );
+    return 1;
+  }
+  if (existsSync(target)) copyFileSync(target, `${target}.bak`);
+  writeFileSync(target, promotedXml);
+
+  process.stdout.write(
+    `promoted revision ${revisionIndex} of ${sessionId} to ${target}\n` +
+      (unlinked.length > 0 ? `unlinked (still callable via calledElement): ${unlinked.join(", ")}\n` : ""),
   );
   return 0;
 }

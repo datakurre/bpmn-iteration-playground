@@ -2,7 +2,7 @@
 import { describe, expect, it, beforeAll } from "vitest";
 import { EventEmitter } from "node:events";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { installEpipeGuard, parseAnswers, answersFor, boundedOnWait } from "./main.ts";
@@ -376,4 +376,136 @@ describe("session-default is the out-of-the-box graph (issue #47)", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("waiting on await_intent");
   });
+});
+
+describe("graph-agent promote (issue #55)", () => {
+  const distFile = join(import.meta.dirname, "..", "..", "dist", "graph-agent.js");
+  const NS =
+    'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" ' +
+    'xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" ' +
+    'xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI"';
+
+  // bpmnlint's no-bpmndi rule (which `graph-agent promote` runs) requires a
+  // shape/edge for every element -- minimal but complete DI, not omitted like
+  // link.test.ts's fixtures (which never go through a lint gate).
+  const callee = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_promote_callee" ${NS}>
+  <bpmn:process id="promote_callee" isExecutable="true">
+    <bpmn:startEvent id="ce_start" name="Start"><bpmn:outgoing>cef1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="cef1" sourceRef="ce_start" targetRef="ce_task" />
+    <bpmn:serviceTask id="ce_task" name="Check">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="shell" />
+        <zeebe:taskHeaders><zeebe:header key="command" value="true" /></zeebe:taskHeaders>
+      </bpmn:extensionElements>
+      <bpmn:incoming>cef1</bpmn:incoming><bpmn:outgoing>cef2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="cef2" sourceRef="ce_task" targetRef="ce_end" />
+    <bpmn:endEvent id="ce_end" name="End"><bpmn:incoming>cef2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_promote_callee">
+    <bpmndi:BPMNPlane id="Plane_promote_callee" bpmnElement="promote_callee">
+      <bpmndi:BPMNShape id="ce_start_di" bpmnElement="ce_start"><dc:Bounds x="0" y="0" width="36" height="36" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ce_task_di" bpmnElement="ce_task"><dc:Bounds x="100" y="-22" width="100" height="80" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ce_end_di" bpmnElement="ce_end"><dc:Bounds x="260" y="0" width="36" height="36" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="cef1_di" bpmnElement="cef1"><di:waypoint x="36" y="18" /><di:waypoint x="100" y="18" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="cef2_di" bpmnElement="cef2"><di:waypoint x="200" y="18" /><di:waypoint x="260" y="18" /></bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>`;
+
+  const caller = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_promote_caller" ${NS}>
+  <bpmn:process id="promote_caller" isExecutable="true">
+    <bpmn:startEvent id="ca_start" name="Start"><bpmn:outgoing>caf1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="caf1" sourceRef="ca_start" targetRef="call" />
+    <bpmn:callActivity id="call" name="Call callee" calledElement="promote_callee">
+      <bpmn:incoming>caf1</bpmn:incoming><bpmn:outgoing>caf2</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:sequenceFlow id="caf2" sourceRef="call" targetRef="ca_end" />
+    <bpmn:endEvent id="ca_end" name="End"><bpmn:incoming>caf2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_promote_caller">
+    <bpmndi:BPMNPlane id="Plane_promote_caller" bpmnElement="promote_caller">
+      <bpmndi:BPMNShape id="ca_start_di" bpmnElement="ca_start"><dc:Bounds x="0" y="0" width="36" height="36" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="call_di" bpmnElement="call"><dc:Bounds x="100" y="-22" width="100" height="80" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ca_end_di" bpmnElement="ca_end"><dc:Bounds x="260" y="0" width="36" height="36" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="caf1_di" bpmnElement="caf1"><di:waypoint x="36" y="18" /><di:waypoint x="100" y="18" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="caf2_di" bpmnElement="caf2"><di:waypoint x="200" y="18" /><di:waypoint x="260" y="18" /></bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>`;
+
+  function project(): { env: NodeJS.ProcessEnv; workflowsDir: string } {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-promote-"));
+    const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
+    execFileSync("node", [distFile, "init"], { env });
+    const workflowsDir = join(home, "config", "graph-agent", "workflows");
+    writeFileSync(join(workflowsDir, "promote_caller.bpmn"), caller);
+    writeFileSync(join(workflowsDir, "promote_callee.bpmn"), callee);
+    return { env, workflowsDir };
+  }
+
+  function runCli(env: NodeJS.ProcessEnv, args: string[]): { stdout: string; stderr: string; code: number | null } {
+    const result = spawnSync("node", [distFile, ...args], { env, encoding: "utf8" });
+    return { stdout: result.stdout, stderr: result.stderr, code: result.status };
+  }
+
+  function sessionIdOf(stdout: string): string {
+    const id = /^session (\S+)/m.exec(stdout)?.[1];
+    if (!id) throw new Error(`no session id in:\n${stdout}`);
+    return id;
+  }
+
+  it("promotes a session's graph, unlinked, under a fresh definitions id", () => {
+    const { env, workflowsDir } = project();
+    const first = runCli(env, ["run", "--graph", "promote_caller", "--dry-run"]);
+    const sessionId = sessionIdOf(first.stdout);
+
+    const promoted = runCli(env, ["promote", sessionId, "--as", "promoted_caller"]);
+    expect(promoted.code).toBe(0);
+
+    const target = join(workflowsDir, "promoted_caller.bpmn");
+    expect(existsSync(target)).toBe(true);
+    const xml = readFileSync(target, "utf8");
+    expect((xml.match(/<bpmn:process /g) ?? []).length).toBe(1);
+    expect(xml).toContain('calledElement="promote_callee"');
+    expect(xml).not.toContain("Defs_promote_caller\"");
+    expect(xml).toContain('id="Defs_promoted_caller"');
+
+    // Runs as a fresh session, re-linking promote_callee on its own.
+    const rerun = runCli(env, ["run", "--graph", "promoted_caller", "--dry-run"]);
+    expect(rerun.stdout).toContain("completed");
+  }, 20000);
+
+  it("requires --as", () => {
+    const { env } = project();
+    const first = runCli(env, ["run", "--graph", "promote_caller", "--dry-run"]);
+    const sessionId = sessionIdOf(first.stdout);
+    const result = runCli(env, ["promote", sessionId]);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toMatch(/--as/);
+  });
+
+  it("refuses an unknown session", () => {
+    const { env } = project();
+    const result = runCli(env, ["promote", "nonexistent", "--as", "x"]);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("unknown session");
+  });
+
+  it("refuses to overwrite an existing library graph without --force, and backs it up with --force", () => {
+    const { env, workflowsDir } = project();
+    const first = runCli(env, ["run", "--graph", "promote_caller", "--dry-run"]);
+    const sessionId = sessionIdOf(first.stdout);
+    runCli(env, ["promote", sessionId, "--as", "promoted_caller"]);
+
+    const withoutForce = runCli(env, ["promote", sessionId, "--as", "promoted_caller"]);
+    expect(withoutForce.code).not.toBe(0);
+    expect(withoutForce.stderr).toMatch(/--force/);
+
+    const withForce = runCli(env, ["promote", sessionId, "--as", "promoted_caller", "--force"]);
+    expect(withForce.code).toBe(0);
+    expect(existsSync(join(workflowsDir, "promoted_caller.bpmn.bak"))).toBe(true);
+  }, 20000);
 });

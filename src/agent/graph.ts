@@ -105,6 +105,20 @@ export async function firstActivity(xml: string): Promise<{ id: string; type: st
   return undefined;
 }
 
+/**
+ * Rewrites `<bpmn:definitions id>`. A session pins its definitions id for
+ * recovery (`recoverWithGraph` throws on a mismatch), so a graph promoted out
+ * of one (`graph-agent promote`, issue #55) needs its own before it can seed
+ * a *different* session without colliding.
+ */
+export async function withDefinitionsId(xml: string, id: string): Promise<string> {
+  const moddle = new BpmnModdle(MODDLE_OPTIONS);
+  const { rootElement } = await moddle.fromXML(xml.trim());
+  (rootElement as unknown as { id: string }).id = id;
+  const { xml: serialized } = await moddle.toXML(rootElement, { format: true });
+  return serialized;
+}
+
 export interface SpliceCheck {
   ok: boolean;
   added: string[];
