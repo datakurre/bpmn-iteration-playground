@@ -9,7 +9,7 @@ import { BpmnModdle } from "bpmn-moddle";
 import * as elements from "bpmn-elements";
 import { Serializer, TypeResolver } from "moddle-context-serializer";
 import zeebeDescriptor from "zeebe-bpmn-moddle/resources/zeebe.json" with { type: "json" };
-import { harnessOf, type ActivityLike } from "./zeebe.ts";
+import { activityProperties, harnessOf, ioMapping, type ActivityLike } from "./zeebe.ts";
 
 export const MODDLE_OPTIONS = { zeebe: zeebeDescriptor };
 
@@ -226,28 +226,99 @@ async function serviceTasks(xml: string): Promise<ActivityLike[]> {
  * it here would reject a splice for a job type problem that predates it.
  */
 /**
+ * A job type's I/O contract, in the same shape `HARNESS_IO`
+ * (`src/agent/harnesses.ts`) declares it: which `zeebe:input` `target`s the
+ * harness reads, which `zeebe:taskHeader`/`zeebe:properties` keys it reads,
+ * and which `zeebe:output` `source`s it may name. Passed in by the caller
+ * (`harnesses.ts`'s `graph:lint`/`graph:extend`, the studio's migration
+ * guard) rather than imported directly, the same way `knownJobTypes` already
+ * is -- `graph.ts` has no dependency on the harness registry, and importing
+ * `HARNESS_IO` from `harnesses.ts` (which itself imports `checkSplice` from
+ * here) would be circular. A caller that wants base result fields
+ * (`status`, `summary`, ...) accepted as valid outputs folds them into
+ * `outputs` itself before passing this in.
+ */
+export interface HarnessIOContract {
+  inputs?: string[];
+  headers?: string[];
+  outputs?: string[];
+}
+
+/**
  * Rejects a *new* service task (one in `addedIds`) whose `zeebe:taskDefinition
- * type` names no harness in `knownJobTypes`. Shared by `checkSplice` and
- * `checkMigration` -- both apply the same job-type contract, just to a
- * different notion of "new".
+ * type` names no harness in `knownJobTypes` -- or, when `harnessIO` names a
+ * contract for that type, whose `zeebe:input`/`zeebe:taskHeaders`/
+ * `zeebe:output` bindings do not match what the harness actually reads or
+ * publishes. Shared by `checkSplice` and `checkMigration` -- both apply the
+ * same contract, just to a different notion of "new".
+ *
+ * A registered-but-mis-wired type used to pass `checkSplice` outright: it
+ * names a real harness, so the job-type check alone had nothing to object
+ * to, and the mistake (`command` mapped through `zeebe:input` when `shell`
+ * reads it from `zeebe:taskHeaders`, say) surfaced only the next time the
+ * graph actually reached that activity -- by which point the session that
+ * spliced it in could be long closed (issue #65; issue #40 closed the same
+ * gap for the job type name itself).
  */
 async function checkJobTypes(
   nextXml: string,
   addedIds: ReadonlySet<string>,
   knownJobTypes: ReadonlySet<string>,
+  harnessIO?: Record<string, HarnessIOContract>,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   for (const task of await serviceTasks(nextXml)) {
     if (!addedIds.has(task.id)) continue;
     const jobType = harnessOf(task);
-    if (jobType !== undefined && knownJobTypes.has(jobType)) continue;
-    const valid = [...knownJobTypes].sort().join(", ");
-    return {
-      ok: false,
-      reason:
-        jobType === undefined
-          ? `${task.id} has no zeebe:taskDefinition type; valid job types are: ${valid}`
-          : `${task.id} names job type '${jobType}', which no harness handles; valid job types are: ${valid}`,
-    };
+    if (jobType === undefined || !knownJobTypes.has(jobType)) {
+      const valid = [...knownJobTypes].sort().join(", ");
+      return {
+        ok: false,
+        reason:
+          jobType === undefined
+            ? `${task.id} has no zeebe:taskDefinition type; valid job types are: ${valid}`
+            : `${task.id} names job type '${jobType}', which no harness handles; valid job types are: ${valid}`,
+      };
+    }
+
+    const contract = harnessIO?.[jobType];
+    if (!contract) continue;
+
+    const mapping = ioMapping(task);
+    for (const { target } of mapping.input) {
+      if (target === undefined || (contract.inputs ?? []).includes(target)) continue;
+      const valid = contract.inputs?.length ? contract.inputs.join(", ") : "no zeebe:input";
+      return {
+        ok: false,
+        reason: `${task.id} maps input '${target}', which '${jobType}' never reads -- valid zeebe:input targets: ${valid}`,
+      };
+    }
+
+    for (const key of Object.keys(activityProperties(task))) {
+      if ((contract.headers ?? []).includes(key)) continue;
+      const valid = contract.headers?.length ? contract.headers.join(", ") : "no zeebe:taskHeaders";
+      return {
+        ok: false,
+        reason: `${task.id} sets header '${key}', which '${jobType}' never reads -- valid zeebe:taskHeaders: ${valid}`,
+      };
+    }
+
+    for (const { source } of mapping.output) {
+      // `source` is a FEEL expression -- normally a bare field reference
+      // (`=exit_code`), but a graph is free to write a literal or a more
+      // complex one (pi-default-loop.bpmn's `llm_turn` resets `prompt` to
+      // `=null` once the seeded first turn has consumed it, deliberately not
+      // reading anything off the harness result at all). Only a bare
+      // identifier names a result field this check can actually verify;
+      // anything else is a FEEL expression this has no business evaluating.
+      const match = /^=(?!null$|true$|false$)([A-Za-z_][A-Za-z0-9_]*)$/.exec(source ?? "");
+      const field = match?.[1];
+      if (field === undefined || (contract.outputs ?? []).includes(field)) continue;
+      const valid = contract.outputs?.length ? contract.outputs.join(", ") : "none";
+      return {
+        ok: false,
+        reason: `${task.id} reads output '${field}', which '${jobType}' never publishes; valid outputs are: ${valid}`,
+      };
+    }
   }
   return { ok: true };
 }
@@ -256,6 +327,7 @@ export async function checkSplice(
   previousXml: string,
   nextXml: string,
   knownJobTypes?: ReadonlySet<string>,
+  harnessIO?: Record<string, HarnessIOContract>,
 ): Promise<SpliceCheck> {
   const before = await elementIds(previousXml);
   const after = await elementIds(nextXml);
@@ -270,7 +342,7 @@ export async function checkSplice(
     };
   }
   if (knownJobTypes) {
-    const jobTypes = await checkJobTypes(nextXml, new Set(added), knownJobTypes);
+    const jobTypes = await checkJobTypes(nextXml, new Set(added), knownJobTypes, harnessIO);
     if (!jobTypes.ok) return { ok: false, added, removed, reason: jobTypes.reason };
   }
   return { ok: true, added, removed };
@@ -310,6 +382,7 @@ export async function checkMigration(
   nextXml: string,
   live: ReadonlySet<string>,
   knownJobTypes?: ReadonlySet<string>,
+  harnessIO?: Record<string, HarnessIOContract>,
 ): Promise<MigrationCheck> {
   if ((await definitionsId(previousXml)) !== (await definitionsId(nextXml))) {
     return {
@@ -334,7 +407,7 @@ export async function checkMigration(
 
   if (knownJobTypes) {
     const added = new Set([...after].filter((id) => !before.has(id)));
-    const jobTypes = await checkJobTypes(nextXml, added, knownJobTypes);
+    const jobTypes = await checkJobTypes(nextXml, added, knownJobTypes, harnessIO);
     if (!jobTypes.ok) return { ok: false, removed: [], reason: jobTypes.reason };
   }
 

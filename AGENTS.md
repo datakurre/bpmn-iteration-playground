@@ -167,16 +167,18 @@ the same vocabulary up front (`jobTypesBlock`). Haiku used to write
 splice is now rejected and feeds back into the redraft loop instead of
 shipping silently.
 
-**What survives is a real type wired wrong.** `checkSplice` only checks that
-the type names a harness, not that the fragment's `ioMapping`/`taskHeaders`
-match what that harness reads. #40's own repro also passed `command` through
-`zeebe:ioMapping` (the `shell` harness reads `zeebe:taskHeaders`) and read
-back `exitCode` (it publishes `exit_code`) -- a fragment shaped exactly like
-that, but with the registered `shell` type, still lints clean today and still
-does nothing useful at runtime. So a `graph:lint` pass is evidence a
-fragment's job type is real, not evidence it is wired correctly -- check the
-fragment's inputs, outputs and headers against `docs/harnesses.md` before
-approving one.
+**#65 is fixed: a real type wired wrong is also rejected.** `checkSplice`
+now also validates a new activity's `zeebe:input`/`zeebe:taskHeaders`/
+`zeebe:output` bindings against `HARNESS_IO` (`harnessIOContract()` in
+`harnesses.ts`, threaded through as an optional parameter so `graph.ts`
+itself never depends on the harness registry). #40's own repro -- `command`
+passed through `zeebe:ioMapping` when the `shell` harness reads
+`zeebe:taskHeaders`, and `exitCode` read back instead of `exit_code` -- is
+rejected outright now, naming the wrong spelling so the redraft loop's
+`lint_feedback` has something concrete to fix. A `graph:lint` pass is now
+evidence a fragment is wired correctly, not just that its job type is real --
+what review at the approval gate is still for is whether the splice does the
+right thing, not whether it is plumbed correctly.
 
 ### Re-verifying a closed issue
 

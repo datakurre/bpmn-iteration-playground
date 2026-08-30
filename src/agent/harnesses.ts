@@ -7,8 +7,8 @@
  */
 import { spawn } from "node:child_process";
 import { layoutProcess } from "bpmn-auto-layout";
-import { checkSplice } from "./graph.ts";
-import { failed, ok, type Harness, type HarnessRegistry, type HarnessResult } from "./harness.ts";
+import { checkSplice, type HarnessIOContract } from "./graph.ts";
+import { failed, HARNESS_RESULT_BASE_FIELDS, ok, type Harness, type HarnessRegistry, type HarnessResult } from "./harness.ts";
 import type { PiSession, ToolCallRequest } from "./pi-session.ts";
 import type { ToolExecutor } from "./tool-executor.ts";
 import type { SessionStore } from "./session-store.ts";
@@ -174,6 +174,25 @@ export const HARNESS_IO: Record<string, { inputs?: string[]; headers?: string[];
     outputs: ["exit_code", "stdout", "stderr"],
   },
 };
+
+/**
+ * `HARNESS_IO` with `HARNESS_RESULT_BASE_FIELDS` folded into every type's
+ * `outputs` -- every `HarnessResult` carries those five fields regardless of
+ * which harness produced it (see `harness.ts`), so a `zeebe:output` naming
+ * one of them is always valid no matter what job type the activity names.
+ * `checkSplice`/`checkMigration` (`graph.ts`) validate a new activity's I/O
+ * bindings against exactly this (issue #65) -- computed here, once, rather
+ * than in `graph.ts` itself, since `graph.ts` has no dependency on the
+ * harness registry and importing `HARNESS_RESULT_BASE_FIELDS` there would
+ * still need this same union logic duplicated.
+ */
+export function harnessIOContract(): Record<string, HarnessIOContract> {
+  const contract: Record<string, HarnessIOContract> = {};
+  for (const [type, io] of Object.entries(HARNESS_IO)) {
+    contract[type] = { ...io, outputs: [...HARNESS_RESULT_BASE_FIELDS, ...(io.outputs ?? [])] };
+  }
+  return contract;
+}
 
 export interface HarnessDeps {
   pi: PiSession;
@@ -407,7 +426,7 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
         return failed("nothing to lint", { attempt });
       }
       try {
-        const splice = await checkSplice(deps.getGraph(), fragment, new Set(Object.keys(registry)));
+        const splice = await checkSplice(deps.getGraph(), fragment, new Set(Object.keys(registry)), harnessIOContract());
         if (splice.ok) {
           settle(true);
           return ok(`adds ${splice.added.length} element(s)`, { added: splice.added, attempt });
@@ -433,7 +452,7 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
       const fragment = String(context.input.fragment ?? "");
       if (!fragment) return failed("no fragment to apply");
       try {
-        const splice = await checkSplice(deps.getGraph(), fragment, new Set(Object.keys(registry)));
+        const splice = await checkSplice(deps.getGraph(), fragment, new Set(Object.keys(registry)), harnessIOContract());
         if (!splice.ok) return failed(splice.reason ?? "the fragment is not an additive splice");
         // An empty splice.added is a valid additive splice (the model
         // returned the graph it was shown, unchanged) -- but setGraph writes

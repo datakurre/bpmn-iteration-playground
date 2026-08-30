@@ -130,7 +130,6 @@ every one of them asked to terminate -- Pi's rule is all, not any.</bpmn:documen
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="agent:collect-tools" />
         <zeebe:ioMapping>
-          <zeebe:input source="=tool_results" target="tool_results" />
           <zeebe:output source="=batch_terminate" target="batch_terminate" />
         </zeebe:ioMapping>
       </bpmn:extensionElements>

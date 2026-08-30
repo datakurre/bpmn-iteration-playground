@@ -4,9 +4,9 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { BpmnModdle } from "bpmn-moddle";
 import zeebe from "zeebe-bpmn-moddle/resources/zeebe.json" with { type: "json" };
-import { harnessOf, type ActivityLike } from "../src/agent/zeebe.ts";
+import { activityProperties, harnessOf, ioMapping, type ActivityLike } from "../src/agent/zeebe.ts";
 import { toSourceContext } from "../src/agent/graph.ts";
-import { createHarnesses, type HarnessDeps } from "../src/agent/harnesses.ts";
+import { createHarnesses, harnessIOContract, type HarnessDeps } from "../src/agent/harnesses.ts";
 
 const DIR = join(import.meta.dirname);
 const files = readdirSync(DIR).filter((f) => f.endsWith(".bpmn"));
@@ -103,6 +103,40 @@ describe.each(files)("%s", (file) => {
       expect(jobType && REGISTERED_JOB_TYPES.has(jobType), `${task.id} names '${jobType}', which no harness handles`).toBe(
         true,
       );
+    }
+  });
+
+  it("wires each service task's I/O the way its harness actually reads/publishes (issue #65)", async () => {
+    const elements = await elementsOf(file);
+    const serviceTasks = elements.filter((e) => e.$type === "bpmn:ServiceTask");
+    const contract = harnessIOContract();
+    for (const task of serviceTasks) {
+      const activity = asActivity(task);
+      const jobType = harnessOf(activity);
+      const io = jobType ? contract[jobType] : undefined;
+      if (!io) continue; // an unregistered job type is already asserted above
+
+      const mapping = ioMapping(activity);
+      for (const { target } of mapping.input) {
+        if (target === undefined) continue;
+        expect(io.inputs ?? [], `${task.id} maps input '${target}', which '${jobType}' never reads`).toContain(
+          target,
+        );
+      }
+      for (const key of Object.keys(activityProperties(activity))) {
+        expect(io.headers ?? [], `${task.id} sets header '${key}', which '${jobType}' never reads`).toContain(key);
+      }
+      for (const { source } of mapping.output) {
+        // Only a bare field reference (`=exit_code`) is checkable here -- a
+        // graph may legitimately write a FEEL literal or expression instead
+        // (pi-default-loop.bpmn's llm_turn resets `prompt` to `=null` once
+        // consumed, not reading a result field at all).
+        const field = /^=(?!null$|true$|false$)([A-Za-z_][A-Za-z0-9_]*)$/.exec(source ?? "")?.[1];
+        if (field === undefined) continue;
+        expect(io.outputs ?? [], `${task.id} reads output '${field}', which '${jobType}' never publishes`).toContain(
+          field,
+        );
+      }
     }
   });
 

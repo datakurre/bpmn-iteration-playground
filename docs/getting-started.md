@@ -415,7 +415,7 @@ parks, which is how an unrelated payload (say, the intent that started the
 session) used to get fed to an approval gate it was never meant to answer
 ([#44](https://github.com/datakurre/graph-agent/issues/44)).
 
-### Review an approved fragment yourself
+### What lint checks, and what review is still for
 
 `graph:lint` verifies that a fragment is valid BPMN, an *additive* splice, and
 that every new activity's `zeebe:taskDefinition type` names a harness that
@@ -424,8 +424,9 @@ front, so a run like the one above no longer invents a plausible-looking type
 such as `shell:exec` -- lint rejects it and the redraft loop gets a chance to
 correct it ([#40](https://github.com/datakurre/graph-agent/issues/40)).
 
-What lint does **not** check is a *real* job type wired to the wrong
-inputs, outputs or headers. A model could just as easily write:
+Lint now also checks a *real* job type wired to the wrong inputs, outputs or
+headers ([#65](https://github.com/datakurre/graph-agent/issues/65)). A model
+that writes
 
 ```xml
 <zeebe:taskDefinition type="shell" />
@@ -433,15 +434,18 @@ inputs, outputs or headers. A model could just as easily write:
 <zeebe:output source="=exitCode" target="test_exit_code" />
 ```
 
-`shell` is a real, registered job type, so lint reports `adds 2 element(s)`
-and the splice is applied. But `shell` takes its command from
-`zeebe:taskHeaders`, not `ioMapping`, and its output is `exit_code`, not
-`exitCode` -- so the command header is empty and `test_exit_code` never gets
-set. This only surfaces when something actually runs the extended graph. Read
-[the harness reference](harnesses.html) for each job type's real inputs,
-outputs and headers, and check the fragment against it at the
-`review_fragment` gate before approving -- lint checking "additive, and a
-registered job type" is not the same as lint checking "will run correctly".
+is rejected before it ever applies: `shell` is a real, registered job type,
+but it takes its command from `zeebe:taskHeaders`, not `ioMapping`, and its
+output is `exit_code`, not `exitCode` -- lint's rejection names both mistakes,
+by the exact wrong spelling used, so the redraft loop's `lint_feedback` has
+something concrete to fix. Read [the harness reference](harnesses.html) for
+each job type's real inputs, outputs and headers.
+
+What lint still cannot check -- and what review at the `review_fragment` gate
+is for -- is whether the splice does the *right thing*: a correctly wired
+`shell` step running the wrong command is plumbed perfectly and still wrong.
+"Additive, a registered job type, and correctly wired" is not the same as
+"does what was asked".
 
 ## Promoting a session's graph back to the library
 
