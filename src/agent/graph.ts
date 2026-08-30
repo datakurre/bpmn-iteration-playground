@@ -78,6 +78,33 @@ export async function elementIds(xml: string): Promise<Set<string>> {
   return ids;
 }
 
+/**
+ * The activity a fresh run reaches first: the target of the start event's own
+ * (first) outgoing sequence flow, in the first executable process. `cmdRun`
+ * uses this to warn before a positional prompt is silently discarded on a
+ * graph whose first stop is a human gate that never reads it -- issue #47
+ * found `graph-agent run --graph session-skeleton "..."` accepts a prompt it
+ * then never uses anywhere, since `await_intent` reads its own form instead.
+ */
+export async function firstActivity(xml: string): Promise<{ id: string; type: string } | undefined> {
+  const moddle = new BpmnModdle(MODDLE_OPTIONS);
+  const { rootElement } = await moddle.fromXML(xml.trim());
+  const processes = (
+    (rootElement as unknown as { rootElements?: ModdleFlowElement[] }).rootElements ?? []
+  ).filter(
+    (node) => node.$type === "bpmn:Process" && (node as unknown as { isExecutable?: boolean }).isExecutable !== false,
+  );
+  for (const process of processes) {
+    const all = flattenFlowElements(process.flowElements);
+    const start = all.find((node) => node.$type === "bpmn:StartEvent");
+    const outgoing = (start as unknown as { outgoing?: Array<{ targetRef?: { id: string; $type: string } }> })
+      ?.outgoing;
+    const target = outgoing?.[0]?.targetRef;
+    if (target) return { id: target.id, type: target.$type };
+  }
+  return undefined;
+}
+
 export interface SpliceCheck {
   ok: boolean;
   added: string[];

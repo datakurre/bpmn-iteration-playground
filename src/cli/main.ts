@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { graphPath, startStudio } from "../studio/server.ts";
 import { resumeSession, runSession } from "../agent/runner.ts";
+import { firstActivity } from "../agent/graph.ts";
 import { createPiToolExecutor } from "../agent/tool-executor.ts";
 import { dryRunModel, readConfiguredModel, resolveModel } from "./model.ts";
 import { listSessions, SessionStore } from "../agent/session-store.ts";
@@ -39,7 +40,8 @@ Graphs live in your user config directory and are shared across projects.
 Sessions live in your user state directory and record the project they ran in.
 
 Options
-  --graph <id>         graph to run (default: pi-default-loop)
+  --graph <id>         graph to run (default: session-default, a
+                        callActivity into pi-default-loop)
   --model <spec>       provider/model to use (default: config.toml's [agent]
                         model, or the first model with credentials)
   --dry-run            walk the graph without calling a model
@@ -274,7 +276,7 @@ function runFlags(args: string[]): RunFlags {
   const { values, positionals } = parseArgs({
     args,
     options: {
-      graph: { type: "string", default: "pi-default-loop" },
+      graph: { type: "string", default: "session-default" },
       model: { type: "string" },
       "dry-run": { type: "boolean", default: false },
       name: { type: "string" },
@@ -284,7 +286,7 @@ function runFlags(args: string[]): RunFlags {
     strict: false,
   });
   return {
-    graph: String(values.graph ?? "pi-default-loop"),
+    graph: String(values.graph ?? "session-default"),
     ...(values.model === undefined ? {} : { model: String(values.model) }),
     dryRun: values["dry-run"] === true,
     ...(values.name === undefined ? {} : { name: String(values.name) }),
@@ -397,6 +399,23 @@ async function cmdRun(args: string[]): Promise<number> {
     return 1;
   }
 
+  const prompt = flags.positionals.join(" ");
+  if (prompt) {
+    // A user task parks on its own form and never reads the "prompt" process
+    // variable runSession seeds -- a graph whose first stop is one (like
+    // session-skeleton's await_intent) would otherwise accept a positional
+    // prompt and silently never use it anywhere (issue #47).
+    const first = await firstActivity(readFileSync(graphFile, "utf8"));
+    if (first?.type === "bpmn:UserTask") {
+      process.stderr.write(
+        `graph-agent: '${flags.graph}' starts on '${first.id}', a human gate that reads its own form, ` +
+          `not the initial prompt -- it would never see "${prompt}". Answer it directly instead: ` +
+          `graph-agent run --graph ${flags.graph} --answer ${first.id}:key=value\n`,
+      );
+      return 1;
+    }
+  }
+
   let chosen;
   try {
     chosen = await resolveRunModel(flags, p);
@@ -412,7 +431,7 @@ async function cmdRun(args: string[]): Promise<number> {
       paths: p,
       project,
       graphPath: graphFile,
-      prompt: flags.positionals.join(" "),
+      prompt,
       ...(flags.name === undefined ? {} : { name: flags.name }),
       model: chosen.model,
       systemPrompt: "",

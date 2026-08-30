@@ -34,12 +34,17 @@ reads, so you can pin a default instead of repeating `--model`. An explicit
 
 ## Run the Pi demo loop, without a model
 
-`pi-default-loop` -- the default graph -- is a drawn transcription of Pi's own
+`session-default` -- run by default when `--graph` is not given -- is a
+callActivity into `pi-default-loop`, a drawn transcription of Pi's own
 `runLoop()`: an outer follow-up loop wrapped around an inner turn loop, with
 every branch runLoop makes (steering injection, the truncated-tool-batch
 path, the batch-terminate rule, `prepareNextTurn`, `shouldStopAfterTurn`)
 visible as its own activity. `workflows/workflows.test.ts` pins every one of
-those branches against the diagram, so it cannot silently drop one.
+those branches against the diagram, so it cannot silently drop one. The
+callActivity is what makes out-of-the-box behaviour a diagram rather than a
+special case: point `session-default`'s `calledElement` at a graph of your
+own, or run `pi-default-loop` itself directly, and either still gets those
+same invariants for free.
 
 `--dry-run` walks a graph with a scripted model that answers once and stops --
 no credentials, no network, the fastest way to see whether a graph does what
@@ -47,7 +52,7 @@ its author meant:
 
 ```
 $ graph-agent run "say hello" --dry-run
-graph  pi-default-loop
+graph  session-default
 model  dry-run (no model called)
 
   inject_pending  agent:steer  nothing queued
@@ -56,6 +61,12 @@ model  dry-run (no model called)
 
 session 08c358d7  completed  1 turn(s)
 ```
+
+The progress log names the harness-backed activities that actually ran --
+`inject_pending`, `llm_turn`, `drain_followup` all live inside
+`pi-default-loop`, reached through `session-default`'s callActivity -- so this
+is identical to what `graph-agent run "say hello" --graph pi-default-loop
+--dry-run` prints, aside from the `graph` line itself.
 
 ## Run against a real model
 
@@ -124,7 +135,7 @@ A single-turn run works end to end:
 ```
 $ export ANTHROPIC_API_KEY=sk-ant-...
 $ graph-agent run "Reply with exactly: hello from graph-agent" --model anthropic/claude-haiku-4-5
-graph  pi-default-loop
+graph  session-default
 model  anthropic/claude-haiku-4-5
 
   inject_pending  agent:steer  nothing queued
@@ -249,11 +260,12 @@ checkout.
 
 ## The bundled graphs
 
-`make init` seeds four graphs. All four run:
+`make init` seeds five graphs. All five run:
 
 | Graph | What it is |
 |---|---|
-| `pi-default-loop` | the default -- Pi's loop drawn, tool calls included |
+| `session-default` | the default -- a callActivity into `pi-default-loop`, so OOTB behaviour matches plain Pi while still being a diagram you can re-wire ([#47](https://github.com/datakurre/graph-agent/issues/47)) |
+| `pi-default-loop` | Pi's loop drawn, tool calls included -- what `session-default` calls |
 | `shell-demo` | one Pi turn paired with a deterministic `shell` step |
 | `craft-graph` | drafts a BPMN fragment and splices it into the running session |
 | `session-skeleton` | asks for an intent, then calls `craft-graph` |

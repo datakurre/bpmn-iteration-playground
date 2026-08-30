@@ -62,11 +62,13 @@ walkthrough and its troubleshooting notes, and
 [`docs/harnesses.md`](docs/harnesses.md) for every job type a graph can
 dispatch to.
 
-All four bundled graphs run. `pi-default-loop` and `shell-demo` drive tool
-calls, parallel ones included. `craft-graph` drafts a BPMN fragment and splices
-it into the running session -- verified end to end against real Haiku, approval
-gate and all -- so the agent really does rewrite its own control flow
-mid-session.
+All five bundled graphs run. `session-default` -- the one `run` uses when
+`--graph` is not given -- is a callActivity into `pi-default-loop`, so
+out-of-the-box behaviour matches plain Pi while still being a diagram. Both
+graphs, and `shell-demo`, drive tool calls, parallel ones included.
+`craft-graph` drafts a BPMN fragment and splices it into the running session --
+verified end to end against real Haiku, approval gate and all -- so the agent
+really does rewrite its own control flow mid-session.
 
 Two things to know. `graph:lint` checks that a fragment is valid, additive,
 and that every new activity's `zeebe:taskDefinition type` names a harness that

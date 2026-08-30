@@ -332,3 +332,48 @@ describe("--answer scoping (issue #44)", () => {
     });
   });
 });
+
+describe("session-default is the out-of-the-box graph (issue #47)", () => {
+  const distFile = join(import.meta.dirname, "..", "..", "dist", "graph-agent.js");
+
+  function project(): NodeJS.ProcessEnv {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-default-graph-"));
+    const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
+    execFileSync("node", [distFile, "init"], { env });
+    return env;
+  }
+
+  it("defaults `run` to session-default, a callActivity into pi-default-loop", () => {
+    const env = project();
+    const result = spawnSync("node", [distFile, "run", "say hello", "--dry-run"], { env, encoding: "utf8" });
+    expect(result.stdout).toContain("graph  session-default");
+    // Same observable transcript as running pi-default-loop directly --
+    // the callActivity is transparent to the harness-level progress log.
+    expect(result.stdout).toContain("inject_pending  agent:steer");
+    expect(result.stdout).toContain("llm_turn  agent:turn");
+    expect(result.stdout).toContain("drain_followup  agent:follow-up");
+    expect(result.stdout).toContain("completed");
+  });
+
+  it("refuses a positional prompt on a graph whose first stop is a human gate, rather than dropping it", () => {
+    const env = project();
+    const result = spawnSync(
+      "node",
+      [distFile, "run", "--graph", "session-skeleton", "Add a step that runs 'ls -la'", "--dry-run"],
+      { env, encoding: "utf8" },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("await_intent");
+    expect(result.stderr).toMatch(/never see/);
+  });
+
+  it("still runs session-skeleton fine with no positional prompt", () => {
+    const env = project();
+    const result = spawnSync("node", [distFile, "run", "--graph", "session-skeleton", "--dry-run"], {
+      env,
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("waiting on await_intent");
+  });
+});
