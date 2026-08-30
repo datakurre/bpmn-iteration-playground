@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { startStudio, type Studio } from "./server.ts";
 import { ensurePaths, paths as resolvePaths, type Paths } from "../agent/paths.ts";
 import { SessionStore } from "../agent/session-store.ts";
+import { runGraph } from "../agent/engine.ts";
+import { ok } from "../agent/harness.ts";
 
 let paths: Paths;
 let studio: Studio;
@@ -149,6 +151,109 @@ describe("PUT /api/sessions/:id/graph (issue #46)", () => {
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: string; removed: string[] };
     expect(body.removed).toEqual(["gate"]);
+  });
+
+  /** start -> call (callActivity) -> gate2 (parks) -> end; callee: c_start -> c_turn -> c_end. */
+  const graphWithCompletedCallee = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_migration" ${NS}>
+  <bpmn:process id="p" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="call" />
+    <bpmn:callActivity id="call" calledElement="callee">
+      <bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:sequenceFlow id="f2" sourceRef="call" targetRef="gate2" />
+    <bpmn:userTask id="gate2" name="Gate 2">
+      <bpmn:incoming>f2</bpmn:incoming><bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="gate2" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f3</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+  <bpmn:process id="callee" isExecutable="false">
+    <bpmn:startEvent id="c_start"><bpmn:outgoing>cf1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="cf1" sourceRef="c_start" targetRef="c_turn" />
+    <bpmn:serviceTask id="c_turn">
+      <bpmn:extensionElements><zeebe:taskDefinition type="agent:turn" /></bpmn:extensionElements>
+      <bpmn:incoming>cf1</bpmn:incoming><bpmn:outgoing>cf2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="cf2" sourceRef="c_turn" targetRef="c_end" />
+    <bpmn:endEvent id="c_end"><bpmn:incoming>cf2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+
+  /** Removes c_turn -- fine once callee has completed and returned. */
+  const graphWithCompletedCalleeMinusCTurn = graphWithCompletedCallee
+    .replace('<bpmn:sequenceFlow id="cf1" sourceRef="c_start" targetRef="c_turn" />', '<bpmn:sequenceFlow id="cf1" sourceRef="c_start" targetRef="c_end" />')
+    .replace(
+      /<bpmn:serviceTask id="c_turn">[\s\S]*?<\/bpmn:serviceTask>\s*<bpmn:sequenceFlow id="cf2" sourceRef="c_turn" targetRef="c_end" \/>\s*/,
+      "",
+    );
+
+  /** Removes gate2 -- rejected: it is where the run is actually parked. */
+  const graphWithCompletedCalleeMinusGate2 = graphWithCompletedCallee
+    .replace('<bpmn:sequenceFlow id="f2" sourceRef="call" targetRef="gate2" />', '<bpmn:sequenceFlow id="f2" sourceRef="call" targetRef="end" />')
+    .replace(
+      /<bpmn:userTask id="gate2" name="Gate 2">[\s\S]*?<\/bpmn:userTask>\s*<bpmn:sequenceFlow id="f3" sourceRef="gate2" targetRef="end" \/>\s*/,
+      "",
+    );
+
+  it("derives live state from the engine snapshot, not cumulative meta.visited (issue #70)", async () => {
+    // callee (and c_turn inside it) has already run to completion and
+    // returned by the time this run parks on gate2 -- bpmn-elements removes a
+    // called process from its own running set the moment it ends, so a fresh
+    // snapshot no longer carries c_turn as live, even though the session as a
+    // whole ("p") is merely parked, not completed.
+    const result = await runGraph(graphWithCompletedCallee, {
+      harnesses: { "agent:turn": async () => ok("done") },
+      onWait: () => undefined,
+    });
+    expect(result.outcome).toBe("stopped");
+
+    const store = new SessionStore(paths, "s6");
+    store.create(project);
+    store.appendGraph(graphWithCompletedCallee, "started", []);
+    store.writeEngineState(result.state);
+    store.update((meta) => {
+      meta.status = "wait";
+      meta.tokens = ["gate2"];
+      // A stale, over-broad cumulative record on purpose: proves this PUT
+      // consults the snapshot instead, not meta.visited.
+      meta.visited = ["start", "call", "c_start", "c_turn", "c_end"];
+    });
+
+    const removingCTurn = await fetch(`${studio.url}/api/sessions/s6/graph`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ xml: graphWithCompletedCalleeMinusCTurn }),
+    });
+    expect(removingCTurn.status).toBe(200);
+
+    // Restore the graph the snapshot actually matches before the next PUT.
+    store.appendGraph(graphWithCompletedCallee, "restore for next check", []);
+
+    const removingGate2 = await fetch(`${studio.url}/api/sessions/s6/graph`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ xml: graphWithCompletedCalleeMinusGate2 }),
+    });
+    expect(removingGate2.status).toBe(409);
+    const body = (await removingGate2.json()) as { error: string; removed: string[] };
+    expect(body.removed).toEqual(["gate2"]);
+  });
+
+  it("lets a completed session's graph be edited freely, regardless of what it ever visited (issue #70)", async () => {
+    const store = createSession("s6b", ["gate"]);
+    store.update((meta) => {
+      meta.status = "completed";
+      meta.tokens = [];
+    });
+
+    const res = await fetch(`${studio.url}/api/sessions/s6b/graph`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ xml: graphWithoutGate }),
+    });
+    expect(res.status).toBe(200);
   });
 
   it("409s (via checkMigration's job-type contract) on an unregistered job type", async () => {

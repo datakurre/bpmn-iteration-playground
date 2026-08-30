@@ -25,7 +25,7 @@ import {
   staticDir,
   type Paths,
 } from "../agent/paths.ts";
-import { checkMigration, pendingGates } from "../agent/graph.ts";
+import { checkMigration, liveElementIds, pendingGates, type EngineState } from "../agent/graph.ts";
 import { createHarnesses, harnessIOContract, type HarnessDeps } from "../agent/harnesses.ts";
 import type { GraphSummary, ProjectInfo, StudioEvent } from "./types.ts";
 
@@ -193,7 +193,20 @@ async function handle(
       if (current === null) return sendJson(res, 404, { error: "session has no graph" });
 
       const meta = store.readMeta();
-      const live = new Set([...meta.visited, ...meta.tokens]);
+      // A completed session has nothing left to migrate -- everything is
+      // fair game (issue #70). Otherwise, live state is whatever the last
+      // engine snapshot can actually recover, plus the in-memory token set
+      // for the window since that snapshot was written; meta.visited (issue
+      // #59 made it cumulative on purpose, for the diagram's own shading)
+      // over-protects here, locking every element a session has ever
+      // touched rather than what still has recoverable state right now.
+      const state = store.readEngineState() as EngineState | null;
+      const live =
+        meta.status === "completed"
+          ? new Set<string>()
+          : state
+            ? new Set([...liveElementIds(state), ...meta.tokens])
+            : new Set([...meta.visited, ...meta.tokens]);
       let check;
       try {
         check = await checkMigration(current, body.xml, live, KNOWN_JOB_TYPES, KNOWN_HARNESS_IO);

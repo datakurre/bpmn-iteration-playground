@@ -369,6 +369,43 @@ export interface MigrationCheck {
 }
 
 /**
+ * Element ids `Definition.recover()` would actually replay state for, read
+ * straight from an engine snapshot rather than inferred from bookkeeping.
+ *
+ * `state.definitions[].execution.processes[]` holds one entry per process
+ * instance bpmn-elements has ever instantiated for this run -- the top-level
+ * one and any called process a `callActivity` has reached, per
+ * `collectSharedOutput`'s own comment in `engine.ts`. A process that has
+ * since completed (a lap's `craft_graph` invocation, once it returns) is
+ * *not* removed from that array -- verified directly against a real
+ * snapshot: it lingers with `execution.completed: true` and its usual
+ * `execution.children`, rather than disappearing or clearing them out. Only
+ * a process still short of that (still executing, still parked somewhere)
+ * has genuinely recoverable state, so completed ones are skipped here. That
+ * is exactly the set `checkMigration`'s `live` parameter should be: not
+ * everything a session has *ever* touched (issue #70 found `meta.visited`,
+ * made cumulative by issue #59, over-protects on that basis), but what
+ * still has recoverable state right now.
+ */
+export function liveElementIds(state: EngineState): Set<string> {
+  const ids = new Set<string>();
+  const definitions = (state.definitions ?? []) as Array<{
+    execution?: {
+      processes?: Array<{ execution?: { completed?: boolean; children?: Array<{ id?: string }> } }>;
+    };
+  }>;
+  for (const definition of definitions) {
+    for (const process of definition.execution?.processes ?? []) {
+      if (process.execution?.completed) continue;
+      for (const child of process.execution?.children ?? []) {
+        if (child.id) ids.add(child.id);
+      }
+    }
+  }
+  return ids;
+}
+
+/**
  * A looser sibling of `checkSplice`, for a human edit rather than a drafted
  * splice: the vision only requires that *the parts currently being executed*
  * survive, not that the whole graph is additive. A human may delete an
@@ -377,12 +414,14 @@ export interface MigrationCheck {
  * state by element id the same way regardless of who made the edit
  * (issue #46).
  *
- * `live` is `meta.visited ∪ meta.tokens` -- every id the session has ever
- * stood on or currently stands on. `knownJobTypes`, when given, applies the
- * same job-type contract `checkSplice` does to any genuinely new activity.
- * `<bpmn:definitions id>` must also stay the same: `recoverWithGraph` throws
- * on a mismatch, so this rejects that explicitly rather than letting the
- * next `resume` fail with a less helpful error.
+ * `live` should be `liveElementIds(state) ∪ meta.tokens` -- the elements an
+ * engine snapshot actually has recoverable state for, plus whatever the
+ * live/in-memory token set has moved onto since the last snapshot was
+ * written. `knownJobTypes`, when given, applies the same job-type contract
+ * `checkSplice` does to any genuinely new activity. `<bpmn:definitions id>`
+ * must also stay the same: `recoverWithGraph` throws on a mismatch, so this
+ * rejects that explicitly rather than letting the next `resume` fail with a
+ * less helpful error.
  */
 export async function checkMigration(
   previousXml: string,
