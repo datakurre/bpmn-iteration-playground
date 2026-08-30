@@ -19,13 +19,13 @@ TypeScript that actually does the work an activity names.
 - [Harness reference](harnesses.html) -- every job type a graph can dispatch to,
   and what it expects on the activity.
 
-The CLI drives all four bundled graphs against a real model, tool calls and
+The CLI drives all five bundled graphs against a real model, tool calls and
 parallel batches included -- and `craft-graph` really does splice new elements
 into the session it is running in, approval gate and all. One caveat worth
-knowing before you approve a fragment: `graph:lint` does not check that a new
-activity's job type exists, so a splice can be inert until you run it (see
-[reviewing an approved
-fragment](getting-started.html#review-an-approved-fragment-yourself)).
+knowing before you approve a fragment: `graph:lint` rejects a new activity
+whose job type names no harness, but not one whose job type is real and wired
+wrong, so a splice can still be inert until you run it (see [reviewing an
+approved fragment](getting-started.html#review-an-approved-fragment-yourself)).
 
 ## Screenshots
 

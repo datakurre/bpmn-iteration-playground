@@ -34,6 +34,14 @@ export type Harness = (context: HarnessContext) => Promise<HarnessResult>;
 
 export type HarnessRegistry = Record<string, Harness>;
 
+/**
+ * Every `HarnessResult` carries these regardless of which harness produced
+ * it, so a `zeebe:output source="=status"` (etc.) is always valid no matter
+ * what job type the activity names -- see `HARNESS_IO` in harnesses.ts,
+ * which enumerates the harness-specific fields on top of these.
+ */
+export const HARNESS_RESULT_BASE_FIELDS = ["status", "summary", "findings", "artifacts", "next_action"] as const;
+
 export function ok(summary: string, extra: Partial<HarnessResult> = {}): HarnessResult {
   return { status: "success", summary, findings: [], artifacts: [], next_action: "continue", ...extra };
 }

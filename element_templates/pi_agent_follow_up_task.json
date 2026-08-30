@@ -1,0 +1,26 @@
+[
+  {
+    "$schema": "https://unpkg.com/@camunda/zeebe-element-templates-json-schema/resources/schema.json",
+    "name": "Pi Drain Follow-up",
+    "id": "graph-agent.pi-agent-follow-up",
+    "version": 1,
+    "description": "Drains follow-up messages queued from outside the graph (--follow-up, or `graph-agent follow-up <session> <text>`). The agent would otherwise stop here; a queued follow-up sends the outer loop back for another turn.",
+    "category": { "id": "graph-agent.pi-agent", "name": "Pi Agent" },
+    "appliesTo": ["bpmn:ServiceTask"],
+    "elementType": { "value": "bpmn:ServiceTask" },
+    "properties": [
+      {
+        "type": "Hidden",
+        "value": "agent:follow-up",
+        "binding": { "type": "zeebe:taskDefinition", "property": "type" }
+      },
+      {
+        "label": "Has follow-up",
+        "description": "Process variable set when a follow-up message was queued; route a gateway on this to decide whether to loop back for another turn.",
+        "type": "String",
+        "value": "has_followup",
+        "binding": { "type": "zeebe:output", "source": "=has_followup" }
+      }
+    ]
+  }
+]

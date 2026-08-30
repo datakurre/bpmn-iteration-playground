@@ -18,13 +18,24 @@ harness returns: `status`, `summary`, `findings`, `artifacts`, `next_action`).
 | `agent:tool` | Runs one tool call the last turn asked for. | in: `tool_call` (a call object, an index into the turn's batch, or omitted for the first unanswered one) |
 | `agent:collect-tools` | Lets Pi finish the turn once every tool call in the batch has been answered. | out: `batch_terminate`, `tool_results` |
 | `agent:fail-truncated-tools` | Settles a turn whose response was cut off by the output token limit -- Pi has already failed every tool call unexecuted. | out: `batch_terminate`, `tool_results` |
-| `agent:steer` | Drains steering messages queued from outside the graph and injects them before the next turn. | out: `injected` (count) |
-| `agent:follow-up` | Drains follow-up messages queued from outside the graph. | out: `has_followup` |
+| `agent:steer` | Drains steering messages queued from outside the graph and injects them before the next turn. Queued via `--steer` (before a run starts) or `graph-agent steer <session> <text>` (into a run already in flight; issue #48). | out: `injected` (count) |
+| `agent:follow-up` | Drains follow-up messages queued from outside the graph. Queued via `--follow-up` or `graph-agent follow-up <session> <text>` (issue #48). | out: `has_followup` |
 | `agent:prepare-next-turn` | Pi's `prepareNextTurn` seam: decides whether the inner loop should stop. Deliberately does not touch the system prompt or tool list -- both sit in front of every message in the prompt cache, so changing them here discards it on every iteration (see `docs/research/05-pi-loops-and-token-cache.md`). | in: `stop_reason`; out: `should_stop` |
 | `graph:layout` | Runs `bpmn-auto-layout` over a fragment (or the current session graph). | in: `fragment` (optional); out: `fragment` (laid out) |
-| `graph:lint` | Checks that a proposed fragment is a valid, additive splice into the current session graph, before anything applies it. | in: `fragment`; out: `added`, `attempt` |
-| `graph:extend` | The self-mutation primitive: replaces the session graph with the fragment spliced in. Additive with stable ids only -- `bpmn-engine` replays recovered child state by element id, so a fragment that renames or removes a live element cannot be recovered. | in: `fragment`; out: `added` |
+| `graph:lint` | Checks that a proposed fragment is a valid, additive splice into the current session graph, and that every new activity's `zeebe:taskDefinition type` names a registered harness, before anything applies it. Does **not** check that the type is wired to the right inputs, outputs or headers ([#40](https://github.com/datakurre/graph-agent/issues/40); see AGENTS.md's "bundled graphs" section). | in: `fragment`; out: `added`, `attempt` |
+| `graph:extend` | The self-mutation primitive: replaces the session graph with the fragment spliced in. Runs the same additive-and-registered-job-type check as `graph:lint` (`checkSplice`), not just an id comparison -- stricter than a studio edit's `checkMigration` (see below), which only protects elements the token has actually reached. Stable ids only -- `bpmn-engine` replays recovered child state by element id, so a fragment that renames or removes a live element cannot be recovered. The running engine is stopped and resumed against the new graph immediately after (bounded to 5 re-entries per run), so an element the splice adds gets a chance to run in the same `run`/`resume` invocation rather than only the next one ([#45](https://github.com/datakurre/graph-agent/issues/45)). | in: `fragment`; out: `added` |
 | `shell` | A deterministic step: runs a command and reports its exit status. No model call. | headers: `command` (required), `fail_on_error` (default `true`); out: `exit_code`, `stdout`, `stderr` |
+
+### Editing a running session's graph
+
+`PUT /api/sessions/:id/graph` (the studio's session page "Edit" button) checks
+a human edit with `checkMigration` (`src/agent/graph.ts`), not `checkSplice`:
+it may delete or rewire an element the token has never reached, since
+`Definition.recover()` only replays state for `meta.visited ∪ meta.tokens` --
+deleting or renaming one of *those* is rejected with `409` and the offending
+id(s), the same as `graph:extend`'s stricter rule would reject any removal at
+all. It still applies `checkSplice`'s job-type contract to any genuinely new
+activity, and refuses a changed `<bpmn:definitions id>` outright (issue #46).
 
 ### Verifying this table
 
@@ -49,9 +60,14 @@ template](../element_templates/shell_task.json) for the studio's property
 panel binding.
 
 Adding a new job type means adding an entry to the `HarnessRegistry` returned
-by `createHarnesses()` in `src/agent/harnesses.ts`, and -- if the studio should
-offer it from the properties panel -- an element template under
-`element_templates/`.
+by `createHarnesses()` in `src/agent/harnesses.ts`, **and** an element
+template under `element_templates/` -- a test in
+`element_templates/element-templates.test.ts` fails the build if a registered
+job type has no template, and a second checks every existing template's
+`zeebe:input`/`zeebe:output`/`zeebe:taskHeader` bindings against `HARNESS_IO`
+(the same file), so a new harness and a new template are expected to land
+together and drift between them fails fast rather than only against a real
+model (issue #54; issue #49 found the class of bug this closes).
 
 ## User tasks
 
@@ -62,14 +78,29 @@ harness (`activity.end`'s content carries the signaled answer, which
 `engine.ts` maps the same way a harness result would be). A user task has no
 job type, so it is never routed through `createHarnesses()`.
 
-**There is no way to answer one yet.** `runSession` takes an `onWait` callback
-for exactly this, but neither the CLI nor the studio supplies one, so a run
-that reaches a user task parks and `resume` re-parks on the same gate. That
-leaves `session-skeleton.bpmn` -- which opens on `await_intent` -- and
-`craft_graph`'s `review_fragment` approval unreachable from a terminal today;
-see [issue #21](https://github.com/datakurre/graph-agent/issues/21). The
-mapping semantics above are what will apply once an answer path exists, and
-are exercised by `engine.test.ts` rather than by anything a user can drive.
+`--answer [activity:]key=value` on `run`/`resume` is how a terminal answers
+one (see [Getting started](getting-started.html#extending-a-graph-from-inside-a-session)),
+and `graph-agent run "..."` refuses rather than silently dropping a prompt on
+a graph whose first stop is a user task ([#47](https://github.com/datakurre/graph-agent/issues/47)).
+The `element_templates/human_gate_user_task.json` template wires the
+`zeebe:userTask` marker and a form id binding for one, though the form's own
+fields still need a hand-written (or form-editor-authored)
+`zeebe:userTaskForm` elsewhere in the diagram.
+
+The studio can answer one too ([#51](https://github.com/datakurre/graph-agent/issues/51)):
+the session page renders every activity in `meta.tokens` that resolves to a
+`zeebe:userTaskForm` as a real form-js form, and submitting it
+`POST`s to `/api/sessions/:id/answer`, which queues the payload in the
+session's own `answers.jsonl` rather than running a model itself. Whichever
+process next drives the session (`run`/`resume`) consumes a matching queued
+answer from its `onWait(activityId)` seam before falling back to `--answer`,
+and deletes it once consumed so it cannot be replayed.
+
+`graph-agent tui` ([#50](https://github.com/datakurre/graph-agent/issues/50))
+answers one directly, in the same process: `onWait` renders one prompt per
+`zeebe:userTaskForm` field and resolves once every field is answered, so a
+gate never needs a second `resume --answer` invocation at all when driven
+this way. See [Getting started](getting-started.html#the-tui).
 
 ## Variables across a callActivity
 

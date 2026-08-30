@@ -5,6 +5,7 @@
     "id": "graph-agent.pi-agent-turn",
     "version": 1,
     "description": "One LLM turn, run by Pi. The BPMN token moves once per turn.",
+    "category": { "id": "graph-agent.pi-agent", "name": "Pi Agent" },
     "appliesTo": ["bpmn:ServiceTask"],
     "elementType": { "value": "bpmn:ServiceTask" },
     "properties": [
@@ -15,9 +16,9 @@
       },
       {
         "label": "Agent role",
-        "description": "Prompt variant Pi runs for this task, e.g. planner, implementer, reviewer.",
+        "description": "Canned instructions layered in front of this turn's prompt. Leave blank for an ordinary turn; 'graph_architect' is the only role defined today (src/agent/harnesses.ts's AGENT_ROLES).",
         "type": "String",
-        "value": "assistant",
+        "value": "",
         "binding": { "type": "zeebe:taskHeader", "key": "agent_role" }
       },
       {
@@ -26,7 +27,7 @@
         "type": "String",
         "feel": "required",
         "value": "=intent",
-        "binding": { "type": "zeebe:input", "name": "instructions" }
+        "binding": { "type": "zeebe:input", "name": "prompt" }
       },
       {
         "label": "Stop reason",

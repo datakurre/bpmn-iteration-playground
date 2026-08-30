@@ -144,24 +144,39 @@ run hangs rather than failing, which reads like a deadlock in the engine.
 
 ### The bundled graphs
 
-All four run. `pi-default-loop` and `shell-demo` drive tool calls, parallel
-ones included. `craft-graph` drafts a fragment and splices it into the live
-session, and `session-skeleton` calls it after a `resume --answer` gate. The
+All five run. `session-default` (the default `run` uses when `--graph` is
+omitted) is a callActivity into `pi-default-loop`, so OOTB behaviour matches
+plain Pi ([#47](https://github.com/datakurre/graph-agent/issues/47)) --
+`graph-agent run --dry-run` with no `--graph` prints `graph
+session-default` but otherwise the same transcript as running
+`pi-default-loop` directly. `pi-default-loop` and `shell-demo` drive tool
+calls, parallel ones included. `craft-graph` drafts a fragment and splices it
+into the live session, and `session-skeleton` calls it after a `resume
+--answer` gate. The
 whole self-extension path is verified end to end against real Haiku: draft ->
 layout -> lint -> approval gate -> `graph:extend spliced in 2 element(s)`, with
 `show` reporting two graph revisions. #21, #22, #30, #31, #34, #36 and #37 are
 all closed and re-verified on a clean clone.
 
-**But a splice is not checked against the harness registry** (#40).
-`checkSplice` only compares element ids for additiveness; nothing resolves
-`zeebe:taskDefinition type` against `createHarnesses()`. Haiku wrote
-`type="shell:exec"` (the registry has `shell`), passed `command` through
-`ioMapping` (the real harness reads `zeebe:taskHeaders`) and read back
-`exitCode` (it publishes `exit_code`). Lint said `adds 2 element(s)`, the
-splice applied, and it only failed when something ran the result:
-`no harness registered for 'shell:exec'`. So a `graph:lint` pass is not
-evidence a fragment will run, and the redraft loop can never correct a wrong
-job type because lint never rejects one.
+**#40 is fixed: a splice is checked against the harness registry.**
+`checkSplice` takes a `knownJobTypes` set and rejects a new service task whose
+`zeebe:taskDefinition type` names no harness; `graph:lint` passes it the live
+registry (`new Set(Object.keys(registry))`), and the drafting model is given
+the same vocabulary up front (`jobTypesBlock`). Haiku used to write
+`type="shell:exec"` (the registry has `shell`) and get away with it -- that
+splice is now rejected and feeds back into the redraft loop instead of
+shipping silently.
+
+**What survives is a real type wired wrong.** `checkSplice` only checks that
+the type names a harness, not that the fragment's `ioMapping`/`taskHeaders`
+match what that harness reads. #40's own repro also passed `command` through
+`zeebe:ioMapping` (the `shell` harness reads `zeebe:taskHeaders`) and read
+back `exitCode` (it publishes `exit_code`) -- a fragment shaped exactly like
+that, but with the registered `shell` type, still lints clean today and still
+does nothing useful at runtime. So a `graph:lint` pass is evidence a
+fragment's job type is real, not evidence it is wired correctly -- check the
+fragment's inputs, outputs and headers against `docs/harnesses.md` before
+approving one.
 
 ### Re-verifying a closed issue
 

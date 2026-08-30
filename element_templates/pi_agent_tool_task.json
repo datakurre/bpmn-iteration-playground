@@ -1,0 +1,48 @@
+[
+  {
+    "$schema": "https://unpkg.com/@camunda/zeebe-element-templates-json-schema/resources/schema.json",
+    "name": "Pi Run Tool",
+    "id": "graph-agent.pi-agent-tool",
+    "version": 1,
+    "description": "Runs one tool call the last turn asked for. Belongs inside a multi-instance batch (see pi-default-loop.bpmn's tool_batch) so each instance gets its own call.",
+    "category": { "id": "graph-agent.pi-agent", "name": "Pi Agent" },
+    "appliesTo": ["bpmn:ServiceTask"],
+    "elementType": { "value": "bpmn:ServiceTask" },
+    "properties": [
+      {
+        "type": "Hidden",
+        "value": "agent:tool",
+        "binding": { "type": "zeebe:taskDefinition", "property": "type" }
+      },
+      {
+        "label": "Tool call",
+        "description": "FEEL expression yielding the tool call to run: a call object, an index into the turn's batch, or omit to run the single unanswered call (fails if more than one is outstanding).",
+        "type": "String",
+        "feel": "optional",
+        "value": "=content.tool_call",
+        "binding": { "type": "zeebe:input", "name": "tool_call" }
+      },
+      {
+        "label": "Tool name",
+        "description": "Process variable the run tool's name is published to.",
+        "type": "String",
+        "value": "tool_name",
+        "binding": { "type": "zeebe:output", "source": "=tool" }
+      },
+      {
+        "label": "Terminate",
+        "description": "Process variable set when this tool's result asked the batch to terminate.",
+        "type": "String",
+        "value": "tool_terminate",
+        "binding": { "type": "zeebe:output", "source": "=terminate" }
+      },
+      {
+        "label": "Is error",
+        "description": "Process variable set when the tool call failed.",
+        "type": "String",
+        "value": "tool_is_error",
+        "binding": { "type": "zeebe:output", "source": "=isError" }
+      }
+    ]
+  }
+]

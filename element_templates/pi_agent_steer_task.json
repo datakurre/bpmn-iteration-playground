@@ -1,0 +1,26 @@
+[
+  {
+    "$schema": "https://unpkg.com/@camunda/zeebe-element-templates-json-schema/resources/schema.json",
+    "name": "Pi Inject Steering",
+    "id": "graph-agent.pi-agent-steer",
+    "version": 1,
+    "description": "Drains steering messages queued from outside the graph (--steer, or `graph-agent steer <session> <text>`) and injects them before the next turn.",
+    "category": { "id": "graph-agent.pi-agent", "name": "Pi Agent" },
+    "appliesTo": ["bpmn:ServiceTask"],
+    "elementType": { "value": "bpmn:ServiceTask" },
+    "properties": [
+      {
+        "type": "Hidden",
+        "value": "agent:steer",
+        "binding": { "type": "zeebe:taskDefinition", "property": "type" }
+      },
+      {
+        "label": "Injected count",
+        "description": "Process variable the number of injected steering messages is published to.",
+        "type": "String",
+        "value": "steer_injected",
+        "binding": { "type": "zeebe:output", "source": "=injected" }
+      }
+    ]
+  }
+]

@@ -9,9 +9,10 @@
  */
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { inspect } from "node:util";
 import { indexLibrary, linkGraph } from "./link.ts";
 import { bundledWorkflowsDir, listBpmnFiles } from "./paths.ts";
-import { runGraph, resumeGraph, type RunResult } from "./engine.ts";
+import { runGraph, resumeGraph, type ActivityOutcome, type RunResult } from "./engine.ts";
 import { createHarnesses } from "./harnesses.ts";
 import { PiSession } from "./pi-session.ts";
 import { SessionStore } from "./session-store.ts";
@@ -36,6 +37,18 @@ export interface RunSessionOptions {
   /** Emitted as the run progresses, for the CLI to print. */
   onProgress?: (line: string) => void;
   /**
+   * Called once, right after the session's `PiSession` is constructed and
+   * before the first turn runs. `PiSession.agent` (`pi-agent-core`'s `Agent`)
+   * emits `message_start`/`message_update`/`message_end` and
+   * `tool_execution_start`/`_update`/`_end` via `.subscribe()` -- a caller
+   * that wants to render a transcript live (`graph-agent tui`, issue #50)
+   * subscribes here rather than waiting for a whole turn's `onActivity`
+   * summary.
+   */
+  onSessionReady?: (pi: PiSession) => void;
+  /** Called after each harness-backed activity completes, alongside `onProgress`'s formatted line. */
+  onActivity?: (activity: ActivityOutcome) => void;
+  /**
    * Called when the graph parks on a human gate -- a user task, a receive task.
    * Return a payload to answer it and let the run continue, or undefined to stop
    * with a snapshot so it can be resumed once someone answers.
@@ -43,6 +56,11 @@ export interface RunSessionOptions {
   onWait?: (activityId: string) => Promise<unknown> | unknown;
   /** Aborting stops the engine -- a snapshot is still saved, so `resume` picks up from there. */
   signal?: AbortSignal;
+  /** See `RunnerOptions.hangGuardMs` (engine.ts) -- overridable so tests need not wait out the production value. */
+  hangGuardMs?: number;
+  /** Queued before the run starts, for "queue it before we start" -- see also `graph-agent steer`/`follow-up` for queuing one into a run already in flight (issue #48). */
+  steering?: string[];
+  followUp?: string[];
 }
 
 export interface SessionOutcome {
@@ -67,6 +85,56 @@ const DEFAULT_SYSTEM_PROMPT =
  */
 export function graphOffersTools(xml: string): boolean {
   return xml.includes('type="agent:tool"');
+}
+
+/**
+ * Property names a wrapped error's real cause is known to hide behind.
+ * bpmn-elements re-wraps a thrown error at every callActivity boundary it
+ * crosses (issue #52), so `error.message` alone is not reliably where the
+ * original cause ends up by the time it reaches here.
+ */
+const ERROR_WRAP_KEYS = ["inner", "error", "source", "cause"] as const;
+
+/**
+ * Recursively looks for a real, non-empty message on a thrown value or
+ * anything it wraps -- `.message` first, then each of `ERROR_WRAP_KEYS`, plus
+ * `.content.error` (the shape bpmn-elements itself uses). Bounded depth
+ * against a cyclic or pathological wrapper; five is already more than any
+ * observed wrapping chain needs.
+ */
+export function walkErrorMessage(error: unknown, depth = 0): string | undefined {
+  if (depth > 5 || error === null || error === undefined) return undefined;
+  if (typeof error === "string") return error.length > 0 ? error : undefined;
+  if (typeof error !== "object") return undefined;
+  const record = error as Record<string, unknown>;
+  if (typeof record.message === "string" && record.message.length > 0) return record.message;
+  const content = record.content as Record<string, unknown> | undefined;
+  if (content && typeof content === "object") {
+    const found = walkErrorMessage(content.error, depth + 1);
+    if (found) return found;
+  }
+  for (const key of ERROR_WRAP_KEYS) {
+    const found = walkErrorMessage(record[key], depth + 1);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/** A last-resort, still-honest label for an error with no diagnosable message anywhere. */
+function errorShape(error: unknown): string {
+  if (error instanceof Error) return error.constructor.name || "Error";
+  if (error === null || error === undefined) return String(error);
+  return typeof error;
+}
+
+/**
+ * `GRAPH_AGENT_DEBUG=1` dumps the raw, un-walked error to stderr so a cause
+ * `walkErrorMessage` still can't reach is diagnosable without patching the
+ * bundle -- see issue #52.
+ */
+function debugLogError(label: string, error: unknown): void {
+  if (process.env.GRAPH_AGENT_DEBUG !== "1") return;
+  process.stderr.write(`graph-agent debug: ${label}\n${inspect(error, { depth: 10 })}\n`);
 }
 
 export async function runSession(options: RunSessionOptions): Promise<SessionOutcome> {
@@ -152,12 +220,22 @@ async function drive(
     streamFn: options.streamFn,
     sessionId: store.id,
   });
+  options.onSessionReady?.(pi);
 
   // Steering and follow-up arrive from outside the graph; the graph decides when
   // to drain them. The initial prompt is not one of these -- it enters as a
-  // process variable that the turn activity maps in.
-  const steering: string[] = [];
-  const followUp: string[] = [];
+  // process variable that the turn activity maps in. Two producers feed these:
+  // `options.steering`/`.followUp` queue a message before the run even starts,
+  // and `store.drainInbox` (issue #48) picks up whatever `graph-agent
+  // steer`/`follow-up` queued from another process while this one is already
+  // looping -- both are merged every time the graph actually asks.
+  const steering: string[] = [...(options.steering ?? [])];
+  const followUp: string[] = [...(options.followUp ?? [])];
+
+  // Set whenever graph:extend lands a splice; checkStopAfterActivity below
+  // reads it live, and it is reset before each re-entry so only a *new*
+  // splice during that pass triggers another one (issue #45).
+  let splicedThisPass = false;
 
   const harnesses = createHarnesses({
     pi,
@@ -168,34 +246,96 @@ async function drive(
     setGraph: (xml, reason, added) => {
       graph = xml;
       store.appendGraph(xml, reason, added);
+      splicedThisPass = true;
     },
-    takeSteering: () => steering.splice(0, steering.length),
-    takeFollowUp: () => followUp.splice(0, followUp.length),
+    takeSteering: () => [...steering.splice(0, steering.length), ...store.drainInbox("steer")],
+    takeFollowUp: () => [...followUp.splice(0, followUp.length), ...store.drainInbox("follow-up")],
   });
 
   store.update((meta) => {
     meta.status = "running";
+    // A pid this session's process can be checked against: `graph-agent
+    // ls`/`show` report "stale" instead of "running" once that process is
+    // gone, rather than leaving a phantom "running" session forever if this
+    // function throws, or the process is killed, before the write below that
+    // would otherwise correct it (issue #52).
+    meta.pid = process.pid;
+    meta.startedAt = Date.now();
   });
 
-  const result = await start({
+  const harnessOptions = {
     harnesses,
     name: store.id,
     variables: { prompt: options.prompt ?? "", project: options.project },
-    onActivity: (activity) => {
+    onActivity: (activity: ActivityOutcome) => {
       options.onProgress?.(`${activity.activityId}  ${activity.harness}  ${activity.result.summary}`);
+      options.onActivity?.(activity);
     },
-    onTokens: (tokens, visited) => {
+    onTokens: (tokens: string[], visited: string[]) => {
       store.update((meta) => {
         meta.tokens = tokens;
         meta.visited = visited;
       });
     },
-    ...(options.onWait === undefined ? {} : { onWait: options.onWait }),
+    // A queued studio answer (issue #51) always takes precedence over --answer:
+    // the studio never runs a model itself, it only queues the submitted form
+    // here for whichever process is driving the session to pick up. Consuming
+    // it removes it, so it cannot be replayed the way an unscoped --answer can
+    // (issue #44).
+    onWait: (activityId: string) => {
+      const queued = store.takeAnswer(activityId);
+      if (queued !== undefined) return queued;
+      return options.onWait?.(activityId);
+    },
     ...(options.signal === undefined ? {} : { signal: options.signal }),
-    onExpressionWarning: (warning) => {
+    ...(options.hangGuardMs === undefined ? {} : { hangGuardMs: options.hangGuardMs }),
+    onExpressionWarning: (warning: { expression: string; message: string }) => {
       options.onProgress?.(`  FEEL warning: ${warning.message} in ${warning.expression}`);
     },
-  });
+    checkStopAfterActivity: () => splicedThisPass,
+  };
+
+  // `graph:extend` replaces the definition a live engine holds in memory,
+  // which that same engine never re-reads (issue #45): the elements a splice
+  // adds cannot run until whatever is driving the session stops and resumes
+  // against the new graph. checkStopAfterActivity forces exactly that the
+  // instant a splice lands (see engine.ts), reporting it back as
+  // `splicePending` rather than a genuine "nothing answered this gate" stop
+  // -- so re-enter automatically here, against the freshest graph, rather
+  // than handing an artificial stop back to the CLI for a park nobody asked
+  // for. Bounded against a graph that re-splices every time it is entered.
+  const MAX_SPLICE_REENTRIES = 5;
+  let spliceReentries = 0;
+  let result: RunResult;
+  try {
+    result = await start(harnessOptions);
+    while (result.outcome === "stopped" && result.splicePending && spliceReentries < MAX_SPLICE_REENTRIES) {
+      spliceReentries++;
+      splicedThisPass = false;
+      options.onProgress?.(`  note: graph revision ${store.readMeta().revisions.length - 1} applied, resuming`);
+      result = await resumeGraph(result.state, graph, harnessOptions);
+    }
+    if (result.outcome === "stopped" && result.splicePending) {
+      options.onProgress?.(
+        `  note: stopped after ${MAX_SPLICE_REENTRIES} splice-triggered re-entries without settling; resume manually to continue`,
+      );
+    }
+  } catch (error) {
+    // Nothing between here and the ordinary return path below writes a
+    // terminal status -- so without this, any throw out of `start()` (engine.ts
+    // itself catches everything it recognizes, but this is the backstop for
+    // whatever it does not) leaves `meta.status: "running"` forever, exactly
+    // the phantom-running session issue #52 describes.
+    debugLogError("uncaught throw driving the session", error);
+    store.update((meta) => {
+      meta.status = "error";
+      meta.harnessError = meta.harnessError ?? walkErrorMessage(error) ?? `run failed: ${errorShape(error)}`;
+      delete meta.pid;
+    });
+    throw error;
+  }
+
+  if (result.note) options.onProgress?.(`  note: ${result.note}`);
 
   // bpmn-engine reports "completed" for any run that reaches an end event, even
   // pi-default-loop's own error path: end_error is a plain terminate end event,
@@ -210,14 +350,29 @@ async function drive(
   const lastTurn = meta.turns.at(-1);
   const trouble = result.outcome === "completed" && lastTurn?.stopReason === "error" ? lastTurn : undefined;
   const outcome = trouble ? "error" : result.outcome;
+  if (result.error) debugLogError("engine reported an error", result.error);
   // Prefer `result.error`'s own message, but a harness that gave up outside
   // the ordinary turn path (graph:lint's redraft-attempt cap, chiefly) may
-  // have already recorded a clearer one in meta.harnessError: bpmn-elements
-  // re-wraps a thrown error at every callActivity boundary it crosses, and by
-  // the time it reaches here `result.error.message` can be empty even though
-  // the original cause is well known.
+  // have already recorded a clearer one in meta.harnessError, and a message
+  // buried in `result.error`'s own wrapping is worth more than a fabricated
+  // one naming whichever activity happened to run the most recent turn --
+  // issue #52 found the latter reported a confident, wrong cause when
+  // `result.error.message` came back empty. Only when none of those turns up
+  // anything does this fall back to an honest "no message" rather than a
+  // guess.
+  const recovered = result.error ? walkErrorMessage(result.error) : undefined;
   const fallbackMessage =
-    meta.harnessError ?? trouble?.error ?? lastTurn?.error ?? `${lastTurn?.activityId ?? "run"} stopped: error`;
+    meta.harnessError ??
+    trouble?.error ??
+    lastTurn?.error ??
+    recovered ??
+    (trouble
+      ? // The engine itself reported nothing wrong -- it reached a plain
+        // terminate end event -- so the only real fact here is which turn's
+        // own stopReason was "error" with no message of its own attached.
+        `${trouble.activityId} reported stopReason "error" with no message`
+      : `run failed: the engine reported an error with no diagnosable message (${errorShape(result.error)}). ` +
+        `Set GRAPH_AGENT_DEBUG=1 and re-run to see the raw error.`);
   const error =
     outcome !== "error" ? undefined : result.error?.message ? result.error : new Error(fallbackMessage);
 
@@ -229,6 +384,9 @@ async function drive(
     // end event has no token anywhere; leaving the stale set behind would draw
     // one on the diagram forever.
     if (outcome === "completed") meta.tokens = [];
+    if (outcome === "error" && meta.harnessError === undefined) meta.harnessError = fallbackMessage;
+    if (result.note && meta.harnessError === undefined) meta.harnessError = result.note;
+    delete meta.pid;
   });
 
   return {

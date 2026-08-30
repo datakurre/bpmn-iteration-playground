@@ -1,11 +1,11 @@
 // @vitest-environment node
 import { describe, expect, it, beforeAll } from "vitest";
 import { EventEmitter } from "node:events";
-import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdtempSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { installEpipeGuard } from "./main.ts";
+import { installEpipeGuard, parseAnswers, answersFor, boundedOnWait } from "./main.ts";
 import { ensurePaths, paths as resolvePaths } from "../agent/paths.ts";
 import { SessionStore } from "../agent/session-store.ts";
 
@@ -74,5 +74,438 @@ describe("piping CLI output to a short consumer (issue #41)", () => {
 
     expect(stderr).not.toContain("Unhandled 'error' event");
     expect(stderr).not.toContain("EPIPE");
+  }, 20000);
+});
+
+describe("cmdStudio flags (issue #56)", () => {
+  const distFile = join(import.meta.dirname, "..", "..", "dist", "graph-agent.js");
+
+  async function runStudio(args: string[]): Promise<{ stdout: string; stderr: string }> {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-studio-"));
+    execFileSync("node", [distFile, "init"], {
+      env: { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") },
+    });
+    const cli = spawn("node", [distFile, "studio", "--port", "0", ...args], {
+      env: { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    cli.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+    cli.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    // The bundle pulls in bpmn-engine/ws/etc, so cold start to first output can
+    // take over a second -- wait for the banner rather than a fixed delay, then
+    // give the (synchronous, immediately-following) host warning and best-effort
+    // browser-opener spawn a moment to run before shutting down.
+    await new Promise<void>((resolve) => {
+      const check = (): void => {
+        if (stdout.includes("graph-agent studio")) resolve();
+      };
+      cli.stdout.on("data", check);
+      check();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    cli.kill("SIGINT");
+    await new Promise<void>((resolve) => cli.on("close", () => resolve()));
+    return { stdout, stderr };
+  }
+
+  it("does not crash when the default --open cannot find a browser opener", async () => {
+    // No PATH assumption made about xdg-open/open/start being installed --
+    // the point is that a missing opener is best-effort, never fatal.
+    const { stderr } = await runStudio([]);
+    expect(stderr).not.toContain("Unhandled 'error' event");
+    expect(stderr).not.toContain("ENOENT");
+  }, 20000);
+
+  it("--no-open is honoured (parseArgs has no built-in negation)", async () => {
+    const { stderr } = await runStudio(["--no-open"]);
+    expect(stderr).not.toContain("Unhandled 'error' event");
+  }, 20000);
+
+  it("warns when --host binds off loopback, since the studio has no authentication", async () => {
+    const { stderr } = await runStudio(["--host", "0.0.0.0", "--no-open"]);
+    expect(stderr).toContain("0.0.0.0");
+    expect(stderr).toMatch(/no authentication/);
+  }, 20000);
+
+  it("does not warn for the loopback default", async () => {
+    const { stderr } = await runStudio(["--host", "127.0.0.1", "--no-open"]);
+    expect(stderr).not.toMatch(/no authentication/);
+  }, 20000);
+});
+
+describe("--answer scoping (issue #44)", () => {
+  describe("parseAnswers / answersFor", () => {
+    it("puts a bare key=value in the unscoped bucket, which answers every activity", () => {
+      const answers = parseAnswers(["intent=hello"]);
+      expect(answersFor(answers, "await_intent")).toEqual({ intent: "hello" });
+      expect(answersFor(answers, "review_fragment")).toEqual({ intent: "hello" });
+    });
+
+    it("scopes activity:key=value to that activity only", () => {
+      const answers = parseAnswers(["await_intent:intent=hello"]);
+      expect(answersFor(answers, "await_intent")).toEqual({ intent: "hello" });
+      expect(answersFor(answers, "review_fragment")).toBeUndefined();
+    });
+
+    it("merges the unscoped bucket under a scoped one for the same activity", () => {
+      const answers = parseAnswers(["done=true", "await_intent:intent=hello"]);
+      expect(answersFor(answers, "await_intent")).toEqual({ done: true, intent: "hello" });
+      expect(answersFor(answers, "review_fragment")).toEqual({ done: true });
+    });
+
+    it("a scoped value overrides an unscoped one for the same key at that activity", () => {
+      const answers = parseAnswers(["approval=reject", "review_fragment:approval=apply"]);
+      expect(answersFor(answers, "review_fragment")).toEqual({ approval: "apply" });
+      expect(answersFor(answers, "other_gate")).toEqual({ approval: "reject" });
+    });
+
+    it("a colon after the first '=' is part of the value, not a scope separator", () => {
+      const answers = parseAnswers(["command=echo a:b"]);
+      expect(answersFor(answers, "anything")).toEqual({ command: "echo a:b" });
+    });
+
+    it("coerces true/false/number values, per activity", () => {
+      const answers = parseAnswers(["gate:flag=true", "gate:count=3", "gate:label=x"]);
+      expect(answersFor(answers, "gate")).toEqual({ flag: true, count: 3, label: "x" });
+    });
+
+    it("rejects a pair with no '='", () => {
+      expect(() => parseAnswers(["nokeyvalue"])).toThrow(/is not/);
+    });
+
+    it("returns undefined for an activity with neither a scoped nor unscoped answer", () => {
+      const answers = parseAnswers(["a:x=1"]);
+      expect(answersFor(answers, "b")).toBeUndefined();
+    });
+  });
+
+  describe("boundedOnWait", () => {
+    it("answers the same activity up to the cap, then reports it and leaves the gate parked", () => {
+      const answers = parseAnswers(["x=1"]);
+      const onWait = boundedOnWait(answers);
+      const chunks: string[] = [];
+      const original = process.stderr.write.bind(process.stderr);
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(String(chunk));
+        return true;
+      }) as typeof process.stderr.write;
+      try {
+        for (let i = 0; i < 5; i++) {
+          expect(onWait("gate")).toEqual({ x: 1 });
+        }
+        expect(onWait("gate")).toBeUndefined();
+      } finally {
+        process.stderr.write = original;
+      }
+      expect(chunks.join("")).toMatch(/gate was auto-answered 5 times/);
+    });
+
+    it("counts each activity id on its own budget", () => {
+      const answers = parseAnswers(["x=1"]);
+      const onWait = boundedOnWait(answers);
+      for (let i = 0; i < 5; i++) onWait("a");
+      expect(onWait("b")).toEqual({ x: 1 });
+    });
+  });
+
+  describe("run/resume across two gates (CLI, session-skeleton's own shape)", () => {
+    const distFile = join(import.meta.dirname, "..", "..", "dist", "graph-agent.js");
+    const NS =
+      'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"';
+    const FORM =
+      '<zeebe:userTaskForm id="gate_form">{"components":[{"label":"Key","type":"textfield","key":"key","id":"key"}]}</zeebe:userTaskForm>';
+
+    // Two human gates in sequence, each publishing the same form field under a
+    // different process variable -- close to session-skeleton's own
+    // await_intent/review_fragment shape, but self-contained. Both gates read
+    // a form field literally named "key" so an *unscoped* `--answer key=...`
+    // can satisfy either one, which is exactly the cross-contamination #44
+    // reports: a payload meant for one gate silently answering another.
+    const twoGates = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_two_gates" ${NS}>
+  <bpmn:process id="two_gates" isExecutable="true">
+    <bpmn:extensionElements>${FORM}</bpmn:extensionElements>
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="gate_a" />
+    <bpmn:userTask id="gate_a" name="Gate A">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:formDefinition formId="gate_form" />
+        <zeebe:ioMapping><zeebe:output source="=key" target="a_value" /></zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="gate_a" targetRef="gate_b" />
+    <bpmn:userTask id="gate_b" name="Gate B">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:formDefinition formId="gate_form" />
+        <zeebe:ioMapping><zeebe:output source="=key" target="b_value" /></zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming><bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="gate_b" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f3</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+
+    // A single gate whose only outgoing flow loops back onto itself
+    // unconditionally -- nothing in the graph itself ever stops asking. Used
+    // to prove the auto-answer cap actually bounds a run that an unscoped
+    // `--answer` would otherwise keep re-satisfying forever.
+    const loopGate = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_loop_gate" ${NS}>
+  <bpmn:process id="loop_gate" isExecutable="true">
+    <bpmn:extensionElements>${FORM}</bpmn:extensionElements>
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="gate" />
+    <bpmn:userTask id="gate" name="Loop gate">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:formDefinition formId="gate_form" />
+        <zeebe:ioMapping><zeebe:output source="=key" target="value" /></zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:incoming>loop</bpmn:incoming>
+      <bpmn:outgoing>loop</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="loop" sourceRef="gate" targetRef="gate" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+    function project(): { env: NodeJS.ProcessEnv; workflowsDir: string } {
+      const home = mkdtempSync(join(tmpdir(), "graph-agent-answer-"));
+      const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
+      execFileSync("node", [distFile, "init"], { env });
+      const workflowsDir = join(home, "config", "graph-agent", "workflows");
+      writeFileSync(join(workflowsDir, "two_gates.bpmn"), twoGates);
+      writeFileSync(join(workflowsDir, "loop_gate.bpmn"), loopGate);
+      return { env, workflowsDir };
+    }
+
+    function runCli(env: NodeJS.ProcessEnv, args: string[]): { stdout: string; stderr: string; code: number | null } {
+      const result = spawnSync("node", [distFile, ...args], { env, encoding: "utf8" });
+      return { stdout: result.stdout, stderr: result.stderr, code: result.status };
+    }
+
+    it("a scoped answer for gate_a does not also answer gate_b", () => {
+      const { env } = project();
+      const { stdout } = runCli(env, ["run", "--graph", "two_gates", "--dry-run", "--answer", "gate_a:key=hello"]);
+      expect(stdout).toContain("stopped");
+      // Not `toBe` -- `postponedIds(engine)`'s snapshot can still list the just
+      // -answered gate_a for one more tick after it ends (a bpmn-elements
+      // getPostponed() staleness independent of answer scoping; the "does the
+      // wrong gate get auto-answered" question the resume test below settles
+      // functionally). The behaviour this test exists to pin is that gate_b is
+      // still parked rather than having been silently answered too.
+      expect(stdout).toContain("waiting on");
+      expect(stdout).toContain("gate_b");
+      expect(stdout).not.toContain("completed");
+    });
+
+    it("an unscoped answer satisfies both gates in one run (documented, opt-in behaviour)", () => {
+      const { env } = project();
+      const { stdout } = runCli(env, ["run", "--graph", "two_gates", "--dry-run", "--answer", "key=hello"]);
+      expect(stdout).toContain("completed");
+      expect(stdout).not.toContain("waiting on");
+    });
+
+    it("resuming with a scoped answer for gate_b completes the session", () => {
+      const { env } = project();
+      const first = runCli(env, ["run", "--graph", "two_gates", "--dry-run", "--answer", "gate_a:key=hello"]);
+      const sessionId = /^session (\S+)/m.exec(first.stdout)?.[1];
+      expect(sessionId).toBeDefined();
+      const second = runCli(env, ["resume", sessionId!, "--dry-run", "--answer", "gate_b:key=world"]);
+      expect(second.stdout).toContain("completed");
+    });
+
+    it("caps how many times an unscoped answer auto-answers the same looping gate", () => {
+      const { env } = project();
+      const { stdout, stderr, code } = runCli(env, ["run", "--graph", "loop_gate", "--dry-run", "--answer", "key=hello"]);
+      // Bounded and reported, not an infinite loop burning turns forever.
+      expect(stderr).toMatch(/gate was auto-answered 5 times/);
+      expect(stdout).toContain("stopped");
+      expect(stdout).toContain("waiting on gate");
+      expect(code).toBe(0);
+    });
+  });
+});
+
+describe("session-default is the out-of-the-box graph (issue #47)", () => {
+  const distFile = join(import.meta.dirname, "..", "..", "dist", "graph-agent.js");
+
+  function project(): NodeJS.ProcessEnv {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-default-graph-"));
+    const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
+    execFileSync("node", [distFile, "init"], { env });
+    return env;
+  }
+
+  it("defaults `run` to session-default, a callActivity into pi-default-loop", () => {
+    const env = project();
+    const result = spawnSync("node", [distFile, "run", "say hello", "--dry-run"], { env, encoding: "utf8" });
+    expect(result.stdout).toContain("graph  session-default");
+    // Same observable transcript as running pi-default-loop directly --
+    // the callActivity is transparent to the harness-level progress log.
+    expect(result.stdout).toContain("inject_pending  agent:steer");
+    expect(result.stdout).toContain("llm_turn  agent:turn");
+    expect(result.stdout).toContain("drain_followup  agent:follow-up");
+    expect(result.stdout).toContain("completed");
+  });
+
+  it("refuses a positional prompt on a graph whose first stop is a human gate, rather than dropping it", () => {
+    const env = project();
+    const result = spawnSync(
+      "node",
+      [distFile, "run", "--graph", "session-skeleton", "Add a step that runs 'ls -la'", "--dry-run"],
+      { env, encoding: "utf8" },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("await_intent");
+    expect(result.stderr).toMatch(/never see/);
+  });
+
+  it("still runs session-skeleton fine with no positional prompt", () => {
+    const env = project();
+    const result = spawnSync("node", [distFile, "run", "--graph", "session-skeleton", "--dry-run"], {
+      env,
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("waiting on await_intent");
+  });
+});
+
+describe("graph-agent promote (issue #55)", () => {
+  const distFile = join(import.meta.dirname, "..", "..", "dist", "graph-agent.js");
+  const NS =
+    'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" ' +
+    'xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" ' +
+    'xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI"';
+
+  // bpmnlint's no-bpmndi rule (which `graph-agent promote` runs) requires a
+  // shape/edge for every element -- minimal but complete DI, not omitted like
+  // link.test.ts's fixtures (which never go through a lint gate).
+  const callee = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_promote_callee" ${NS}>
+  <bpmn:process id="promote_callee" isExecutable="true">
+    <bpmn:startEvent id="ce_start" name="Start"><bpmn:outgoing>cef1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="cef1" sourceRef="ce_start" targetRef="ce_task" />
+    <bpmn:serviceTask id="ce_task" name="Check">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="shell" />
+        <zeebe:taskHeaders><zeebe:header key="command" value="true" /></zeebe:taskHeaders>
+      </bpmn:extensionElements>
+      <bpmn:incoming>cef1</bpmn:incoming><bpmn:outgoing>cef2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="cef2" sourceRef="ce_task" targetRef="ce_end" />
+    <bpmn:endEvent id="ce_end" name="End"><bpmn:incoming>cef2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_promote_callee">
+    <bpmndi:BPMNPlane id="Plane_promote_callee" bpmnElement="promote_callee">
+      <bpmndi:BPMNShape id="ce_start_di" bpmnElement="ce_start"><dc:Bounds x="0" y="0" width="36" height="36" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ce_task_di" bpmnElement="ce_task"><dc:Bounds x="100" y="-22" width="100" height="80" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ce_end_di" bpmnElement="ce_end"><dc:Bounds x="260" y="0" width="36" height="36" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="cef1_di" bpmnElement="cef1"><di:waypoint x="36" y="18" /><di:waypoint x="100" y="18" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="cef2_di" bpmnElement="cef2"><di:waypoint x="200" y="18" /><di:waypoint x="260" y="18" /></bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>`;
+
+  const caller = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_promote_caller" ${NS}>
+  <bpmn:process id="promote_caller" isExecutable="true">
+    <bpmn:startEvent id="ca_start" name="Start"><bpmn:outgoing>caf1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="caf1" sourceRef="ca_start" targetRef="call" />
+    <bpmn:callActivity id="call" name="Call callee" calledElement="promote_callee">
+      <bpmn:incoming>caf1</bpmn:incoming><bpmn:outgoing>caf2</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:sequenceFlow id="caf2" sourceRef="call" targetRef="ca_end" />
+    <bpmn:endEvent id="ca_end" name="End"><bpmn:incoming>caf2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_promote_caller">
+    <bpmndi:BPMNPlane id="Plane_promote_caller" bpmnElement="promote_caller">
+      <bpmndi:BPMNShape id="ca_start_di" bpmnElement="ca_start"><dc:Bounds x="0" y="0" width="36" height="36" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="call_di" bpmnElement="call"><dc:Bounds x="100" y="-22" width="100" height="80" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ca_end_di" bpmnElement="ca_end"><dc:Bounds x="260" y="0" width="36" height="36" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="caf1_di" bpmnElement="caf1"><di:waypoint x="36" y="18" /><di:waypoint x="100" y="18" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="caf2_di" bpmnElement="caf2"><di:waypoint x="200" y="18" /><di:waypoint x="260" y="18" /></bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>`;
+
+  function project(): { env: NodeJS.ProcessEnv; workflowsDir: string } {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-promote-"));
+    const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
+    execFileSync("node", [distFile, "init"], { env });
+    const workflowsDir = join(home, "config", "graph-agent", "workflows");
+    writeFileSync(join(workflowsDir, "promote_caller.bpmn"), caller);
+    writeFileSync(join(workflowsDir, "promote_callee.bpmn"), callee);
+    return { env, workflowsDir };
+  }
+
+  function runCli(env: NodeJS.ProcessEnv, args: string[]): { stdout: string; stderr: string; code: number | null } {
+    const result = spawnSync("node", [distFile, ...args], { env, encoding: "utf8" });
+    return { stdout: result.stdout, stderr: result.stderr, code: result.status };
+  }
+
+  function sessionIdOf(stdout: string): string {
+    const id = /^session (\S+)/m.exec(stdout)?.[1];
+    if (!id) throw new Error(`no session id in:\n${stdout}`);
+    return id;
+  }
+
+  it("promotes a session's graph, unlinked, under a fresh definitions id", () => {
+    const { env, workflowsDir } = project();
+    const first = runCli(env, ["run", "--graph", "promote_caller", "--dry-run"]);
+    const sessionId = sessionIdOf(first.stdout);
+
+    const promoted = runCli(env, ["promote", sessionId, "--as", "promoted_caller"]);
+    expect(promoted.code).toBe(0);
+
+    const target = join(workflowsDir, "promoted_caller.bpmn");
+    expect(existsSync(target)).toBe(true);
+    const xml = readFileSync(target, "utf8");
+    expect((xml.match(/<bpmn:process /g) ?? []).length).toBe(1);
+    expect(xml).toContain('calledElement="promote_callee"');
+    expect(xml).not.toContain("Defs_promote_caller\"");
+    expect(xml).toContain('id="Defs_promoted_caller"');
+
+    // Runs as a fresh session, re-linking promote_callee on its own.
+    const rerun = runCli(env, ["run", "--graph", "promoted_caller", "--dry-run"]);
+    expect(rerun.stdout).toContain("completed");
+  }, 20000);
+
+  it("requires --as", () => {
+    const { env } = project();
+    const first = runCli(env, ["run", "--graph", "promote_caller", "--dry-run"]);
+    const sessionId = sessionIdOf(first.stdout);
+    const result = runCli(env, ["promote", sessionId]);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toMatch(/--as/);
+  });
+
+  it("refuses an unknown session", () => {
+    const { env } = project();
+    const result = runCli(env, ["promote", "nonexistent", "--as", "x"]);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("unknown session");
+  });
+
+  it("refuses to overwrite an existing library graph without --force, and backs it up with --force", () => {
+    const { env, workflowsDir } = project();
+    const first = runCli(env, ["run", "--graph", "promote_caller", "--dry-run"]);
+    const sessionId = sessionIdOf(first.stdout);
+    runCli(env, ["promote", sessionId, "--as", "promoted_caller"]);
+
+    const withoutForce = runCli(env, ["promote", sessionId, "--as", "promoted_caller"]);
+    expect(withoutForce.code).not.toBe(0);
+    expect(withoutForce.stderr).toMatch(/--force/);
+
+    const withForce = runCli(env, ["promote", sessionId, "--as", "promoted_caller", "--force"]);
+    expect(withForce.code).toBe(0);
+    expect(existsSync(join(workflowsDir, "promoted_caller.bpmn.bak"))).toBe(true);
   }, 20000);
 });

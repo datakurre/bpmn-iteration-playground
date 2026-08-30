@@ -1,0 +1,33 @@
+[
+  {
+    "$schema": "https://unpkg.com/@camunda/zeebe-element-templates-json-schema/resources/schema.json",
+    "name": "Pi Collect Tool Results",
+    "id": "graph-agent.pi-agent-collect-tools",
+    "version": 1,
+    "description": "Lets Pi finish the turn once every tool call in the batch has been answered, and reports whether the whole batch asked to terminate.",
+    "category": { "id": "graph-agent.pi-agent", "name": "Pi Agent" },
+    "appliesTo": ["bpmn:ServiceTask"],
+    "elementType": { "value": "bpmn:ServiceTask" },
+    "properties": [
+      {
+        "type": "Hidden",
+        "value": "agent:collect-tools",
+        "binding": { "type": "zeebe:taskDefinition", "property": "type" }
+      },
+      {
+        "label": "Batch terminate",
+        "description": "Process variable set when every tool result in the batch asked to terminate.",
+        "type": "String",
+        "value": "batch_terminate",
+        "binding": { "type": "zeebe:output", "source": "=batch_terminate" }
+      },
+      {
+        "label": "Tool result count",
+        "description": "Process variable the number of collected tool results is published to.",
+        "type": "String",
+        "value": "tool_results",
+        "binding": { "type": "zeebe:output", "source": "=tool_results" }
+      }
+    ]
+  }
+]

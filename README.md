@@ -62,23 +62,43 @@ walkthrough and its troubleshooting notes, and
 [`docs/harnesses.md`](docs/harnesses.md) for every job type a graph can
 dispatch to.
 
-All four bundled graphs run. `pi-default-loop` and `shell-demo` drive tool
-calls, parallel ones included. `craft-graph` drafts a BPMN fragment and splices
-it into the running session -- verified end to end against real Haiku, approval
-gate and all -- so the agent really does rewrite its own control flow
-mid-session.
+All five bundled graphs run. `session-default` -- the one `run` uses when
+`--graph` is not given -- is a callActivity into `pi-default-loop`, so
+out-of-the-box behaviour matches plain Pi while still being a diagram. Both
+graphs, and `shell-demo`, drive tool calls, parallel ones included.
+`craft-graph` drafts a BPMN fragment and splices it into the running session --
+verified end to end against real Haiku, approval gate and all -- so the agent
+really does rewrite its own control flow mid-session.
 
-Two things to know. `graph:lint` checks that a fragment is valid and additive,
-but not that its `zeebe:taskDefinition type` names a harness that exists, so an
-approved splice can be inert until something runs it
+Two things to know. `graph:lint` checks that a fragment is valid, additive,
+and that every new activity's `zeebe:taskDefinition type` names a harness that
+exists -- but not that a *real* job type is wired to the right inputs, outputs
+and headers, so an approved splice can still be inert until something runs it
 ([#40](https://github.com/datakurre/graph-agent/issues/40)) -- review the
-fragment at the approval gate. And `init` never overwrites your graph library,
-so a bundled graph fixed upstream keeps running its old copy with no warning
-([#35](https://github.com/datakurre/graph-agent/issues/35)) -- diff
-`workflows/` against `graph-agent where`'s graphs directory before concluding a
-graph is still broken.
+fragment at the approval gate. And `init` never overwrites your graph library
+without `--refresh`, so a stale library copy can predate a fix upstream
+([#35](https://github.com/datakurre/graph-agent/issues/35)) -- run
+`graph-agent init --refresh`, or diff `workflows/` against `graph-agent
+where`'s graphs directory, before concluding a graph is still broken.
 
 (Under Nix: `nix develop --command make <target>`.)
+
+## TUI
+
+```
+graph-agent tui "say hello" --dry-run
+```
+
+drives the same `run`/`resume` machinery from an interactive terminal instead
+of one printed line per activity: a live transcript (Pi's own message and
+tool-call rendering), a trail of the last few activities, a status strip with
+the live token ids, and -- the thing `run` cannot do at all -- a prompt for
+any human gate the graph parks on, right there in the terminal.
+`session-skeleton`'s intent gate and `craft-graph`'s approval gate both answer
+this way; type an answer per form field and press enter. Bare text queues as
+a steering message once a turn is under way; `/follow <text>` queues a
+follow-up instead. `run` stays exactly as it is -- non-interactive, scriptable,
+what CI uses.
 
 ## Studio
 

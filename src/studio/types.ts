@@ -58,7 +58,12 @@ export interface SessionSummary {
   /** Absolute path of the project directory the session ran against. */
   project: string;
   name?: string;
-  status: "running" | "wait" | "timer" | "idle" | "completed" | "error";
+  /**
+   * `stale` is never written directly -- it is `SessionStore.summary()`
+   * reporting a `"running"` session whose recorded pid is no longer alive,
+   * rather than a phantom "running" forever (issue #52).
+   */
+  status: "running" | "wait" | "timer" | "idle" | "completed" | "error" | "stale";
   updatedAt: number;
   turnCount: number;
 }
@@ -74,6 +79,16 @@ export interface SessionDetail extends SessionSummary {
   revisions: GraphRevision[];
   /** Set by a harness that gave up and deliberately ended the run outside the ordinary turn path. */
   harnessError?: string;
+}
+
+/** A parked human gate (`GET /api/sessions/:id/pending`, issue #51). */
+export interface PendingGateInfo {
+  id: string;
+  name?: string;
+  documentation?: string;
+  form?: { formId: string; schema: string };
+  /** An answer is already queued for this gate, waiting for a runner to consume it. */
+  answered: boolean;
 }
 
 /** Pushed over the studio WebSocket when a session advances or its graph changes. */

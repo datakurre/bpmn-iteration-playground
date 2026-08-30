@@ -10,8 +10,16 @@ export interface FormInstanceState {
   errors: Record<string, unknown>;
 }
 
+export interface FormSubmitResult {
+  data: Record<string, unknown>;
+  errors: Record<string, unknown>;
+}
+
 export interface FormInstance {
-  importSchema(schema: unknown, data: unknown): Promise<void>;
+  importSchema(schema: unknown, data?: unknown): Promise<void>;
+  /** Triggers field validation and returns the current data -- no submit button in the schema required. */
+  submit(): FormSubmitResult;
+  destroy(): void;
   _getState(): FormInstanceState;
 }
 

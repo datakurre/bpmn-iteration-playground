@@ -34,12 +34,17 @@ reads, so you can pin a default instead of repeating `--model`. An explicit
 
 ## Run the Pi demo loop, without a model
 
-`pi-default-loop` -- the default graph -- is a drawn transcription of Pi's own
+`session-default` -- run by default when `--graph` is not given -- is a
+callActivity into `pi-default-loop`, a drawn transcription of Pi's own
 `runLoop()`: an outer follow-up loop wrapped around an inner turn loop, with
 every branch runLoop makes (steering injection, the truncated-tool-batch
 path, the batch-terminate rule, `prepareNextTurn`, `shouldStopAfterTurn`)
 visible as its own activity. `workflows/workflows.test.ts` pins every one of
-those branches against the diagram, so it cannot silently drop one.
+those branches against the diagram, so it cannot silently drop one. The
+callActivity is what makes out-of-the-box behaviour a diagram rather than a
+special case: point `session-default`'s `calledElement` at a graph of your
+own, or run `pi-default-loop` itself directly, and either still gets those
+same invariants for free.
 
 `--dry-run` walks a graph with a scripted model that answers once and stops --
 no credentials, no network, the fastest way to see whether a graph does what
@@ -47,7 +52,7 @@ its author meant:
 
 ```
 $ graph-agent run "say hello" --dry-run
-graph  pi-default-loop
+graph  session-default
 model  dry-run (no model called)
 
   inject_pending  agent:steer  nothing queued
@@ -56,6 +61,12 @@ model  dry-run (no model called)
 
 session 08c358d7  completed  1 turn(s)
 ```
+
+The progress log names the harness-backed activities that actually ran --
+`inject_pending`, `llm_turn`, `drain_followup` all live inside
+`pi-default-loop`, reached through `session-default`'s callActivity -- so this
+is identical to what `graph-agent run "say hello" --graph pi-default-loop
+--dry-run` prints, aside from the `graph` line itself.
 
 ## Run against a real model
 
@@ -124,7 +135,7 @@ A single-turn run works end to end:
 ```
 $ export ANTHROPIC_API_KEY=sk-ant-...
 $ graph-agent run "Reply with exactly: hello from graph-agent" --model anthropic/claude-haiku-4-5
-graph  pi-default-loop
+graph  session-default
 model  anthropic/claude-haiku-4-5
 
   inject_pending  agent:steer  nothing queued
@@ -218,6 +229,26 @@ Opening `/graph?id=shell-demo` shows the diagram above in the modeler, with
 the Camunda 8 element templates (including "Shell Command") available from
 the properties panel. See the [screenshots on the front page](index.html).
 
+A session's own graph opens read-only, but "Edit" swaps the viewer for the
+same modeler and properties panel the library editor uses
+([#46](https://github.com/datakurre/graph-agent/issues/46)). An element the
+token has visited or currently stands on is outlined in red -- deleting or
+renaming it is rejected when you save, since recovery replays that element's
+state by id; deleting one the token has never reached is fine. Saving
+appends a new revision the same way `graph:extend` does, tagged `studio
+edit`, and a running session picks it up the next time it stops and resumes
+(see ["a spliced-in step" above](#extending-a-graph-from-inside-a-session)
+for what "the next time" means for a run already in flight).
+
+A parked human gate -- `session-skeleton`'s `await_intent`, `craft-graph`'s
+`review_fragment` approval -- shows up on the session page as a real form-js
+form, built from the same `zeebe:userTaskForm` schema the graph itself
+carries ([#51](https://github.com/datakurre/graph-agent/issues/51)).
+Submitting it does not run a model from the browser: it queues the answer in
+the session's own state, and `graph-agent resume <session>` (no `--answer`
+needed) picks it up the next time it starts. A gate with no form defined
+still tells you how to answer it from a terminal instead.
+
 `scripts/screenshot-docs.mjs` produces the screenshots in this repo's own
 `docs/` by driving the real CLI and a real Chromium against a throwaway
 workspace -- run it after any studio change to refresh them.
@@ -247,13 +278,78 @@ hands the model real `read`/`write`/`edit`/`bash` rooted at the working
 directory, so run those checks somewhere disposable, never in your own
 checkout.
 
+## Steering and follow-up
+
+`pi-default-loop` draws two seams from Pi's own `runLoop()` that used to be
+permanently dead: `agent:steer` injects a message before the next turn,
+`agent:follow-up` decides whether the outer loop takes another lap once the
+agent would otherwise stop. Both are queued from outside the graph
+([#48](https://github.com/datakurre/graph-agent/issues/48)), two ways:
+
+- **Before the run starts:** `--steer <text>` / `--follow-up <text>` on
+  `run`/`resume` (repeatable).
+- **Into a run already in flight, from another terminal:**
+  `graph-agent steer <session> <text>` / `graph-agent follow-up <session>
+  <text>`. These append to the session's own `inbox.jsonl` -- the graph drains
+  it the next time it reaches `agent:steer`/`agent:follow-up`, so a message
+  queued this way has no effect on a session that has already completed.
+
+```
+$ graph-agent run "Say hello in one word." \
+    --follow-up "Now say goodbye in one word." --model anthropic/claude-haiku-4-5
+  inject_pending  agent:steer  nothing queued
+  llm_turn  agent:turn  Hello!
+  drain_followup  agent:follow-up  queued 1 follow-up(s)
+  inject_pending  agent:steer  nothing queued
+  llm_turn  agent:turn  Goodbye!
+  drain_followup  agent:follow-up  no follow-up
+
+session ce90951b  completed  2 turn(s)
+```
+
+## The TUI
+
+`run` prints one line per activity and exits; it has no way to answer a
+parked human gate interactively, and steering/follow-up only ever queue from
+outside the process. `graph-agent tui [prompt]`
+([#50](https://github.com/datakurre/graph-agent/issues/50)) is the same
+`runSession`/`resumeSession` machinery from an interactive terminal instead:
+
+```
+graph-agent tui --graph session-skeleton --model anthropic/claude-haiku-4-5
+```
+
+The screen is the same shape `run`'s output implies, made live: a transcript
+of the session (Pi's own `AssistantMessageComponent`/`ToolExecutionComponent`,
+fed straight from `PiSession.agent`'s events -- nothing is re-implemented),
+a trail of the last few harness-backed activities, and a status strip with
+the graph, turn count, token cache usage, the graph revision, and the live
+token ids (`meta.tokens`).
+
+The one thing `run` genuinely cannot do: when the graph parks on a
+`bpmn:UserTask`, the TUI renders a prompt for it right there --
+`session-skeleton`'s `await_intent` and `craft-graph`'s `review_fragment`
+both stop the terminal with `waiting on <activity> — <field label>
+(<field key>):`, one line per field in the task's `zeebe:userTaskForm`
+schema (falling back to a single generic field if the task has no form at
+all). Type an answer and press enter; once every field is answered the
+session continues without leaving the process. Typed text answers a gate
+when one is parked; otherwise it queues -- bare text as a steering message,
+`/follow <text>` as a follow-up -- exactly like `graph-agent steer`/`follow-up`
+would from another terminal, since it goes through the same
+`SessionStore.queueInbox`.
+
+`graph-agent run` is unchanged: non-interactive, scriptable, what CI uses.
+The TUI is a new command, not a flag on `run`.
+
 ## The bundled graphs
 
-`make init` seeds four graphs. All four run:
+`make init` seeds five graphs. All five run:
 
 | Graph | What it is |
 |---|---|
-| `pi-default-loop` | the default -- Pi's loop drawn, tool calls included |
+| `session-default` | the default -- a callActivity into `pi-default-loop`, so OOTB behaviour matches plain Pi while still being a diagram you can re-wire ([#47](https://github.com/datakurre/graph-agent/issues/47)) |
+| `pi-default-loop` | Pi's loop drawn, tool calls included -- what `session-default` calls |
 | `shell-demo` | one Pi turn paired with a deterministic `shell` step |
 | `craft-graph` | drafts a BPMN fragment and splices it into the running session |
 | `session-skeleton` | asks for an intent, then calls `craft-graph` |
@@ -273,68 +369,143 @@ $ graph-agent run "Add a service task that runs 'npm test' after the LLM turn" \
 
 session 61801712  stopped  1 turn(s)
 waiting on lint_fragment, gw_lint, review_fragment
-resume with: graph-agent resume 61801712 --answer key=value
+resume with: graph-agent resume 61801712 --answer review_fragment:key=value
 ```
 
 Approve it and the session's own control flow changes:
 
 ```
-$ graph-agent resume 61801712 --answer approval=apply --model anthropic/claude-haiku-4-5
+$ graph-agent resume 61801712 --answer review_fragment:approval=apply --model anthropic/claude-haiku-4-5
   apply_extension  graph:extend  spliced in 2 element(s)
 
 session 61801712  completed  1 turn(s)
 ```
 
 `graph-agent show` then reports `graph revisions: 2`, and revision `001.bpmn`
-really does contain the new element. `--answer approval=reject` leaves the
-graph at one revision, as it should.
+really does contain the new element. `--answer review_fragment:approval=reject`
+leaves the graph at one revision, as it should.
+
+A splice takes effect immediately, in the same `run`/`resume` invocation: the
+engine driving the session stops and resumes against the new graph the moment
+`graph:extend` applies it, so an element the splice adds downstream of the
+token's current position runs right away rather than waiting for a separate
+`resume` ([#45](https://github.com/datakurre/graph-agent/issues/45)). Nothing
+here reaches such an element -- `craft-graph` run on its own ends at
+`apply_extension` -- but `session-skeleton`'s own splices do, since its
+`craft` callActivity sits well before the session's end:
+
+```
+$ graph-agent run --graph session-skeleton \
+    --answer "await_intent:intent=Add a shell step that runs 'ls -la' after the craft activity" \
+    --answer await_intent:done=true --answer review_fragment:approval=apply \
+    --model anthropic/claude-haiku-4-5
+  ...
+  apply_extension  graph:extend  spliced in 2 element(s)
+    note: graph revision 1 applied, resuming
+  shell_ls  shell  `ls -la` exited 0
+
+session 1a9e3cfc  completed  1 turn(s)
+```
+
+`--answer` accepts a bare `key=value` too, which answers *any* gate that asks
+for that key -- convenient for a graph with one gate, like `craft-graph`
+above, but scope it to one activity (`activity:key=value`, as above) once a
+graph has more than one: an unscoped answer is replayed at every gate that
+parks, which is how an unrelated payload (say, the intent that started the
+session) used to get fed to an approval gate it was never meant to answer
+([#44](https://github.com/datakurre/graph-agent/issues/44)).
 
 ### Review an approved fragment yourself
 
-`graph:lint` verifies that a fragment is valid BPMN and an *additive* splice.
-It does **not** check that each new activity's `zeebe:taskDefinition type`
-names a harness that exists
-([#40](https://github.com/datakurre/graph-agent/issues/40)). In the run above
-the model wrote:
+`graph:lint` verifies that a fragment is valid BPMN, an *additive* splice, and
+that every new activity's `zeebe:taskDefinition type` names a harness that
+exists. The drafting model is also given the real job-type vocabulary up
+front, so a run like the one above no longer invents a plausible-looking type
+such as `shell:exec` -- lint rejects it and the redraft loop gets a chance to
+correct it ([#40](https://github.com/datakurre/graph-agent/issues/40)).
+
+What lint does **not** check is a *real* job type wired to the wrong
+inputs, outputs or headers. A model could just as easily write:
 
 ```xml
-<zeebe:taskDefinition type="shell:exec" />
+<zeebe:taskDefinition type="shell" />
 <zeebe:input source="=&quot;npm test&quot;" target="command" />
 <zeebe:output source="=exitCode" target="test_exit_code" />
 ```
 
-The registry has `shell`, not `shell:exec`; `shell` takes its command from
-`zeebe:taskHeaders`, not `ioMapping`; and its output is `exit_code`, not
-`exitCode`. Lint reported `adds 2 element(s)` and the splice was applied. It
-surfaces only when something runs the extended graph:
+`shell` is a real, registered job type, so lint reports `adds 2 element(s)`
+and the splice is applied. But `shell` takes its command from
+`zeebe:taskHeaders`, not `ioMapping`, and its output is `exit_code`, not
+`exitCode` -- so the command header is empty and `test_exit_code` never gets
+set. This only surfaces when something actually runs the extended graph. Read
+[the harness reference](harnesses.html) for each job type's real inputs,
+outputs and headers, and check the fragment against it at the
+`review_fragment` gate before approving -- lint checking "additive, and a
+registered job type" is not the same as lint checking "will run correctly".
+
+## Promoting a session's graph back to the library
+
+The premise is to start simple, reproduce the default loop, and iterate
+towards a dedicated, re-usable graph definition -- and `graph-agent promote`
+is the last step of that round trip. A session that spent real turns
+converging on a good extension leaves that graph buried under
+`$XDG_STATE_HOME`, tagged with a revision number and carrying whatever the
+session happened to link in; `promote` writes it into the shared library as
+its own, callable graph instead
+([#55](https://github.com/datakurre/graph-agent/issues/55)):
 
 ```
-error: no harness registered for 'shell:exec' (activity run_npm_test)
+$ graph-agent promote <session> --as my-graph
+promoted revision 3 of <session> to /.../graph-agent/workflows/my-graph.bpmn
+unlinked (still callable via calledElement): craft_graph
 ```
 
-The drafting model is not given the list of real job types, so it invents
-plausible-looking ones. Read [the harness reference](harnesses.html) and check
-the fragment at the `review_fragment` gate before approving.
+`--as <name>` is required -- there is no good default name for what is, after
+all, a naming decision. `--revision <n>` picks a revision other than the
+latest. Two things happen before the file is written:
+
+- **Unlinking.** Every process `linkGraph` inlined at session start (the
+  non-executable ones) is dropped; a `callActivity` pointing at one, like
+  `craft_graph`, is left exactly as it was, ready to be linked again the next
+  time a session starts from this graph. The promoted file ends up with
+  exactly one executable process, not a copy of everything the session ever
+  called.
+- **A fresh `<bpmn:definitions id>`.** A session pins its id for recovery, so
+  reusing it verbatim risks a future session colliding with this one's.
+
+The result is validated with the same bpmnlint check `make lint-bpmn` runs;
+a graph that would fail it is not written, and the error names why.
+Promoting over an existing library graph fails without `--force`; with it,
+the previous copy is backed up as `<name>.bpmn.bak` first, the same
+convention `graph-agent init --refresh` uses.
+
+```
+$ graph-agent run --graph my-graph "..."
+```
+
+starts a fresh session from the promoted graph, re-linking whatever it calls
+on its own -- the round trip (library → session → mutate → promote → library)
+is complete.
 
 ## Keeping the graph library current
 
 `graph-agent init` seeds `$XDG_CONFIG_HOME/graph-agent/workflows` but **never
-overwrites**, by design: the library is yours and shared across projects. The
-cost is that a bundled graph fixed upstream never reaches a library seeded
-before the fix, and nothing warns you
-([#35](https://github.com/datakurre/graph-agent/issues/35)). A graph that
-"still" misbehaves after a fix landed is worth checking first:
+overwrites without being asked**, by design: the library is yours and shared
+across projects. Running plain `graph-agent init` again reports any bundled
+graph whose content now differs from your library copy as stale, but leaves
+it alone; `graph-agent init --refresh` takes the bundled version of each one
+(backing up your copy as `.bak` first). A graph that "still" misbehaves after
+a fix landed is worth refreshing (or diffing) first
+([#35](https://github.com/datakurre/graph-agent/issues/35)):
 
 ```
-for f in workflows/*.bpmn; do
-  diff -q "$f" "$(graph-agent where | awk '/^graphs/{print $2}')/$(basename "$f")"
-done
+$ graph-agent init --refresh
+refreshed from the bundled version (old copy backed up as .bak): pi-default-loop
 ```
 
-Copy the bundled file over your library copy to take the fix (back up first if
-you have edited it). This is not hypothetical: it made a fixed defect look open
-here, and it left the default graph running without a fix that had stopped it
-billing 110 turns.
+This is not hypothetical: a stale library copy made a fixed defect look open
+here, and it once left the default graph running without a fix that had
+stopped it billing 110 turns.
 
 ## Troubleshooting
 
@@ -369,3 +540,18 @@ or set `[agent] model` in `config.toml` -- see [Naming a model](#naming-a-model)
 **`graph-agent: not set up yet. Run graph-agent init first.`** Every command
 except `init`, `where` and `--help` requires the user-level config directory to
 exist. `make init` creates it.
+
+**A session says `error` with no useful message, or `graph-agent ls` shows one
+stuck `running` forever.** `GRAPH_AGENT_DEBUG=1 graph-agent resume <id> ...`
+dumps the raw, un-walked engine error to stderr -- useful when the reported
+message is still unhelpful after the causes below are ruled out
+([#52](https://github.com/datakurre/graph-agent/issues/52)):
+
+- `graph-agent ls`/`show` report `stale`, not `running`, once the process that
+  was driving a session is confirmed gone -- a `running` you actually see is a
+  session some other process is (or very recently was) driving, not a stuck
+  one.
+- Resuming a session whose snapshot bpmn-elements cannot actually recover
+  (rather than erroring) used to hang the whole CLI process indefinitely; it
+  now stops itself after a few seconds and reports why on the session's error
+  line instead.

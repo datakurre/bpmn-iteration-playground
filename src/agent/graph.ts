@@ -78,6 +78,47 @@ export async function elementIds(xml: string): Promise<Set<string>> {
   return ids;
 }
 
+/**
+ * The activity a fresh run reaches first: the target of the start event's own
+ * (first) outgoing sequence flow, in the first executable process. `cmdRun`
+ * uses this to warn before a positional prompt is silently discarded on a
+ * graph whose first stop is a human gate that never reads it -- issue #47
+ * found `graph-agent run --graph session-skeleton "..."` accepts a prompt it
+ * then never uses anywhere, since `await_intent` reads its own form instead.
+ */
+export async function firstActivity(xml: string): Promise<{ id: string; type: string } | undefined> {
+  const moddle = new BpmnModdle(MODDLE_OPTIONS);
+  const { rootElement } = await moddle.fromXML(xml.trim());
+  const processes = (
+    (rootElement as unknown as { rootElements?: ModdleFlowElement[] }).rootElements ?? []
+  ).filter(
+    (node) => node.$type === "bpmn:Process" && (node as unknown as { isExecutable?: boolean }).isExecutable !== false,
+  );
+  for (const process of processes) {
+    const all = flattenFlowElements(process.flowElements);
+    const start = all.find((node) => node.$type === "bpmn:StartEvent");
+    const outgoing = (start as unknown as { outgoing?: Array<{ targetRef?: { id: string; $type: string } }> })
+      ?.outgoing;
+    const target = outgoing?.[0]?.targetRef;
+    if (target) return { id: target.id, type: target.$type };
+  }
+  return undefined;
+}
+
+/**
+ * Rewrites `<bpmn:definitions id>`. A session pins its definitions id for
+ * recovery (`recoverWithGraph` throws on a mismatch), so a graph promoted out
+ * of one (`graph-agent promote`, issue #55) needs its own before it can seed
+ * a *different* session without colliding.
+ */
+export async function withDefinitionsId(xml: string, id: string): Promise<string> {
+  const moddle = new BpmnModdle(MODDLE_OPTIONS);
+  const { rootElement } = await moddle.fromXML(xml.trim());
+  (rootElement as unknown as { id: string }).id = id;
+  const { xml: serialized } = await moddle.toXML(rootElement, { format: true });
+  return serialized;
+}
+
 export interface SpliceCheck {
   ok: boolean;
   added: string[];
@@ -131,6 +172,33 @@ async function serviceTasks(xml: string): Promise<ActivityLike[]> {
  * one already ran once as part of a graph someone approved, and revalidating
  * it here would reject a splice for a job type problem that predates it.
  */
+/**
+ * Rejects a *new* service task (one in `addedIds`) whose `zeebe:taskDefinition
+ * type` names no harness in `knownJobTypes`. Shared by `checkSplice` and
+ * `checkMigration` -- both apply the same job-type contract, just to a
+ * different notion of "new".
+ */
+async function checkJobTypes(
+  nextXml: string,
+  addedIds: ReadonlySet<string>,
+  knownJobTypes: ReadonlySet<string>,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  for (const task of await serviceTasks(nextXml)) {
+    if (!addedIds.has(task.id)) continue;
+    const jobType = harnessOf(task);
+    if (jobType !== undefined && knownJobTypes.has(jobType)) continue;
+    const valid = [...knownJobTypes].sort().join(", ");
+    return {
+      ok: false,
+      reason:
+        jobType === undefined
+          ? `${task.id} has no zeebe:taskDefinition type; valid job types are: ${valid}`
+          : `${task.id} names job type '${jobType}', which no harness handles; valid job types are: ${valid}`,
+    };
+  }
+  return { ok: true };
+}
+
 export async function checkSplice(
   previousXml: string,
   nextXml: string,
@@ -149,24 +217,136 @@ export async function checkSplice(
     };
   }
   if (knownJobTypes) {
-    const addedIds = new Set(added);
-    for (const task of await serviceTasks(nextXml)) {
-      if (!addedIds.has(task.id)) continue;
-      const jobType = harnessOf(task);
-      if (jobType !== undefined && knownJobTypes.has(jobType)) continue;
-      const valid = [...knownJobTypes].sort().join(", ");
-      return {
-        ok: false,
-        added,
-        removed,
-        reason:
-          jobType === undefined
-            ? `${task.id} has no zeebe:taskDefinition type; valid job types are: ${valid}`
-            : `${task.id} names job type '${jobType}', which no harness handles; valid job types are: ${valid}`,
-      };
-    }
+    const jobTypes = await checkJobTypes(nextXml, new Set(added), knownJobTypes);
+    if (!jobTypes.ok) return { ok: false, added, removed, reason: jobTypes.reason };
   }
   return { ok: true, added, removed };
+}
+
+/** The `<bpmn:definitions id>` of a graph. */
+export async function definitionsId(xml: string): Promise<string> {
+  const moddle = new BpmnModdle(MODDLE_OPTIONS);
+  const { rootElement } = await moddle.fromXML(xml.trim());
+  return String((rootElement as unknown as { id: string }).id);
+}
+
+export interface MigrationCheck {
+  ok: boolean;
+  removed: string[];
+  reason?: string;
+}
+
+/**
+ * A looser sibling of `checkSplice`, for a human edit rather than a drafted
+ * splice: the vision only requires that *the parts currently being executed*
+ * survive, not that the whole graph is additive. A human may delete an
+ * element the token has never reached; deleting or renaming one that carries
+ * live state is still rejected, because `Definition.recover()` replays child
+ * state by element id the same way regardless of who made the edit
+ * (issue #46).
+ *
+ * `live` is `meta.visited ∪ meta.tokens` -- every id the session has ever
+ * stood on or currently stands on. `knownJobTypes`, when given, applies the
+ * same job-type contract `checkSplice` does to any genuinely new activity.
+ * `<bpmn:definitions id>` must also stay the same: `recoverWithGraph` throws
+ * on a mismatch, so this rejects that explicitly rather than letting the
+ * next `resume` fail with a less helpful error.
+ */
+export async function checkMigration(
+  previousXml: string,
+  nextXml: string,
+  live: ReadonlySet<string>,
+  knownJobTypes?: ReadonlySet<string>,
+): Promise<MigrationCheck> {
+  if ((await definitionsId(previousXml)) !== (await definitionsId(nextXml))) {
+    return {
+      ok: false,
+      removed: [],
+      reason:
+        "<bpmn:definitions id> must not change -- recovery matches a snapshot to a graph on that id, and " +
+        "recoverWithGraph refuses a mismatch",
+    };
+  }
+
+  const before = await elementIds(previousXml);
+  const after = await elementIds(nextXml);
+  const removedLive = [...before].filter((id) => !after.has(id) && live.has(id));
+  if (removedLive.length > 0) {
+    return {
+      ok: false,
+      removed: removedLive,
+      reason: `these elements have live state and cannot be removed or renamed: ${removedLive.join(", ")}`,
+    };
+  }
+
+  if (knownJobTypes) {
+    const added = new Set([...after].filter((id) => !before.has(id)));
+    const jobTypes = await checkJobTypes(nextXml, added, knownJobTypes);
+    if (!jobTypes.ok) return { ok: false, removed: [], reason: jobTypes.reason };
+  }
+
+  return { ok: true, removed: [] };
+}
+
+export interface PendingGate {
+  id: string;
+  name?: string;
+  documentation?: string;
+  /** The `zeebe:userTaskForm` a `bpmn:UserTask`'s `zeebe:formDefinition formId` names, if it resolves to one. */
+  form?: { formId: string; schema: string };
+}
+
+/**
+ * The parked human gates among `tokenIds` (`meta.tokens`), each with enough
+ * to render a form for it: the activity's own name/documentation, and the
+ * `zeebe:userTaskForm` schema its `zeebe:formDefinition` names -- forms live
+ * on the *process's* `extensionElements`, keyed by id, not on the task itself
+ * (`session-skeleton.bpmn`'s `session_intent_form`, e.g.). Used by the
+ * studio's `GET /api/sessions/:id/pending` (issue #51); a non-`bpmn:UserTask`
+ * token (a service task mid-turn, say) is not a gate and is left out.
+ */
+export async function pendingGates(xml: string, tokenIds: readonly string[]): Promise<PendingGate[]> {
+  const moddle = new BpmnModdle(MODDLE_OPTIONS);
+  const { rootElement } = await moddle.fromXML(xml.trim());
+  const processes = ((rootElement as unknown as { rootElements?: ModdleFlowElement[] }).rootElements ?? []).filter(
+    (node) => node.$type === "bpmn:Process",
+  );
+
+  const forms = new Map<string, string>();
+  for (const process of processes) {
+    const values =
+      (process as unknown as { extensionElements?: { values?: Array<Record<string, unknown>> } }).extensionElements
+        ?.values ?? [];
+    for (const value of values) {
+      if (value.$type === "zeebe:UserTaskForm" && typeof value.id === "string" && typeof value.body === "string") {
+        forms.set(value.id, value.body);
+      }
+    }
+  }
+
+  const byId = new Map(processes.flatMap((process) => flattenFlowElements(process.flowElements)).map((el) => [el.id, el]));
+  const wanted = new Set(tokenIds);
+  const gates: PendingGate[] = [];
+  for (const id of wanted) {
+    const el = byId.get(id);
+    if (!el || el.$type !== "bpmn:UserTask") continue;
+    const docs = (el as unknown as { documentation?: Array<{ text?: string }> }).documentation ?? [];
+    const extValues =
+      (el as unknown as { extensionElements?: { values?: Array<Record<string, unknown>> } }).extensionElements
+        ?.values ?? [];
+    const formDef = extValues.find((value) => value.$type === "zeebe:FormDefinition") as
+      | { formId?: string }
+      | undefined;
+    const schema = formDef?.formId !== undefined ? forms.get(formDef.formId) : undefined;
+
+    gates.push({
+      id,
+      ...(typeof el.name === "string" ? { name: el.name } : {}),
+      ...(docs[0]?.text !== undefined ? { documentation: docs[0].text } : {}),
+      ...(formDef?.formId !== undefined && schema !== undefined ? { form: { formId: formDef.formId, schema } } : {}),
+    });
+  }
+  return gates;
 }
 
 export interface RecoverOptions {

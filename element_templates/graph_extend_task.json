@@ -5,6 +5,7 @@
     "id": "graph-agent.graph-extend",
     "version": 1,
     "description": "Splice a fragment into the running session graph. Additive with stable ids only: recovery replays child state by element id.",
+    "category": { "id": "graph-agent.graph", "name": "Graph" },
     "appliesTo": ["bpmn:ServiceTask"],
     "elementType": { "value": "bpmn:ServiceTask" },
     "properties": [

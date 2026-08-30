@@ -116,6 +116,90 @@ try {
   // Anything the panel throws while rendering a templated element.
   if (consoleErrors.length) failures.push(`console errors: ${consoleErrors.join(" | ")}`);
   if (missingResources.length) failures.push(`unresolved resources: ${missingResources.join(" | ")}`);
+
+  // 6. the session page's editor (issue #46): a completed shell-demo run has
+  // both "turn" and "verify" as live (visited) elements; entering edit mode
+  // should lock them visually, and saving a mutation that removes one of them
+  // should be rejected by the server rather than silently accepted.
+  const runOutput = spawnSync(
+    process.execPath,
+    [join(import.meta.dirname, "..", "dist", "graph-agent.js"), "run", "--graph", "shell-demo", "--dry-run"],
+    { cwd: root, env, encoding: "utf8" },
+  ).stdout;
+  const sessionId = /^session (\S+)/m.exec(runOutput ?? "")?.[1];
+  if (!sessionId) {
+    failures.push(`could not start a session to test the editor against: ${runOutput}`);
+  } else {
+    await page.goto(`${studio.url}/session?id=${sessionId}`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("#viewer .djs-container svg", { timeout: 20000 });
+    await page.click("#edit-btn");
+    await page.waitForSelector("#editor .djs-container svg", { timeout: 20000 });
+
+    const lockedCount = await page.locator("#editor .djs-element.ga-locked").count();
+    if (lockedCount < 2) failures.push(`expected both live elements marked ga-locked, saw ${lockedCount}`);
+
+    // Delete a live element and try to save -- the server must reject it.
+    await page.evaluate(() => {
+      const modeler = window.__modeler;
+      const registry = modeler.get("elementRegistry");
+      modeler.get("modeling").removeElements([registry.get("turn")]);
+    });
+    await page.click("#save-btn");
+    await page.waitForSelector("#edit-msg:not(.hidden)", { timeout: 10000 });
+    const rejectMsg = (await page.locator("#edit-msg").textContent())?.trim() ?? "";
+    if (!/live state/.test(rejectMsg)) failures.push(`expected a live-state rejection, got: ${rejectMsg}`);
+
+    // Undo the deletion and save the (now unchanged) graph -- must succeed.
+    await page.evaluate(() => window.__modeler.get("commandStack").undo());
+    await page.click("#save-btn");
+    await page.waitForFunction(
+      () => (document.querySelector("#edit-msg")?.textContent ?? "").includes("Saved"),
+      { timeout: 10000 },
+    );
+    const revisions = await page.evaluate(async (id) => {
+      const res = await fetch(`/api/sessions/${id}`);
+      return (await res.json()).revisions?.length;
+    }, sessionId);
+    if (revisions !== 2) failures.push(`expected the accepted save to append a revision, saw ${revisions}`);
+  }
+  // 7. answering a parked human gate from the studio (issue #51): a fresh
+  // session-skeleton session parks immediately on await_intent, which has a
+  // real zeebe:userTaskForm. Answer it from the studio, then resume from the
+  // CLI and confirm the queued answer is what actually unparked it.
+  const gateRunOutput = spawnSync(
+    process.execPath,
+    [join(import.meta.dirname, "..", "dist", "graph-agent.js"), "run", "--graph", "session-skeleton", "--dry-run"],
+    { cwd: root, env, encoding: "utf8" },
+  ).stdout;
+  const gateSessionId = /^session (\S+)/m.exec(gateRunOutput ?? "")?.[1];
+  if (!gateSessionId) {
+    failures.push(`could not start a session parked on a human gate: ${gateRunOutput}`);
+  } else {
+    await page.goto(`${studio.url}/session?id=${gateSessionId}`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("#pending-section:not(.hidden)", { timeout: 20000 });
+    await page.waitForSelector("#pending-gates textarea.fjs-textarea", { timeout: 20000 });
+    await page.fill("#pending-gates textarea.fjs-textarea", "Say hello and nothing else");
+    await page.click("#pending-gates .answer-btn");
+    await page.waitForFunction(
+      () => (document.querySelector("#pending-gates")?.textContent ?? "").includes("Answered"),
+      { timeout: 10000 },
+    );
+
+    const resumeOutput = spawnSync(
+      process.execPath,
+      [join(import.meta.dirname, "..", "dist", "graph-agent.js"), "resume", gateSessionId, "--dry-run"],
+      { cwd: root, env, encoding: "utf8" },
+    ).stdout;
+    // await_intent only ever reads its answer from the form -- reaching
+    // draft_fragment (inside session-skeleton's "craft" callActivity, the
+    // next step after await_intent) proves the studio-queued answer, not
+    // some other mechanism, is what unparked it. (--dry-run's one scripted,
+    // non-XML response then fails the draft/lint loop, which is expected and
+    // unrelated to what this is checking.)
+    if (!/\bdraft_fragment\b/.test(resumeOutput ?? "")) {
+      failures.push(`resuming after the studio answer did not reach craft: ${resumeOutput}`);
+    }
+  }
 } catch (error) {
   failures.push(`threw: ${error.message}`);
 } finally {
@@ -123,8 +207,10 @@ try {
   await studio.close();
 }
 
+// A 409 on /api/sessions/:id/graph is the session-editor check above
+// deliberately provoking checkMigration's rejection, not a real failure.
 if (missingResources.length) {
-  console.log("non-2xx responses:");
+  console.log("non-2xx responses (a 409 on .../graph is the deliberate rejection test above, not a failure):");
   for (const r of missingResources) console.log("  ", r);
 }
 if (consoleErrors.length) {
@@ -136,4 +222,8 @@ if (failures.length) {
   for (const f of failures) console.error("  -", f);
   process.exit(1);
 }
-console.log("\nOK  editor renders, Camunda 8 templates load, properties panel renders and applies one");
+console.log(
+  "\nOK  editor renders, Camunda 8 templates load, properties panel renders and applies one, " +
+    "session editor locks live elements and the server rejects removing one, " +
+    "a human gate's form-js form can be answered from the studio and unparks the session",
+);

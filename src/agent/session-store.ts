@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { GraphRevision, SessionDetail, SessionSummary, TurnRecord } from "../studio/types.ts";
 import type { Paths } from "./paths.ts";
@@ -33,6 +33,14 @@ export interface SessionMeta {
   /** Activity ids executed at least once. */
   visited: string[];
   /**
+   * The pid of the process currently driving this session, set while
+   * `status` is `"running"` and cleared once it settles. Lets `summary()`
+   * tell a genuinely live run apart from one a killed process left claiming
+   * to be running forever (issue #52).
+   */
+  pid?: number;
+  startedAt?: number;
+  /**
    * Set by a harness that gave up and deliberately ended the run outside the
    * ordinary agent:turn path (graph:lint's redraft-attempt cap, chiefly).
    * bpmn-elements re-wraps a thrown error at every callActivity boundary it
@@ -41,6 +49,20 @@ export interface SessionMeta {
    * is a channel this project controls instead.
    */
   harnessError?: string;
+}
+
+/** One queued steering/follow-up message, as stored in `inbox.jsonl` (issue #48). */
+export interface InboxEntry {
+  kind: "steer" | "follow-up";
+  text: string;
+  at: number;
+}
+
+/** One queued human-gate answer, as stored in `answers.jsonl` (issue #51). */
+export interface AnswerEntry {
+  activityId: string;
+  payload: Record<string, unknown>;
+  at: number;
 }
 
 export class SessionStore {
@@ -67,6 +89,83 @@ export class SessionStore {
 
   get transcriptPath(): string {
     return join(this.dir, "session.jsonl");
+  }
+
+  /**
+   * Steering/follow-up messages queued from *outside* the process driving
+   * this session -- `graph-agent steer`/`follow-up` append here from another
+   * terminal; `agent:steer`/`agent:follow-up` (harnesses.ts) drain it every
+   * time the graph reaches them, which is how a message posted while a run is
+   * already looping actually reaches it (issue #48).
+   */
+  get inboxPath(): string {
+    return join(this.dir, "inbox.jsonl");
+  }
+
+  /** Queue a steering/follow-up message for whichever process is (or next is) driving this session. */
+  queueInbox(kind: InboxEntry["kind"], text: string): void {
+    mkdirSync(this.dir, { recursive: true });
+    appendFileSync(this.inboxPath, `${JSON.stringify({ kind, text, at: Date.now() } satisfies InboxEntry)}\n`);
+  }
+
+  /** Every queued message of one kind, removing them from the inbox; messages of the other kind are left for their own drain. */
+  drainInbox(kind: InboxEntry["kind"]): string[] {
+    if (!existsSync(this.inboxPath)) return [];
+    const entries = readFileSync(this.inboxPath, "utf8")
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as InboxEntry);
+    const matching = entries.filter((entry) => entry.kind === kind).map((entry) => entry.text);
+    const remaining = entries.filter((entry) => entry.kind !== kind);
+    writeAtomic(this.inboxPath, remaining.map((entry) => JSON.stringify(entry)).join("\n") + (remaining.length > 0 ? "\n" : ""));
+    return matching;
+  }
+
+  /**
+   * Answers to a parked human gate, queued from the studio (issue #51) for
+   * whichever process is -- or next is -- driving this session. A run only
+   * resumes when a process resumes it, so the studio never runs a model
+   * itself: it queues the answered form here, and `runSession`/`resumeSession`
+   * consume a matching one from `onWait(activityId)` before falling back to
+   * `--answer`.
+   */
+  get answersPath(): string {
+    return join(this.dir, "answers.jsonl");
+  }
+
+  /** Queue an answer for one activity. A later queueAnswer for the same activity id replaces the earlier one. */
+  queueAnswer(activityId: string, payload: Record<string, unknown>): void {
+    mkdirSync(this.dir, { recursive: true });
+    const entries = this.readAnswers().filter((entry) => entry.activityId !== activityId);
+    entries.push({ activityId, payload, at: Date.now() });
+    this.writeAnswers(entries);
+  }
+
+  /** Every activity id with a queued answer. */
+  pendingAnswers(): string[] {
+    return this.readAnswers().map((entry) => entry.activityId);
+  }
+
+  /** Consumes (removes) the queued answer for one activity, if any, so it cannot be replayed (see issue #44 on why that matters). */
+  takeAnswer(activityId: string): Record<string, unknown> | undefined {
+    const entries = this.readAnswers();
+    const index = entries.findIndex((entry) => entry.activityId === activityId);
+    if (index === -1) return undefined;
+    const [taken] = entries.splice(index, 1);
+    this.writeAnswers(entries);
+    return taken?.payload;
+  }
+
+  private readAnswers(): AnswerEntry[] {
+    if (!existsSync(this.answersPath)) return [];
+    return readFileSync(this.answersPath, "utf8")
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as AnswerEntry);
+  }
+
+  private writeAnswers(entries: AnswerEntry[]): void {
+    writeAtomic(this.answersPath, entries.map((entry) => JSON.stringify(entry)).join("\n") + (entries.length > 0 ? "\n" : ""));
   }
 
   exists(): boolean {
@@ -152,7 +251,7 @@ export class SessionStore {
       id: meta.id,
       project: meta.project,
       ...(meta.name === undefined ? {} : { name: meta.name }),
-      status: meta.status,
+      status: effectiveStatus(meta),
       updatedAt: meta.updatedAt,
       turnCount: meta.turns.length,
     };
@@ -184,6 +283,22 @@ export function listSessions(paths: Paths, project?: string): SessionStore[] {
     .filter((s) => s.exists())
     .filter((s) => project === undefined || s.readMeta().project === project)
     .sort((a, b) => b.readMeta().updatedAt - a.readMeta().updatedAt);
+}
+
+/** Whether `pid` still names a live process (issue #52). `EPERM` means alive, just owned by someone else. */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** `meta.status`, except a `"running"` session whose recorded process is gone reports `"stale"` instead. */
+function effectiveStatus(meta: SessionMeta): SessionSummary["status"] {
+  if (meta.status === "running" && (meta.pid === undefined || !isProcessAlive(meta.pid))) return "stale";
+  return meta.status;
 }
 
 /** Write via a temp file + rename so a reader never observes a half-written file. */

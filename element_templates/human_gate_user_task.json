@@ -1,0 +1,32 @@
+[
+  {
+    "$schema": "https://unpkg.com/@camunda/zeebe-element-templates-json-schema/resources/schema.json",
+    "name": "Human Gate",
+    "id": "graph-agent.human-gate",
+    "version": 1,
+    "description": "Parks for a person to answer, the same shape as session-skeleton.bpmn's await_intent or craft-graph.bpmn's review_fragment. Answer it with `graph-agent resume <session> --answer <this activity>:key=value`; the form itself (its fields, defaults, labels) still needs a zeebe:userTaskForm written by hand or edited via a form editor -- this template only wires the activity up to reference one and publish what it answers with.",
+    "category": { "id": "graph-agent.gates", "name": "Human gates" },
+    "appliesTo": ["bpmn:UserTask"],
+    "elementType": { "value": "bpmn:UserTask" },
+    "properties": [
+      {
+        "type": "Hidden",
+        "binding": { "type": "zeebe:userTask" }
+      },
+      {
+        "label": "Form id",
+        "description": "Id of a zeebe:userTaskForm defined elsewhere in this diagram (e.g. on the process's own extensionElements).",
+        "type": "String",
+        "constraints": { "notEmpty": true },
+        "binding": { "type": "zeebe:formDefinition", "property": "formId" }
+      },
+      {
+        "label": "Answer variable",
+        "description": "Process variable one of the form's own fields is published to -- add one of these per field the form asks for (session-skeleton.bpmn's await_intent maps three: intent, context, done). Edit the field name into the FEEL expression below via the properties panel's raw ioMapping view if this single mapping is not enough.",
+        "type": "String",
+        "value": "answer",
+        "binding": { "type": "zeebe:output", "source": "=answer" }
+      }
+    ]
+  }
+]

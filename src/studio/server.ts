@@ -25,7 +25,24 @@ import {
   staticDir,
   type Paths,
 } from "../agent/paths.ts";
+import { checkMigration, pendingGates } from "../agent/graph.ts";
+import { createHarnesses, type HarnessDeps } from "../agent/harnesses.ts";
 import type { GraphSummary, ProjectInfo, StudioEvent } from "./types.ts";
+
+/** The harness registry's own keys, for checkMigration's job-type contract -- no live deps are ever invoked here, only Object.keys(). */
+const KNOWN_JOB_TYPES = new Set(
+  Object.keys(
+    createHarnesses({
+      pi: {} as HarnessDeps["pi"],
+      tools: {} as HarnessDeps["tools"],
+      store: {} as HarnessDeps["store"],
+      getGraph: () => "",
+      setGraph: () => {},
+      takeSteering: () => [],
+      takeFollowUp: () => [],
+    }),
+  ),
+);
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -62,7 +79,7 @@ export async function startStudio(options: StudioOptions): Promise<Studio> {
   const pagesDir = join(staticDir(), "pages");
 
   const server = createServer((req, res) => {
-    void handle(req, res, options, pagesDir).catch((error: unknown) => {
+    void handle(req, res, options, pagesDir, broadcast).catch((error: unknown) => {
       send(res, 500, "text/plain", error instanceof Error ? error.message : String(error));
     });
   });
@@ -123,6 +140,7 @@ async function handle(
   res: ServerResponse,
   options: StudioOptions,
   pagesDir: string,
+  broadcast: (event: StudioEvent) => void,
 ): Promise<void> {
   const { paths, project } = options;
   const url = new URL(req.url ?? "/", "http://localhost");
@@ -156,6 +174,71 @@ async function handle(
     const store = new SessionStore(paths, decodeURIComponent(sessionMatch[1] as string));
     if (!store.exists()) return sendJson(res, 404, { error: "unknown session" });
     return sendJson(res, 200, store.detail());
+  }
+
+  // ---- a session's own graph: read it, or edit it with the migration guard
+  // (issue #46) rather than the library's stricter, additive-only checkSplice.
+  const sessionGraphMatch = /^\/api\/sessions\/([^/]+)\/graph$/.exec(path);
+  if (sessionGraphMatch) {
+    const store = new SessionStore(paths, decodeURIComponent(sessionGraphMatch[1] as string));
+    if (!store.exists()) return sendJson(res, 404, { error: "unknown session" });
+
+    if (req.method === "PUT") {
+      const body = (await readJson(req)) as { xml?: string };
+      if (!body.xml) return sendJson(res, 400, { error: "xml is required" });
+      const current = store.currentGraph();
+      if (current === null) return sendJson(res, 404, { error: "session has no graph" });
+
+      const meta = store.readMeta();
+      const live = new Set([...meta.visited, ...meta.tokens]);
+      let check;
+      try {
+        check = await checkMigration(current, body.xml, live, KNOWN_JOB_TYPES);
+      } catch (error) {
+        return sendJson(res, 400, { error: `not valid BPMN: ${error instanceof Error ? error.message : String(error)}` });
+      }
+      if (!check.ok) return sendJson(res, 409, { error: check.reason, removed: check.removed });
+
+      store.appendGraph(body.xml, "studio edit", []);
+      broadcast({ type: "session_changed", sessionId: store.id });
+      return sendJson(res, 200, { revisions: store.readMeta().revisions.length });
+    }
+
+    const xml = store.currentGraph();
+    if (xml === null) return sendJson(res, 404, { error: "session has no graph" });
+    return send(res, 200, "application/xml; charset=utf-8", xml);
+  }
+
+  // ---- human gates a session is currently parked on, and answering one
+  // (issue #51). The studio never runs a model itself: an answer is queued
+  // here for whichever process is -- or next is -- driving the session.
+  const pendingMatch = /^\/api\/sessions\/([^/]+)\/pending$/.exec(path);
+  if (pendingMatch) {
+    const store = new SessionStore(paths, decodeURIComponent(pendingMatch[1] as string));
+    if (!store.exists()) return sendJson(res, 404, { error: "unknown session" });
+    const xml = store.currentGraph();
+    if (xml === null) return sendJson(res, 200, []);
+    const meta = store.readMeta();
+    const gates = await pendingGates(xml, meta.tokens);
+    const answered = new Set(store.pendingAnswers());
+    return sendJson(
+      res,
+      200,
+      gates.map((gate) => ({ ...gate, answered: answered.has(gate.id) })),
+    );
+  }
+
+  const answerMatch = /^\/api\/sessions\/([^/]+)\/answer$/.exec(path);
+  if (answerMatch && req.method === "POST") {
+    const store = new SessionStore(paths, decodeURIComponent(answerMatch[1] as string));
+    if (!store.exists()) return sendJson(res, 404, { error: "unknown session" });
+    const body = (await readJson(req)) as { activityId?: string; payload?: Record<string, unknown> };
+    if (!body.activityId || typeof body.payload !== "object" || body.payload === null) {
+      return sendJson(res, 400, { error: "activityId and payload are required" });
+    }
+    store.queueAnswer(body.activityId, body.payload);
+    broadcast({ type: "session_changed", sessionId: store.id });
+    return sendJson(res, 200, { queued: true });
   }
 
   // ---- the shared graph library

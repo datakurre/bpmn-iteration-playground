@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { EventEmitter } from "node:events";
 import { Engine } from "bpmn-engine";
-import { calledElements, indexLibrary, linkGraph, LinkError, type LibraryIndex } from "./link.ts";
+import { calledElements, indexLibrary, linkGraph, unlinkGraph, LinkError, type LibraryIndex } from "./link.ts";
 import { MODDLE_OPTIONS, toSourceContext, type EngineConstructor } from "./graph.ts";
 import { BpmnModdle } from "bpmn-moddle";
 
@@ -143,6 +143,62 @@ describe("linkGraph", () => {
     const result = await linkGraph(dynamicParent, await library([{ source: "child.bpmn", xml: child }]));
     expect(result.linked).toEqual([]);
     expect(result.dynamic).toEqual(["=next_graph"]);
+  });
+});
+
+describe("unlinkGraph (issue #55)", () => {
+  it("is linkGraph's inverse: dropping the linked processes returns the original semantics", async () => {
+    const linked = await linkGraph(parent, await library([{ source: "child.bpmn", xml: child }]));
+    expect((await processesIn(linked.xml)).map((p) => p.id).sort()).toEqual(["child", "parent"]);
+
+    const unlinked = await unlinkGraph(linked.xml);
+    expect(unlinked.unlinked).toEqual(["child"]);
+    const remaining = await processesIn(unlinked.xml);
+    expect(remaining.map((p) => p.id)).toEqual(["parent"]);
+    expect(remaining[0]?.isExecutable).toBe(true);
+
+    // The callActivity itself is untouched -- a future session starting from
+    // this graph re-links "child" the same way it always did.
+    expect(unlinked.xml).toContain('calledElement="child"');
+  });
+
+  it("removes the linked-in process's own diagram too", async () => {
+    const childWithDiagram = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions id="Defs_child" ${NS} xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC">
+  <process id="child" isExecutable="true">
+    <startEvent id="c_start" /><sequenceFlow id="cf1" sourceRef="c_start" targetRef="c_task" />
+    <task id="c_task" />
+    <sequenceFlow id="cf2" sourceRef="c_task" targetRef="c_end" /><endEvent id="c_end" />
+  </process>
+  <bpmndi:BPMNDiagram id="Diagram_child">
+    <bpmndi:BPMNPlane id="Plane_child" bpmnElement="child">
+      <bpmndi:BPMNShape id="c_start_di" bpmnElement="c_start"><dc:Bounds x="0" y="0" width="36" height="36" /></bpmndi:BPMNShape>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</definitions>`;
+    const linked = await linkGraph(parent, await library([{ source: "child.bpmn", xml: childWithDiagram }]));
+    expect(linked.xml).toContain("c_start_di");
+    const unlinked = await unlinkGraph(linked.xml);
+    expect(unlinked.xml).not.toContain("c_start_di");
+    expect(unlinked.xml).not.toContain('bpmnElement="child"');
+  });
+
+  it("does nothing to a graph that was never linked", async () => {
+    const result = await unlinkGraph(parent);
+    expect(result.unlinked).toEqual([]);
+    expect(result.xml).toBe(parent);
+  });
+
+  it("unlinks transitively, leaving only the top-level executable process", async () => {
+    const grandparentLinked = await linkGraph(
+      parent,
+      await library([{ source: "child.bpmn", xml: childCallingGrandchild }, { source: "grandchild.bpmn", xml: grandchild }]),
+    );
+    expect((await processesIn(grandparentLinked.xml)).map((p) => p.id).sort()).toEqual(["child", "grandchild", "parent"]);
+
+    const unlinked = await unlinkGraph(grandparentLinked.xml);
+    expect(unlinked.unlinked.sort()).toEqual(["child", "grandchild"]);
+    expect((await processesIn(unlinked.xml)).map((p) => p.id)).toEqual(["parent"]);
   });
 });
 

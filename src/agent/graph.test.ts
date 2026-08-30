@@ -3,11 +3,15 @@ import { describe, expect, it } from "vitest";
 import { Engine } from "bpmn-engine";
 import { EventEmitter } from "node:events";
 import {
+  checkMigration,
   checkSplice,
+  definitionsId,
   elementIds,
+  pendingGates,
   recoverWithGraph,
   stripEmbeddedSource,
   toSourceContext,
+  withDefinitionsId,
   type EngineConstructor,
   type EngineState,
 } from "./graph.ts";
@@ -175,6 +179,127 @@ describe("checkSplice with a known job-type set (issue #40)", () => {
     const already = withNewTask("shell:exec");
     const result = await checkSplice(already, already, known);
     expect(result.ok).toBe(true);
+  });
+});
+
+describe("checkMigration (issue #46)", () => {
+  it("accepts deleting an element the token has never reached, unlike checkSplice", async () => {
+    const withoutGate = v1.replace('<userTask id="gate" name="await turn" />', "");
+    // checkSplice rejects this outright -- gate is a real removal.
+    expect((await checkSplice(v1, withoutGate)).ok).toBe(false);
+    // checkMigration allows it as long as "gate" never carried live state.
+    const result = await checkMigration(v1, withoutGate, new Set());
+    expect(result.ok).toBe(true);
+    expect(result.removed).toEqual([]);
+  });
+
+  it("rejects deleting an element that does carry live state", async () => {
+    const withoutGate = v1.replace('<userTask id="gate" name="await turn" />', "");
+    const result = await checkMigration(v1, withoutGate, new Set(["gate"]));
+    expect(result.ok).toBe(false);
+    expect(result.removed).toEqual(["gate"]);
+    expect(result.reason).toMatch(/live state/);
+  });
+
+  it("rejects a rename of a live element the same way", async () => {
+    const renamed = v1.replace('id="gate"', 'id="gate2"').replace('targetRef="gate"', 'targetRef="gate2"');
+    const result = await checkMigration(v1, renamed, new Set(["gate"]));
+    expect(result.ok).toBe(false);
+    expect(result.removed).toContain("gate");
+  });
+
+  it("accepts an additive edit exactly like checkSplice does", async () => {
+    const result = await checkMigration(v1, v2, new Set(["gate"]));
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects a changed <bpmn:definitions id>", async () => {
+    const rebased = await withDefinitionsId(v1, "Defs_other");
+    const result = await checkMigration(v1, rebased, new Set());
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/definitions id/);
+  });
+
+  it("applies the same job-type contract checkSplice does to a genuinely new activity", async () => {
+    const base = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="start" />
+  </bpmn:process>
+</bpmn:definitions>`;
+    const withBadTask = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="start" />
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="run_it" />
+    <bpmn:serviceTask id="run_it">
+      <bpmn:extensionElements><zeebe:taskDefinition type="shell:exec" /></bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="run_it" targetRef="end" />
+    <bpmn:endEvent id="end" />
+  </bpmn:process>
+</bpmn:definitions>`;
+    const result = await checkMigration(base, withBadTask, new Set(), new Set(["shell"]));
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/'shell:exec'/);
+  });
+});
+
+describe("pendingGates (issue #51)", () => {
+  const NS =
+    'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"';
+  const withGate = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_session" ${NS}>
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:extensionElements>
+      <zeebe:userTaskForm id="intent_form">{"components":[{"key":"intent","type":"textfield"}]}</zeebe:userTaskForm>
+    </bpmn:extensionElements>
+    <bpmn:startEvent id="start" />
+    <bpmn:userTask id="gate" name="What next?">
+      <bpmn:documentation>Say what you want done.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:formDefinition formId="intent_form" />
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:serviceTask id="turn">
+      <bpmn:extensionElements><zeebe:taskDefinition type="agent:turn" /></bpmn:extensionElements>
+    </bpmn:serviceTask>
+  </bpmn:process>
+</bpmn:definitions>`;
+
+  it("resolves a user task's name, documentation and form schema", async () => {
+    const [gate] = await pendingGates(withGate, ["gate"]);
+    expect(gate?.id).toBe("gate");
+    expect(gate?.name).toBe("What next?");
+    expect(gate?.documentation).toBe("Say what you want done.");
+    expect(gate?.form?.formId).toBe("intent_form");
+    expect(JSON.parse(gate?.form?.schema ?? "{}")).toEqual({ components: [{ key: "intent", type: "textfield" }] });
+  });
+
+  it("excludes a token that is not a user task", async () => {
+    const gates = await pendingGates(withGate, ["turn"]);
+    expect(gates).toEqual([]);
+  });
+
+  it("omits form when formId does not resolve to a defined form", async () => {
+    const noForm = withGate.replace('formId="intent_form"', 'formId="missing"');
+    const [gate] = await pendingGates(noForm, ["gate"]);
+    expect(gate?.form).toBeUndefined();
+  });
+
+  it("returns nothing for an id that is not in the graph at all", async () => {
+    expect(await pendingGates(withGate, ["nope"])).toEqual([]);
+  });
+});
+
+describe("definitionsId / withDefinitionsId (issue #55)", () => {
+  it("reads and rewrites <bpmn:definitions id>", async () => {
+    expect(await definitionsId(v1)).toBe("Defs_session");
+    const rebased = await withDefinitionsId(v1, "Defs_promoted");
+    expect(await definitionsId(rebased)).toBe("Defs_promoted");
+    // Semantics otherwise unchanged.
+    expect((await elementIds(rebased)).size).toBe((await elementIds(v1)).size);
   });
 });
 

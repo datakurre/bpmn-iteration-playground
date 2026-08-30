@@ -5,6 +5,7 @@
     "id": "graph-agent.shell-task",
     "version": 1,
     "description": "A deterministic step: run a command and route on its exit status.",
+    "category": { "id": "graph-agent.deterministic", "name": "Deterministic" },
     "appliesTo": ["bpmn:ServiceTask"],
     "elementType": { "value": "bpmn:ServiceTask" },
     "properties": [

@@ -310,3 +310,24 @@ describe("pi-default-loop.bpmn is faithful to runLoop()", () => {
   });
 
 });
+
+describe("session-default.bpmn (issue #47)", () => {
+  it("reaches pi_default_loop through a callActivity, not an inlined copy", async () => {
+    // The whole point of a *composed* default is that pi_default_loop stays a
+    // graph a callActivity points at -- pinning this so the composition
+    // cannot be quietly inlined later without a test noticing.
+    const elements = await elementsOf("session-default.bpmn");
+    const callActivities = elements.filter((e) => e.$type === "bpmn:CallActivity") as Array<
+      FlowElement & { calledElement?: string }
+    >;
+    expect(callActivities.some((c) => c.calledElement === "pi_default_loop")).toBe(true);
+    // Not a second copy of the loop's own elements living in this file too.
+    expect(elements.some((e) => e.id === "llm_turn")).toBe(false);
+  });
+
+  it("does not inline pi_default_loop as an executable process", async () => {
+    const elements = await elementsOf("session-default.bpmn");
+    const processes = elements.filter((e) => e.$type === "bpmn:Process");
+    expect(processes.map((p) => p.id)).toEqual(["session_default"]);
+  });
+});

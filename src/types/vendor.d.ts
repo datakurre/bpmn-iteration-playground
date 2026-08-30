@@ -30,3 +30,24 @@ declare module "zeebe-bpmn-moddle/resources/zeebe.json" {
   const descriptor: Record<string, unknown>;
   export default descriptor;
 }
+
+// bpmnlint ships no types at all; only the entry points src/agent/bpmn-lint.ts
+// and scripts/bpmn-tools.mjs use are described.
+declare module "bpmnlint" {
+  export interface LintReportEntry {
+    category: string;
+    id?: string;
+    message: string;
+    [key: string]: unknown;
+  }
+  export class Linter {
+    constructor(options: { config: Record<string, unknown>; resolver: unknown });
+    lint(rootElement: unknown): Promise<Record<string, LintReportEntry[]>>;
+  }
+}
+
+declare module "bpmnlint/lib/resolver/node-resolver.js" {
+  export default class NodeResolver {
+    constructor();
+  }
+}

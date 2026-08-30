@@ -2,8 +2,14 @@ import { parseArgs } from "node:util";
 import { copyFileSync, existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
 import { graphPath, startStudio } from "../studio/server.ts";
 import { resumeSession, runSession } from "../agent/runner.ts";
+import { ProcessTerminal } from "../tui/pi-bridge.ts";
+import { startTui } from "../tui/app.ts";
+import { firstActivity, withDefinitionsId } from "../agent/graph.ts";
+import { unlinkGraph } from "../agent/link.ts";
+import { lintBpmn } from "../agent/bpmn-lint.ts";
 import { createPiToolExecutor } from "../agent/tool-executor.ts";
 import { dryRunModel, readConfiguredModel, resolveModel } from "./model.ts";
 import { listSessions, SessionStore } from "../agent/session-store.ts";
@@ -28,9 +34,23 @@ Commands
                         (--refresh: take the bundled version of any graph
                         that differs from your library copy, backed up first)
   run [prompt]         start a session in this project and drive it turn by turn
+  tui [prompt]         start a session in an interactive terminal UI: a live
+                        transcript, a trail of the last few activities, and a
+                        prompt for any human gate the graph parks on
   resume <session>     recover engine + transcript state and continue
+  steer <session> <text>
+                       queue a steering message, injected before the next turn
+  follow-up <session> <text>
+                       queue a follow-up message, drained once the agent would
+                       otherwise stop
   ls                   list this project's sessions (--all for every project)
   show <session>       print a session's turns and current graph revision
+  promote <session> --as <name>
+                       write a session's graph (its own callActivity links
+                       removed) into the shared library, so a fresh session
+                       can start from what it converged on (--revision <n>
+                       picks a revision other than the latest, --force
+                       overwrites an existing library graph, backed up first)
   studio               serve the studio for this project
   where                print the config, graph library and state directories
 
@@ -38,13 +58,30 @@ Graphs live in your user config directory and are shared across projects.
 Sessions live in your user state directory and record the project they ran in.
 
 Options
-  --graph <id>         graph to run (default: pi-default-loop)
+  --graph <id>         graph to run (default: session-default, a
+                        callActivity into pi-default-loop)
   --model <spec>       provider/model to use (default: config.toml's [agent]
                         model, or the first model with credentials)
   --dry-run            walk the graph without calling a model
   --name <name>        label the session
-  --answer key=value   answer a parked human gate (resume only; repeatable)
+  --answer [activity:]key=value
+                        answer a parked human gate reached during run/resume
+                        (repeatable). Unscoped (bare key=value) answers apply
+                        to whichever gate asks for that key, at every gate
+                        that parks during the run -- scope one to a single
+                        activity with 'activity:key=value' so a payload
+                        meant for one gate (e.g. an intent) is never replayed
+                        at another (e.g. an unrelated approval)
+  --steer <text>       queue a steering message before the run starts, drained
+                        by the first agent:steer the graph reaches (repeatable)
+  --follow-up <text>   queue a follow-up message before the run starts, drained
+                        by the first agent:follow-up the graph reaches
+                        (repeatable)
   --port <n>           studio port (0 picks a free one)
+  --host <addr>        studio bind address (default: loopback only; the
+                        studio has no authentication, so a non-loopback
+                        --host exposes its write routes to the network)
+  --open / --no-open   open the studio URL in a browser (default: --open)
   --all                with ls, include sessions from other projects
   -h, --help           show this help
   -v, --version        show the version
@@ -75,8 +112,16 @@ export async function main(argv: string[]): Promise<number> {
       return cmdShow(argv[1]);
     case "run":
       return cmdRun(argv.slice(1));
+    case "tui":
+      return cmdTui(argv.slice(1));
     case "resume":
       return cmdResume(argv.slice(1));
+    case "steer":
+      return cmdQueue("steer", argv.slice(1));
+    case "follow-up":
+      return cmdQueue("follow-up", argv.slice(1));
+    case "promote":
+      return cmdPromote(argv.slice(1));
     default:
       process.stderr.write(`graph-agent: unknown command '${command}'\n\n${USAGE}`);
       return 2;
@@ -158,6 +203,31 @@ function cmdWhere(): number {
   return 0;
 }
 
+function isLoopbackHost(host: string): boolean {
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+function openInBrowser(url: string): void {
+  const platform = process.platform;
+  const [command, args] =
+    platform === "darwin"
+      ? ["open", [url]]
+      : platform === "win32"
+        ? ["cmd", ["/c", "start", "", url]]
+        : ["xdg-open", [url]];
+  try {
+    const child = spawn(command, args, { stdio: "ignore", detached: true });
+    // Best-effort: no browser opener available is not fatal, the printed URL
+    // still works -- but an unhandled 'error' event would otherwise crash
+    // the process (spawn() errors are reported asynchronously, so try/catch
+    // alone does not catch e.g. a missing `xdg-open`).
+    child.once("error", () => {});
+    child.unref();
+  } catch {
+    // Synchronous spawn failure (rare); same best-effort story.
+  }
+}
+
 async function cmdStudio(args: string[]): Promise<number> {
   const p = requirePaths();
   if (!p) return 1;
@@ -169,15 +239,20 @@ async function cmdStudio(args: string[]): Promise<number> {
       port: { type: "string" },
       host: { type: "string" },
       open: { type: "boolean", default: true },
+      // parseArgs has no built-in `--no-<flag>` negation; a bare `no-open`
+      // key is how a boolean's negation shows up (see also #56).
+      "no-open": { type: "boolean", default: false },
     },
     allowPositionals: true,
     strict: false,
   });
+  const shouldOpen = Boolean(values.open) && !values["no-open"];
 
+  const host = values.host === undefined ? undefined : String(values.host);
   const studio = await startStudio({
     paths: p,
     project,
-    ...(values.host === undefined ? {} : { host: String(values.host) }),
+    ...(host === undefined ? {} : { host }),
     ...(values.port === undefined ? {} : { port: Number(values.port) }),
   });
 
@@ -185,6 +260,17 @@ async function cmdStudio(args: string[]): Promise<number> {
   process.stdout.write(`  project   ${projectName(project)}  ${project}\n`);
   process.stdout.write(`  sessions  ${studio.url}/\n`);
   process.stdout.write(`  graphs    ${studio.url}/graph\n`);
+
+  if (host !== undefined && !isLoopbackHost(host)) {
+    process.stderr.write(
+      `warning: studio has no authentication and is bound to ${host}, which is not loopback -- ` +
+        `its write routes (e.g. PUT /api/graphs/:id) are reachable from the network.\n`,
+    );
+  }
+
+  if (shouldOpen) {
+    openInBrowser(studio.url);
+  }
 
   await new Promise<void>((done) => {
     const stop = (): void => {
@@ -201,44 +287,128 @@ interface RunFlags {
   model?: string;
   dryRun: boolean;
   name?: string;
-  answer?: Record<string, unknown>;
+  answer?: ScopedAnswers;
+  steer: string[];
+  followUp: string[];
   positionals: string[];
 }
+
+/**
+ * `--answer` payloads keyed by the activity they answer, `"*"` for an
+ * unscoped one that applies to whichever gate asks for that key. See
+ * `answersFor` and issue #44: a single global payload replayed at every gate
+ * is how `run --graph session-skeleton` used to loop forever, since the
+ * intent answer meant for `await_intent` was also fed to `review_fragment`'s
+ * approval gate.
+ */
+type ScopedAnswers = Map<string, Record<string, unknown>>;
+
+const UNSCOPED = "*";
 
 function runFlags(args: string[]): RunFlags {
   const { values, positionals } = parseArgs({
     args,
     options: {
-      graph: { type: "string", default: "pi-default-loop" },
+      graph: { type: "string", default: "session-default" },
       model: { type: "string" },
       "dry-run": { type: "boolean", default: false },
       name: { type: "string" },
       answer: { type: "string", multiple: true },
+      steer: { type: "string", multiple: true },
+      "follow-up": { type: "string", multiple: true },
     },
     allowPositionals: true,
     strict: false,
   });
   return {
-    graph: String(values.graph ?? "pi-default-loop"),
+    graph: String(values.graph ?? "session-default"),
     ...(values.model === undefined ? {} : { model: String(values.model) }),
     dryRun: values["dry-run"] === true,
     ...(values.name === undefined ? {} : { name: String(values.name) }),
     ...(values.answer === undefined ? {} : { answer: parseAnswers(values.answer as string[]) }),
+    steer: (values.steer as string[] | undefined) ?? [],
+    followUp: (values["follow-up"] as string[] | undefined) ?? [],
     positionals: positionals.map(String),
   };
 }
 
-/** `key=value` pairs from repeated `--answer`, coercing obvious booleans and numbers. */
-function parseAnswers(pairs: string[]): Record<string, unknown> {
-  const answer: Record<string, unknown> = {};
+/**
+ * `[activity:]key=value` pairs from repeated `--answer`, coercing obvious
+ * booleans and numbers. A colon before the first `=` scopes the pair to one
+ * activity id; otherwise it lands in the unscoped bucket. Activity ids never
+ * contain `=`, and a value is free to contain `:` (only the first colon
+ * ahead of the first `=` is treated as the scope separator), so
+ * `--answer command=echo a:b` is `{command: "echo a:b"}` unscoped, and
+ * `--answer review_fragment:approval=apply` scopes to `review_fragment`.
+ */
+export function parseAnswers(pairs: string[]): ScopedAnswers {
+  const answers: ScopedAnswers = new Map();
   for (const pair of pairs) {
-    const eq = pair.indexOf("=");
-    if (eq === -1) throw new Error(`--answer '${pair}' is not 'key=value'`);
-    const key = pair.slice(0, eq);
-    const raw = pair.slice(eq + 1);
-    answer[key] = raw === "true" ? true : raw === "false" ? false : raw !== "" && !Number.isNaN(Number(raw)) ? Number(raw) : raw;
+    const colon = pair.indexOf(":");
+    const firstEq = pair.indexOf("=");
+    const scoped = colon !== -1 && (firstEq === -1 || colon < firstEq);
+    const scope = scoped ? pair.slice(0, colon) : UNSCOPED;
+    const rest = scoped ? pair.slice(colon + 1) : pair;
+
+    const eq = rest.indexOf("=");
+    if (eq === -1) throw new Error(`--answer '${pair}' is not '[activity:]key=value'`);
+    const key = rest.slice(0, eq);
+    const raw = rest.slice(eq + 1);
+
+    const bucket = answers.get(scope) ?? {};
+    bucket[key] = coerceAnswerValue(raw);
+    answers.set(scope, bucket);
   }
-  return answer;
+  return answers;
+}
+
+/**
+ * Coerces an obvious boolean or number out of a raw string answer, the way
+ * `--answer key=value` always has -- shared with the TUI's gate wizard
+ * (`src/tui/app.ts`, issue #50) so a typed "true" or "3" behaves the same
+ * whether it came from a flag or an interactive prompt.
+ */
+export function coerceAnswerValue(raw: string): unknown {
+  return raw === "true" ? true : raw === "false" ? false : raw !== "" && !Number.isNaN(Number(raw)) ? Number(raw) : raw;
+}
+
+/** The unscoped bucket merged under whatever is scoped to this activity, or `undefined` when neither exists. */
+export function answersFor(answers: ScopedAnswers, activityId: string): Record<string, unknown> | undefined {
+  const wildcard = answers.get(UNSCOPED);
+  const scoped = answers.get(activityId);
+  if (wildcard === undefined && scoped === undefined) return undefined;
+  return { ...wildcard, ...scoped };
+}
+
+/**
+ * Caps how many times the same activity id may be auto-answered from
+ * `--answer` in a single run/resume invocation. An unscoped answer is meant
+ * to apply wherever its key is asked for, which can legitimately be the same
+ * activity more than once (a loop that revisits a gate) -- but nothing else
+ * bounds that, so a graph that cannot otherwise terminate would keep
+ * replaying the same payload and billing a model turn per lap forever. Once
+ * the cap is hit this reports the same "leave it parked, snapshot and stop"
+ * outcome an unanswered gate gets, rather than throwing out of an
+ * event-emitter callback.
+ */
+const MAX_AUTO_ANSWERS_PER_ACTIVITY = 5;
+
+export function boundedOnWait(answers: ScopedAnswers): (activityId: string) => Record<string, unknown> | undefined {
+  const seen = new Map<string, number>();
+  return (activityId) => {
+    const answer = answersFor(answers, activityId);
+    if (answer === undefined) return undefined;
+    const count = (seen.get(activityId) ?? 0) + 1;
+    seen.set(activityId, count);
+    if (count > MAX_AUTO_ANSWERS_PER_ACTIVITY) {
+      process.stderr.write(
+        `graph-agent: ${activityId} was auto-answered ${count - 1} times with the same payload; ` +
+          `scope your answer with --answer ${activityId}:key=value if it should not be replayed here.\n`,
+      );
+      return undefined;
+    }
+    return answer;
+  };
 }
 
 async function resolveRunModel(flags: RunFlags, p: Paths): Promise<Awaited<ReturnType<typeof resolveModel>>> {
@@ -275,6 +445,23 @@ async function cmdRun(args: string[]): Promise<number> {
     return 1;
   }
 
+  const prompt = flags.positionals.join(" ");
+  if (prompt) {
+    // A user task parks on its own form and never reads the "prompt" process
+    // variable runSession seeds -- a graph whose first stop is one (like
+    // session-skeleton's await_intent) would otherwise accept a positional
+    // prompt and silently never use it anywhere (issue #47).
+    const first = await firstActivity(readFileSync(graphFile, "utf8"));
+    if (first?.type === "bpmn:UserTask") {
+      process.stderr.write(
+        `graph-agent: '${flags.graph}' starts on '${first.id}', a human gate that reads its own form, ` +
+          `not the initial prompt -- it would never see "${prompt}". Answer it directly instead: ` +
+          `graph-agent run --graph ${flags.graph} --answer ${first.id}:key=value\n`,
+      );
+      return 1;
+    }
+  }
+
   let chosen;
   try {
     chosen = await resolveRunModel(flags, p);
@@ -290,20 +477,80 @@ async function cmdRun(args: string[]): Promise<number> {
       paths: p,
       project,
       graphPath: graphFile,
-      prompt: flags.positionals.join(" "),
+      prompt,
       ...(flags.name === undefined ? {} : { name: flags.name }),
       model: chosen.model,
       systemPrompt: "",
       streamFn: chosen.streamFn,
       tools: createPiToolExecutor(project),
       onProgress: (line) => process.stdout.write(`  ${line}\n`),
-      ...(flags.answer === undefined ? {} : { onWait: () => flags.answer }),
+      ...(flags.answer === undefined ? {} : { onWait: boundedOnWait(flags.answer) }),
+      ...(flags.steer.length === 0 ? {} : { steering: flags.steer }),
+      ...(flags.followUp.length === 0 ? {} : { followUp: flags.followUp }),
       signal,
     }),
   );
 
   process.stdout.write(`\nsession ${result.sessionId}  ${result.outcome}  ${result.turns} turn(s)\n`);
   reportWait(p, result.sessionId, result.outcome);
+  if (result.error) {
+    process.stderr.write(`error: ${result.error.message}\n`);
+    return 1;
+  }
+  return 0;
+}
+
+async function cmdTui(args: string[]): Promise<number> {
+  const p = requirePaths();
+  if (!p) return 1;
+  const flags = runFlags(args);
+  const project = projectId();
+
+  const graphFile = graphPath(p, flags.graph);
+  if (!graphFile) {
+    process.stderr.write(`graph-agent: no graph named '${flags.graph}' in ${p.workflowsDir}\n`);
+    return 1;
+  }
+
+  const prompt = flags.positionals.join(" ");
+  if (prompt) {
+    const first = await firstActivity(readFileSync(graphFile, "utf8"));
+    if (first?.type === "bpmn:UserTask") {
+      process.stderr.write(
+        `graph-agent: '${flags.graph}' starts on '${first.id}', a human gate that reads its own form, ` +
+          `not the initial prompt -- the tui will prompt for it interactively instead.\n`,
+      );
+    }
+  }
+
+  let chosen;
+  try {
+    chosen = await resolveRunModel(flags, p);
+  } catch (error) {
+    process.stderr.write(`graph-agent: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+
+  const result = await withInterrupt((signal) =>
+    startTui({
+      paths: p,
+      project,
+      graphPath: graphFile,
+      graphLabel: flags.graph,
+      prompt,
+      ...(flags.name === undefined ? {} : { name: flags.name }),
+      model: chosen.model,
+      modelLabel: chosen.label,
+      systemPrompt: "",
+      streamFn: chosen.streamFn,
+      tools: createPiToolExecutor(project),
+      terminal: new ProcessTerminal(),
+      coerceValue: coerceAnswerValue,
+      signal,
+    }),
+  );
+
+  process.stdout.write(`\nsession ${result.sessionId}  ${result.outcome}  ${result.turns} turn(s)\n`);
   if (result.error) {
     process.stderr.write(`error: ${result.error.message}\n`);
     return 1;
@@ -340,7 +587,9 @@ async function cmdResume(args: string[]): Promise<number> {
         streamFn: chosen.streamFn,
         tools: createPiToolExecutor(projectId()),
         onProgress: (line) => process.stdout.write(`  ${line}\n`),
-        ...(flags.answer === undefined ? {} : { onWait: () => flags.answer }),
+        ...(flags.answer === undefined ? {} : { onWait: boundedOnWait(flags.answer) }),
+      ...(flags.steer.length === 0 ? {} : { steering: flags.steer }),
+      ...(flags.followUp.length === 0 ? {} : { followUp: flags.followUp }),
         signal,
       }),
     );
@@ -362,7 +611,8 @@ function reportWait(p: Paths, sessionId: string, outcome: string): void {
   const tokens = new SessionStore(p, sessionId).readMeta().tokens;
   if (tokens.length === 0) return;
   process.stdout.write(
-    `waiting on ${tokens.join(", ")}\nresume with: graph-agent resume ${sessionId} --answer key=value\n`,
+    `waiting on ${tokens.join(", ")}\n` +
+      `resume with: graph-agent resume ${sessionId} --answer ${tokens[0]}:key=value\n`,
   );
 }
 
@@ -381,6 +631,124 @@ function cmdLs(all: boolean): number {
       `${s.id}  ${s.status.padEnd(9)}  ${String(s.turnCount).padStart(3)} turns${where}  ${s.name ?? ""}\n`,
     );
   }
+  return 0;
+}
+
+/**
+ * Queues a steering/follow-up message into a session's inbox from *outside*
+ * whatever process is (or next is) driving it -- see `SessionStore.queueInbox`
+ * and issue #48. Works whether or not a run is currently in flight: a queued
+ * message sits in `inbox.jsonl` until the graph's own `agent:steer`/
+ * `agent:follow-up` activity next drains it.
+ */
+function cmdQueue(kind: "steer" | "follow-up", args: string[]): number {
+  const p = requirePaths();
+  if (!p) return 1;
+  const [id, ...rest] = args;
+  const text = rest.join(" ");
+  if (!id || !text) {
+    process.stderr.write(`graph-agent: ${kind} requires a session id and a message\n`);
+    return 2;
+  }
+  const store = new SessionStore(p, id);
+  if (!store.exists()) {
+    process.stderr.write(`graph-agent: unknown session '${id}'\n`);
+    return 1;
+  }
+  store.queueInbox(kind, text);
+  process.stdout.write(
+    `queued ${kind} message for ${id}; it is drained the next time the graph reaches agent:${kind}\n`,
+  );
+  return 0;
+}
+
+/** Library graph ids/filenames are plain identifiers; sanitize a definitions id the same way. */
+function sanitizeId(name: string): string {
+  return name.replace(/[^A-Za-z0-9_]/g, "_");
+}
+
+/**
+ * Writes a session's graph -- with the processes `linkGraph` inlined into it
+ * removed -- into the shared library, so a fresh session can start from
+ * whatever it converged on instead of that work staying buried in a state
+ * directory (issue #55). The library → session → mutate → promote → library
+ * round trip is the last step "iterate towards re-usable definitions" needs.
+ */
+async function cmdPromote(args: string[]): Promise<number> {
+  const p = requirePaths();
+  if (!p) return 1;
+  const { values, positionals } = parseArgs({
+    args,
+    options: {
+      as: { type: "string" },
+      revision: { type: "string" },
+      force: { type: "boolean", default: false },
+    },
+    allowPositionals: true,
+    strict: false,
+  });
+
+  const sessionId = positionals[0];
+  if (!sessionId) {
+    process.stderr.write("graph-agent: promote requires a session id\n");
+    return 2;
+  }
+  const name = values.as === undefined ? undefined : String(values.as);
+  if (!name) {
+    process.stderr.write("graph-agent: promote requires --as <name> to name the library graph\n");
+    return 2;
+  }
+
+  const store = new SessionStore(p, sessionId);
+  if (!store.exists()) {
+    process.stderr.write(`graph-agent: unknown session '${sessionId}'\n`);
+    return 1;
+  }
+
+  const revisionFiles = store.graphRevisionFiles();
+  if (revisionFiles.length === 0) {
+    process.stderr.write(`graph-agent: session '${sessionId}' has no graph\n`);
+    return 1;
+  }
+  let revisionIndex = revisionFiles.length - 1;
+  if (values.revision !== undefined) {
+    const parsed = Number(values.revision);
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed >= revisionFiles.length) {
+      process.stderr.write(
+        `graph-agent: --revision ${String(values.revision)} is out of range (session '${sessionId}' has revisions 0-${revisionFiles.length - 1})\n`,
+      );
+      return 1;
+    }
+    revisionIndex = parsed;
+  }
+  const revisionXml = readFileSync(join(store.graphDir, revisionFiles[revisionIndex]!), "utf8");
+
+  const { xml: unlinkedXml, unlinked } = await unlinkGraph(revisionXml);
+  const promotedXml = await withDefinitionsId(unlinkedXml, `Defs_${sanitizeId(name)}`);
+
+  const lint = await lintBpmn(promotedXml);
+  if (lint.errors > 0) {
+    process.stderr.write(
+      `graph-agent: revision ${revisionIndex} of '${sessionId}' fails bpmnlint and was not promoted:\n` +
+        lint.lines.map((line) => `  ${line}\n`).join(""),
+    );
+    return 1;
+  }
+
+  const target = join(p.workflowsDir, `${name}.bpmn`);
+  if (existsSync(target) && !values.force) {
+    process.stderr.write(
+      `graph-agent: '${name}.bpmn' already exists in the library; pass --force to overwrite it (backed up as '${name}.bpmn.bak' first)\n`,
+    );
+    return 1;
+  }
+  if (existsSync(target)) copyFileSync(target, `${target}.bak`);
+  writeFileSync(target, promotedXml);
+
+  process.stdout.write(
+    `promoted revision ${revisionIndex} of ${sessionId} to ${target}\n` +
+      (unlinked.length > 0 ? `unlinked (still callable via calledElement): ${unlinked.join(", ")}\n` : ""),
+  );
   return 0;
 }
 

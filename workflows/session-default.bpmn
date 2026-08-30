@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_session_default" targetNamespace="http://graph-agent/bpmn">
+  <bpmn:process id="session_default" name="Default session" isExecutable="true">
+    <bpmn:documentation>The out-of-the-box session graph: a single callActivity into
+pi_default_loop, so a fresh session behaves exactly like plain Pi while still
+being a diagram -- the callActivity, and everything before or after it, are
+ordinary elements you can re-wire or splice around, without touching
+pi_default_loop itself.
+
+Point `calledElement` at a graph of your own, or extend this one (a human
+gate before the loop, a deterministic check after it, ...) the same way
+session-skeleton extends craft-graph.</bpmn:documentation>
+    <bpmn:startEvent id="session_start" name="Prompt">
+      <bpmn:outgoing>to_loop</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="to_loop" sourceRef="session_start" targetRef="agent_loop" />
+    <bpmn:callActivity id="agent_loop" name="Run the Pi loop" calledElement="pi_default_loop">
+      <bpmn:incoming>to_loop</bpmn:incoming>
+      <bpmn:outgoing>to_end</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:sequenceFlow id="to_end" sourceRef="agent_loop" targetRef="session_end" />
+    <bpmn:endEvent id="session_end" name="Done">
+      <bpmn:incoming>to_end</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_session_default">
+    <bpmndi:BPMNPlane id="BPMNPlane_session_default" bpmnElement="session_default">
+      <bpmndi:BPMNShape id="session_start_di" bpmnElement="session_start">
+        <dc:Bounds x="57" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="agent_loop_di" bpmnElement="agent_loop">
+        <dc:Bounds x="175" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="session_end_di" bpmnElement="session_end">
+        <dc:Bounds x="357" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="to_loop_di" bpmnElement="to_loop">
+        <di:waypoint x="93" y="70" />
+        <di:waypoint x="175" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_end_di" bpmnElement="to_end">
+        <di:waypoint x="275" y="70" />
+        <di:waypoint x="357" y="70" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
