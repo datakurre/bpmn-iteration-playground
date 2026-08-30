@@ -172,6 +172,33 @@ async function serviceTasks(xml: string): Promise<ActivityLike[]> {
  * one already ran once as part of a graph someone approved, and revalidating
  * it here would reject a splice for a job type problem that predates it.
  */
+/**
+ * Rejects a *new* service task (one in `addedIds`) whose `zeebe:taskDefinition
+ * type` names no harness in `knownJobTypes`. Shared by `checkSplice` and
+ * `checkMigration` -- both apply the same job-type contract, just to a
+ * different notion of "new".
+ */
+async function checkJobTypes(
+  nextXml: string,
+  addedIds: ReadonlySet<string>,
+  knownJobTypes: ReadonlySet<string>,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  for (const task of await serviceTasks(nextXml)) {
+    if (!addedIds.has(task.id)) continue;
+    const jobType = harnessOf(task);
+    if (jobType !== undefined && knownJobTypes.has(jobType)) continue;
+    const valid = [...knownJobTypes].sort().join(", ");
+    return {
+      ok: false,
+      reason:
+        jobType === undefined
+          ? `${task.id} has no zeebe:taskDefinition type; valid job types are: ${valid}`
+          : `${task.id} names job type '${jobType}', which no harness handles; valid job types are: ${valid}`,
+    };
+  }
+  return { ok: true };
+}
+
 export async function checkSplice(
   previousXml: string,
   nextXml: string,
@@ -190,24 +217,75 @@ export async function checkSplice(
     };
   }
   if (knownJobTypes) {
-    const addedIds = new Set(added);
-    for (const task of await serviceTasks(nextXml)) {
-      if (!addedIds.has(task.id)) continue;
-      const jobType = harnessOf(task);
-      if (jobType !== undefined && knownJobTypes.has(jobType)) continue;
-      const valid = [...knownJobTypes].sort().join(", ");
-      return {
-        ok: false,
-        added,
-        removed,
-        reason:
-          jobType === undefined
-            ? `${task.id} has no zeebe:taskDefinition type; valid job types are: ${valid}`
-            : `${task.id} names job type '${jobType}', which no harness handles; valid job types are: ${valid}`,
-      };
-    }
+    const jobTypes = await checkJobTypes(nextXml, new Set(added), knownJobTypes);
+    if (!jobTypes.ok) return { ok: false, added, removed, reason: jobTypes.reason };
   }
   return { ok: true, added, removed };
+}
+
+/** The `<bpmn:definitions id>` of a graph. */
+export async function definitionsId(xml: string): Promise<string> {
+  const moddle = new BpmnModdle(MODDLE_OPTIONS);
+  const { rootElement } = await moddle.fromXML(xml.trim());
+  return String((rootElement as unknown as { id: string }).id);
+}
+
+export interface MigrationCheck {
+  ok: boolean;
+  removed: string[];
+  reason?: string;
+}
+
+/**
+ * A looser sibling of `checkSplice`, for a human edit rather than a drafted
+ * splice: the vision only requires that *the parts currently being executed*
+ * survive, not that the whole graph is additive. A human may delete an
+ * element the token has never reached; deleting or renaming one that carries
+ * live state is still rejected, because `Definition.recover()` replays child
+ * state by element id the same way regardless of who made the edit
+ * (issue #46).
+ *
+ * `live` is `meta.visited ∪ meta.tokens` -- every id the session has ever
+ * stood on or currently stands on. `knownJobTypes`, when given, applies the
+ * same job-type contract `checkSplice` does to any genuinely new activity.
+ * `<bpmn:definitions id>` must also stay the same: `recoverWithGraph` throws
+ * on a mismatch, so this rejects that explicitly rather than letting the
+ * next `resume` fail with a less helpful error.
+ */
+export async function checkMigration(
+  previousXml: string,
+  nextXml: string,
+  live: ReadonlySet<string>,
+  knownJobTypes?: ReadonlySet<string>,
+): Promise<MigrationCheck> {
+  if ((await definitionsId(previousXml)) !== (await definitionsId(nextXml))) {
+    return {
+      ok: false,
+      removed: [],
+      reason:
+        "<bpmn:definitions id> must not change -- recovery matches a snapshot to a graph on that id, and " +
+        "recoverWithGraph refuses a mismatch",
+    };
+  }
+
+  const before = await elementIds(previousXml);
+  const after = await elementIds(nextXml);
+  const removedLive = [...before].filter((id) => !after.has(id) && live.has(id));
+  if (removedLive.length > 0) {
+    return {
+      ok: false,
+      removed: removedLive,
+      reason: `these elements have live state and cannot be removed or renamed: ${removedLive.join(", ")}`,
+    };
+  }
+
+  if (knownJobTypes) {
+    const added = new Set([...after].filter((id) => !before.has(id)));
+    const jobTypes = await checkJobTypes(nextXml, added, knownJobTypes);
+    if (!jobTypes.ok) return { ok: false, removed: [], reason: jobTypes.reason };
+  }
+
+  return { ok: true, removed: [] };
 }
 
 export interface RecoverOptions {

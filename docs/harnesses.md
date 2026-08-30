@@ -23,8 +23,19 @@ harness returns: `status`, `summary`, `findings`, `artifacts`, `next_action`).
 | `agent:prepare-next-turn` | Pi's `prepareNextTurn` seam: decides whether the inner loop should stop. Deliberately does not touch the system prompt or tool list -- both sit in front of every message in the prompt cache, so changing them here discards it on every iteration (see `docs/research/05-pi-loops-and-token-cache.md`). | in: `stop_reason`; out: `should_stop` |
 | `graph:layout` | Runs `bpmn-auto-layout` over a fragment (or the current session graph). | in: `fragment` (optional); out: `fragment` (laid out) |
 | `graph:lint` | Checks that a proposed fragment is a valid, additive splice into the current session graph, and that every new activity's `zeebe:taskDefinition type` names a registered harness, before anything applies it. Does **not** check that the type is wired to the right inputs, outputs or headers ([#40](https://github.com/datakurre/graph-agent/issues/40); see AGENTS.md's "bundled graphs" section). | in: `fragment`; out: `added`, `attempt` |
-| `graph:extend` | The self-mutation primitive: replaces the session graph with the fragment spliced in. Runs the same additive-and-registered-job-type check as `graph:lint` (`checkSplice`), not just an id comparison. Stable ids only -- `bpmn-engine` replays recovered child state by element id, so a fragment that renames or removes a live element cannot be recovered. The running engine is stopped and resumed against the new graph immediately after (bounded to 5 re-entries per run), so an element the splice adds gets a chance to run in the same `run`/`resume` invocation rather than only the next one ([#45](https://github.com/datakurre/graph-agent/issues/45)). | in: `fragment`; out: `added` |
+| `graph:extend` | The self-mutation primitive: replaces the session graph with the fragment spliced in. Runs the same additive-and-registered-job-type check as `graph:lint` (`checkSplice`), not just an id comparison -- stricter than a studio edit's `checkMigration` (see below), which only protects elements the token has actually reached. Stable ids only -- `bpmn-engine` replays recovered child state by element id, so a fragment that renames or removes a live element cannot be recovered. The running engine is stopped and resumed against the new graph immediately after (bounded to 5 re-entries per run), so an element the splice adds gets a chance to run in the same `run`/`resume` invocation rather than only the next one ([#45](https://github.com/datakurre/graph-agent/issues/45)). | in: `fragment`; out: `added` |
 | `shell` | A deterministic step: runs a command and reports its exit status. No model call. | headers: `command` (required), `fail_on_error` (default `true`); out: `exit_code`, `stdout`, `stderr` |
+
+### Editing a running session's graph
+
+`PUT /api/sessions/:id/graph` (the studio's session page "Edit" button) checks
+a human edit with `checkMigration` (`src/agent/graph.ts`), not `checkSplice`:
+it may delete or rewire an element the token has never reached, since
+`Definition.recover()` only replays state for `meta.visited ∪ meta.tokens` --
+deleting or renaming one of *those* is rejected with `409` and the offending
+id(s), the same as `graph:extend`'s stricter rule would reject any removal at
+all. It still applies `checkSplice`'s job-type contract to any genuinely new
+activity, and refuses a changed `<bpmn:definitions id>` outright (issue #46).
 
 ### Verifying this table
 

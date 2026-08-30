@@ -466,4 +466,12 @@
   .djs-element.ga-visited .djs-visual > :nth-child(1) {
     stroke: var(--color-sky) !important;
   }
+
+  /* Session editor: an element the token has visited or currently stands on --
+     deleting or renaming it is rejected server-side (checkMigration), and this
+     is the visual warning before someone tries. */
+  .djs-element.ga-locked .djs-visual > :nth-child(1) {
+    stroke: var(--color-danger) !important;
+    stroke-dasharray: 4, 2 !important;
+  }
 }

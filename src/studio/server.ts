@@ -25,7 +25,24 @@ import {
   staticDir,
   type Paths,
 } from "../agent/paths.ts";
+import { checkMigration } from "../agent/graph.ts";
+import { createHarnesses, type HarnessDeps } from "../agent/harnesses.ts";
 import type { GraphSummary, ProjectInfo, StudioEvent } from "./types.ts";
+
+/** The harness registry's own keys, for checkMigration's job-type contract -- no live deps are ever invoked here, only Object.keys(). */
+const KNOWN_JOB_TYPES = new Set(
+  Object.keys(
+    createHarnesses({
+      pi: {} as HarnessDeps["pi"],
+      tools: {} as HarnessDeps["tools"],
+      store: {} as HarnessDeps["store"],
+      getGraph: () => "",
+      setGraph: () => {},
+      takeSteering: () => [],
+      takeFollowUp: () => [],
+    }),
+  ),
+);
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -62,7 +79,7 @@ export async function startStudio(options: StudioOptions): Promise<Studio> {
   const pagesDir = join(staticDir(), "pages");
 
   const server = createServer((req, res) => {
-    void handle(req, res, options, pagesDir).catch((error: unknown) => {
+    void handle(req, res, options, pagesDir, broadcast).catch((error: unknown) => {
       send(res, 500, "text/plain", error instanceof Error ? error.message : String(error));
     });
   });
@@ -123,6 +140,7 @@ async function handle(
   res: ServerResponse,
   options: StudioOptions,
   pagesDir: string,
+  broadcast: (event: StudioEvent) => void,
 ): Promise<void> {
   const { paths, project } = options;
   const url = new URL(req.url ?? "/", "http://localhost");
@@ -156,6 +174,39 @@ async function handle(
     const store = new SessionStore(paths, decodeURIComponent(sessionMatch[1] as string));
     if (!store.exists()) return sendJson(res, 404, { error: "unknown session" });
     return sendJson(res, 200, store.detail());
+  }
+
+  // ---- a session's own graph: read it, or edit it with the migration guard
+  // (issue #46) rather than the library's stricter, additive-only checkSplice.
+  const sessionGraphMatch = /^\/api\/sessions\/([^/]+)\/graph$/.exec(path);
+  if (sessionGraphMatch) {
+    const store = new SessionStore(paths, decodeURIComponent(sessionGraphMatch[1] as string));
+    if (!store.exists()) return sendJson(res, 404, { error: "unknown session" });
+
+    if (req.method === "PUT") {
+      const body = (await readJson(req)) as { xml?: string };
+      if (!body.xml) return sendJson(res, 400, { error: "xml is required" });
+      const current = store.currentGraph();
+      if (current === null) return sendJson(res, 404, { error: "session has no graph" });
+
+      const meta = store.readMeta();
+      const live = new Set([...meta.visited, ...meta.tokens]);
+      let check;
+      try {
+        check = await checkMigration(current, body.xml, live, KNOWN_JOB_TYPES);
+      } catch (error) {
+        return sendJson(res, 400, { error: `not valid BPMN: ${error instanceof Error ? error.message : String(error)}` });
+      }
+      if (!check.ok) return sendJson(res, 409, { error: check.reason, removed: check.removed });
+
+      store.appendGraph(body.xml, "studio edit", []);
+      broadcast({ type: "session_changed", sessionId: store.id });
+      return sendJson(res, 200, { revisions: store.readMeta().revisions.length });
+    }
+
+    const xml = store.currentGraph();
+    if (xml === null) return sendJson(res, 404, { error: "session has no graph" });
+    return send(res, 200, "application/xml; charset=utf-8", xml);
   }
 
   // ---- the shared graph library

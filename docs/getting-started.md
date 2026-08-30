@@ -229,6 +229,17 @@ Opening `/graph?id=shell-demo` shows the diagram above in the modeler, with
 the Camunda 8 element templates (including "Shell Command") available from
 the properties panel. See the [screenshots on the front page](index.html).
 
+A session's own graph opens read-only, but "Edit" swaps the viewer for the
+same modeler and properties panel the library editor uses
+([#46](https://github.com/datakurre/graph-agent/issues/46)). An element the
+token has visited or currently stands on is outlined in red -- deleting or
+renaming it is rejected when you save, since recovery replays that element's
+state by id; deleting one the token has never reached is fine. Saving
+appends a new revision the same way `graph:extend` does, tagged `studio
+edit`, and a running session picks it up the next time it stops and resumes
+(see ["a spliced-in step" above](#extending-a-graph-from-inside-a-session)
+for what "the next time" means for a run already in flight).
+
 `scripts/screenshot-docs.mjs` produces the screenshots in this repo's own
 `docs/` by driving the real CLI and a real Chromium against a throwaway
 workspace -- run it after any studio change to refresh them.

@@ -9,6 +9,10 @@ let viewer: BpmnDiagramInstance | null = null;
 let renderedGraph: string | null = null;
 let markedElements: Array<{ id: string; marker: string }> = [];
 
+let modeler: BpmnDiagramInstance | null = null;
+let editing = false;
+let latestDetail: SessionDetail | null = null;
+
 const sessionId = new URLSearchParams(location.search).get("id") ?? "";
 
 /**
@@ -137,6 +141,7 @@ async function refresh(): Promise<void> {
     return;
   }
   const detail: SessionDetail = await res.json();
+  latestDetail = detail;
 
   const title = $("session-title");
   if (title) title.textContent = detail.name || detail.id;
@@ -149,8 +154,10 @@ async function refresh(): Promise<void> {
     }`;
   }
 
-  // The session graph mutates, so re-import only when the XML actually changed.
-  if (viewer && detail.graph && detail.graph !== renderedGraph) {
+  // The session graph mutates, so re-import only when the XML actually changed
+  // -- and never while a studio edit is in progress, which would yank the
+  // diagram out from under whoever is editing it.
+  if (viewer && !editing && detail.graph && detail.graph !== renderedGraph) {
     await viewer.importXML(detail.graph);
     renderedGraph = detail.graph;
     markedElements = [];
@@ -159,6 +166,145 @@ async function refresh(): Promise<void> {
   paintTokens(detail);
   renderTurns(detail.turns);
   renderRevisions(detail);
+}
+
+function editMsg(message: string, tone: "ok" | "error" | "none" = "none"): void {
+  const host = $("edit-msg");
+  if (!host) return;
+  host.classList.toggle("hidden", tone === "none");
+  host.className =
+    tone === "none"
+      ? "hidden"
+      : tone === "ok"
+        ? "mb-2 p-2 rounded-md text-xs bg-accent-dim text-accent border border-accent-border"
+        : "mb-2 p-2 rounded-md text-xs bg-danger-dim text-danger border border-danger-border";
+  host.textContent = message;
+}
+
+/** Elements the token has visited or currently stands on -- checkMigration rejects removing or renaming any of these. */
+function liveIds(detail: SessionDetail): Set<string> {
+  return new Set([...detail.visited, ...detail.tokens]);
+}
+
+async function ensureModeler(): Promise<BpmnDiagramInstance | null> {
+  if (modeler) return modeler;
+  const ModelerCtor = window.BpmnModeler || window.BpmnJS;
+  if (!ModelerCtor) return null;
+  modeler = new (
+    ModelerCtor as new (options: {
+      container: string;
+      propertiesPanel?: { parent: string };
+      additionalModules?: unknown[];
+      moddleExtensions?: Record<string, unknown>;
+      linting?: { bpmnlint: { config: { rules: Record<string, string> }; resolver: unknown }; active: boolean };
+      elementTemplateIconRenderer?: { iconProperty: string };
+    }) => BpmnDiagramInstance
+  )({
+    container: "#editor",
+    propertiesPanel: { parent: "#properties-panel" },
+    additionalModules: [
+      window.BpmnPropertiesPanelModule,
+      window.BpmnPropertiesProviderModule,
+      window.ElementTemplatesPropertiesProviderModule,
+      window.minimapModule,
+      window.CreateAppendAnythingModule,
+      window.CreateAppendElementTemplatesModule,
+      window.BpmnlintModule,
+      window.ElementTemplateChooserModule,
+      window.ElementTemplateIconRendererModule,
+      window.ElementTemplatesExtendModule,
+    ].filter(Boolean),
+    moddleExtensions: { zeebe: window.zeebeModdleDescriptor || {} },
+    linting: window.BpmnlintRecommendedConfig
+      ? { bpmnlint: window.BpmnlintRecommendedConfig, active: true }
+      : undefined,
+    elementTemplateIconRenderer: { iconProperty: "zeebe:modelerTemplateIcon" },
+  });
+  try {
+    const res = await fetch("/api/element-templates");
+    if (res.ok) modeler.get("elementTemplatesLoader").setTemplates(await res.json());
+  } catch {
+    // element templates are optional; the editor works without them
+  }
+  // Exposed so scripts/verify-editor.mjs (and anything else driving the page)
+  // can reach the modeler without scraping internals off the DOM -- the same
+  // hook graph.ts's editor already provides.
+  (window as unknown as { __modeler?: unknown }).__modeler = modeler;
+  return modeler;
+}
+
+/** Marks every live element so an edit is at least visually warned before it is attempted -- checkMigration is the actual enforcement. */
+function markLocked(instance: BpmnDiagramInstance, ids: Set<string>): void {
+  const canvas = instance.get("canvas");
+  for (const id of ids) {
+    try {
+      canvas.addMarker(id, "ga-locked");
+    } catch {
+      // not in this revision
+    }
+  }
+}
+
+async function enterEdit(): Promise<void> {
+  if (!latestDetail) return;
+  const instance = await ensureModeler();
+  if (!instance) return editMsg("Editor failed to load.", "error");
+
+  editing = true;
+  $("viewer")?.classList.add("hidden");
+  $("editor")?.classList.remove("hidden");
+  $("properties-container")?.classList.remove("hidden");
+  $("properties-container")?.classList.add("flex");
+  $("edit-btn")?.classList.add("hidden");
+  $("save-btn")?.classList.remove("hidden");
+  $("cancel-btn")?.classList.remove("hidden");
+  editMsg("", "none");
+
+  await instance.importXML(latestDetail.graph);
+  markLocked(instance, liveIds(latestDetail));
+  fitDiagram(instance);
+}
+
+function exitEdit(): void {
+  editing = false;
+  $("editor")?.classList.add("hidden");
+  $("properties-container")?.classList.add("hidden");
+  $("properties-container")?.classList.remove("flex");
+  $("viewer")?.classList.remove("hidden");
+  $("edit-btn")?.classList.remove("hidden");
+  $("save-btn")?.classList.add("hidden");
+  $("cancel-btn")?.classList.add("hidden");
+  // Force the viewer to pick up whatever is now current, including a save
+  // that just landed.
+  renderedGraph = null;
+  void refresh();
+}
+
+async function saveEdit(): Promise<void> {
+  if (!modeler) return;
+  const { xml } = await modeler.saveXML({ format: true });
+  const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/graph`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ xml }),
+  });
+  if (res.status === 409) {
+    const body = (await res.json()) as { error?: string; removed?: string[] };
+    editMsg(
+      body.removed?.length
+        ? `Cannot save: ${body.error} (${body.removed.join(", ")})`
+        : (body.error ?? "Cannot save: rejected"),
+      "error",
+    );
+    return;
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    editMsg(`Save failed: ${body.error ?? res.statusText}`, "error");
+    return;
+  }
+  editMsg("Saved as a new revision.", "ok");
+  exitEdit();
 }
 
 async function init(): Promise<void> {
@@ -184,6 +330,13 @@ async function init(): Promise<void> {
   }
 
   await refresh();
+
+  const editBtn = $("edit-btn");
+  if (editBtn) editBtn.onclick = () => void enterEdit();
+  const cancelBtn = $("cancel-btn");
+  if (cancelBtn) cancelBtn.onclick = () => exitEdit();
+  const saveBtn = $("save-btn");
+  if (saveBtn) saveBtn.onclick = () => void saveEdit();
 
   connectStudioEvents("/ws", (event) => {
     if (event.type === "session_changed" && event.sessionId !== sessionId) return;
