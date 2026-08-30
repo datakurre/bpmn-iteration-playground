@@ -291,50 +291,51 @@ graph at one revision, as it should.
 
 ### Review an approved fragment yourself
 
-`graph:lint` verifies that a fragment is valid BPMN and an *additive* splice.
-It does **not** check that each new activity's `zeebe:taskDefinition type`
-names a harness that exists
-([#40](https://github.com/datakurre/graph-agent/issues/40)). In the run above
-the model wrote:
+`graph:lint` verifies that a fragment is valid BPMN, an *additive* splice, and
+that every new activity's `zeebe:taskDefinition type` names a harness that
+exists. The drafting model is also given the real job-type vocabulary up
+front, so a run like the one above no longer invents a plausible-looking type
+such as `shell:exec` -- lint rejects it and the redraft loop gets a chance to
+correct it ([#40](https://github.com/datakurre/graph-agent/issues/40)).
+
+What lint does **not** check is a *real* job type wired to the wrong
+inputs, outputs or headers. A model could just as easily write:
 
 ```xml
-<zeebe:taskDefinition type="shell:exec" />
+<zeebe:taskDefinition type="shell" />
 <zeebe:input source="=&quot;npm test&quot;" target="command" />
 <zeebe:output source="=exitCode" target="test_exit_code" />
 ```
 
-The registry has `shell`, not `shell:exec`; `shell` takes its command from
-`zeebe:taskHeaders`, not `ioMapping`; and its output is `exit_code`, not
-`exitCode`. Lint reported `adds 2 element(s)` and the splice was applied. It
-surfaces only when something runs the extended graph:
-
-```
-error: no harness registered for 'shell:exec' (activity run_npm_test)
-```
-
-The drafting model is not given the list of real job types, so it invents
-plausible-looking ones. Read [the harness reference](harnesses.html) and check
-the fragment at the `review_fragment` gate before approving.
+`shell` is a real, registered job type, so lint reports `adds 2 element(s)`
+and the splice is applied. But `shell` takes its command from
+`zeebe:taskHeaders`, not `ioMapping`, and its output is `exit_code`, not
+`exitCode` -- so the command header is empty and `test_exit_code` never gets
+set. This only surfaces when something actually runs the extended graph. Read
+[the harness reference](harnesses.html) for each job type's real inputs,
+outputs and headers, and check the fragment against it at the
+`review_fragment` gate before approving -- lint checking "additive, and a
+registered job type" is not the same as lint checking "will run correctly".
 
 ## Keeping the graph library current
 
 `graph-agent init` seeds `$XDG_CONFIG_HOME/graph-agent/workflows` but **never
-overwrites**, by design: the library is yours and shared across projects. The
-cost is that a bundled graph fixed upstream never reaches a library seeded
-before the fix, and nothing warns you
-([#35](https://github.com/datakurre/graph-agent/issues/35)). A graph that
-"still" misbehaves after a fix landed is worth checking first:
+overwrites without being asked**, by design: the library is yours and shared
+across projects. Running plain `graph-agent init` again reports any bundled
+graph whose content now differs from your library copy as stale, but leaves
+it alone; `graph-agent init --refresh` takes the bundled version of each one
+(backing up your copy as `.bak` first). A graph that "still" misbehaves after
+a fix landed is worth refreshing (or diffing) first
+([#35](https://github.com/datakurre/graph-agent/issues/35)):
 
 ```
-for f in workflows/*.bpmn; do
-  diff -q "$f" "$(graph-agent where | awk '/^graphs/{print $2}')/$(basename "$f")"
-done
+$ graph-agent init --refresh
+refreshed from the bundled version (old copy backed up as .bak): pi-default-loop
 ```
 
-Copy the bundled file over your library copy to take the fix (back up first if
-you have edited it). This is not hypothetical: it made a fixed defect look open
-here, and it left the default graph running without a fix that had stopped it
-billing 110 turns.
+This is not hypothetical: a stale library copy made a fixed defect look open
+here, and it once left the default graph running without a fix that had
+stopped it billing 110 turns.
 
 ## Troubleshooting
 
