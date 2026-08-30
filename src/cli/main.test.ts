@@ -1,11 +1,11 @@
 // @vitest-environment node
 import { describe, expect, it, beforeAll } from "vitest";
 import { EventEmitter } from "node:events";
-import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdtempSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { installEpipeGuard } from "./main.ts";
+import { installEpipeGuard, parseAnswers, answersFor, boundedOnWait } from "./main.ts";
 import { ensurePaths, paths as resolvePaths } from "../agent/paths.ts";
 import { SessionStore } from "../agent/session-store.ts";
 
@@ -133,4 +133,202 @@ describe("cmdStudio flags (issue #56)", () => {
     const { stderr } = await runStudio(["--host", "127.0.0.1", "--no-open"]);
     expect(stderr).not.toMatch(/no authentication/);
   }, 20000);
+});
+
+describe("--answer scoping (issue #44)", () => {
+  describe("parseAnswers / answersFor", () => {
+    it("puts a bare key=value in the unscoped bucket, which answers every activity", () => {
+      const answers = parseAnswers(["intent=hello"]);
+      expect(answersFor(answers, "await_intent")).toEqual({ intent: "hello" });
+      expect(answersFor(answers, "review_fragment")).toEqual({ intent: "hello" });
+    });
+
+    it("scopes activity:key=value to that activity only", () => {
+      const answers = parseAnswers(["await_intent:intent=hello"]);
+      expect(answersFor(answers, "await_intent")).toEqual({ intent: "hello" });
+      expect(answersFor(answers, "review_fragment")).toBeUndefined();
+    });
+
+    it("merges the unscoped bucket under a scoped one for the same activity", () => {
+      const answers = parseAnswers(["done=true", "await_intent:intent=hello"]);
+      expect(answersFor(answers, "await_intent")).toEqual({ done: true, intent: "hello" });
+      expect(answersFor(answers, "review_fragment")).toEqual({ done: true });
+    });
+
+    it("a scoped value overrides an unscoped one for the same key at that activity", () => {
+      const answers = parseAnswers(["approval=reject", "review_fragment:approval=apply"]);
+      expect(answersFor(answers, "review_fragment")).toEqual({ approval: "apply" });
+      expect(answersFor(answers, "other_gate")).toEqual({ approval: "reject" });
+    });
+
+    it("a colon after the first '=' is part of the value, not a scope separator", () => {
+      const answers = parseAnswers(["command=echo a:b"]);
+      expect(answersFor(answers, "anything")).toEqual({ command: "echo a:b" });
+    });
+
+    it("coerces true/false/number values, per activity", () => {
+      const answers = parseAnswers(["gate:flag=true", "gate:count=3", "gate:label=x"]);
+      expect(answersFor(answers, "gate")).toEqual({ flag: true, count: 3, label: "x" });
+    });
+
+    it("rejects a pair with no '='", () => {
+      expect(() => parseAnswers(["nokeyvalue"])).toThrow(/is not/);
+    });
+
+    it("returns undefined for an activity with neither a scoped nor unscoped answer", () => {
+      const answers = parseAnswers(["a:x=1"]);
+      expect(answersFor(answers, "b")).toBeUndefined();
+    });
+  });
+
+  describe("boundedOnWait", () => {
+    it("answers the same activity up to the cap, then reports it and leaves the gate parked", () => {
+      const answers = parseAnswers(["x=1"]);
+      const onWait = boundedOnWait(answers);
+      const chunks: string[] = [];
+      const original = process.stderr.write.bind(process.stderr);
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(String(chunk));
+        return true;
+      }) as typeof process.stderr.write;
+      try {
+        for (let i = 0; i < 5; i++) {
+          expect(onWait("gate")).toEqual({ x: 1 });
+        }
+        expect(onWait("gate")).toBeUndefined();
+      } finally {
+        process.stderr.write = original;
+      }
+      expect(chunks.join("")).toMatch(/gate was auto-answered 5 times/);
+    });
+
+    it("counts each activity id on its own budget", () => {
+      const answers = parseAnswers(["x=1"]);
+      const onWait = boundedOnWait(answers);
+      for (let i = 0; i < 5; i++) onWait("a");
+      expect(onWait("b")).toEqual({ x: 1 });
+    });
+  });
+
+  describe("run/resume across two gates (CLI, session-skeleton's own shape)", () => {
+    const distFile = join(import.meta.dirname, "..", "..", "dist", "graph-agent.js");
+    const NS =
+      'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"';
+    const FORM =
+      '<zeebe:userTaskForm id="gate_form">{"components":[{"label":"Key","type":"textfield","key":"key","id":"key"}]}</zeebe:userTaskForm>';
+
+    // Two human gates in sequence, each publishing the same form field under a
+    // different process variable -- close to session-skeleton's own
+    // await_intent/review_fragment shape, but self-contained. Both gates read
+    // a form field literally named "key" so an *unscoped* `--answer key=...`
+    // can satisfy either one, which is exactly the cross-contamination #44
+    // reports: a payload meant for one gate silently answering another.
+    const twoGates = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_two_gates" ${NS}>
+  <bpmn:process id="two_gates" isExecutable="true">
+    <bpmn:extensionElements>${FORM}</bpmn:extensionElements>
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="gate_a" />
+    <bpmn:userTask id="gate_a" name="Gate A">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:formDefinition formId="gate_form" />
+        <zeebe:ioMapping><zeebe:output source="=key" target="a_value" /></zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="gate_a" targetRef="gate_b" />
+    <bpmn:userTask id="gate_b" name="Gate B">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:formDefinition formId="gate_form" />
+        <zeebe:ioMapping><zeebe:output source="=key" target="b_value" /></zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming><bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="gate_b" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f3</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+
+    // A single gate whose only outgoing flow loops back onto itself
+    // unconditionally -- nothing in the graph itself ever stops asking. Used
+    // to prove the auto-answer cap actually bounds a run that an unscoped
+    // `--answer` would otherwise keep re-satisfying forever.
+    const loopGate = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_loop_gate" ${NS}>
+  <bpmn:process id="loop_gate" isExecutable="true">
+    <bpmn:extensionElements>${FORM}</bpmn:extensionElements>
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="gate" />
+    <bpmn:userTask id="gate" name="Loop gate">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:formDefinition formId="gate_form" />
+        <zeebe:ioMapping><zeebe:output source="=key" target="value" /></zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:incoming>loop</bpmn:incoming>
+      <bpmn:outgoing>loop</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="loop" sourceRef="gate" targetRef="gate" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+    function project(): { env: NodeJS.ProcessEnv; workflowsDir: string } {
+      const home = mkdtempSync(join(tmpdir(), "graph-agent-answer-"));
+      const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
+      execFileSync("node", [distFile, "init"], { env });
+      const workflowsDir = join(home, "config", "graph-agent", "workflows");
+      writeFileSync(join(workflowsDir, "two_gates.bpmn"), twoGates);
+      writeFileSync(join(workflowsDir, "loop_gate.bpmn"), loopGate);
+      return { env, workflowsDir };
+    }
+
+    function runCli(env: NodeJS.ProcessEnv, args: string[]): { stdout: string; stderr: string; code: number | null } {
+      const result = spawnSync("node", [distFile, ...args], { env, encoding: "utf8" });
+      return { stdout: result.stdout, stderr: result.stderr, code: result.status };
+    }
+
+    it("a scoped answer for gate_a does not also answer gate_b", () => {
+      const { env } = project();
+      const { stdout } = runCli(env, ["run", "--graph", "two_gates", "--dry-run", "--answer", "gate_a:key=hello"]);
+      expect(stdout).toContain("stopped");
+      // Not `toBe` -- `postponedIds(engine)`'s snapshot can still list the just
+      // -answered gate_a for one more tick after it ends (a bpmn-elements
+      // getPostponed() staleness independent of answer scoping; the "does the
+      // wrong gate get auto-answered" question the resume test below settles
+      // functionally). The behaviour this test exists to pin is that gate_b is
+      // still parked rather than having been silently answered too.
+      expect(stdout).toContain("waiting on");
+      expect(stdout).toContain("gate_b");
+      expect(stdout).not.toContain("completed");
+    });
+
+    it("an unscoped answer satisfies both gates in one run (documented, opt-in behaviour)", () => {
+      const { env } = project();
+      const { stdout } = runCli(env, ["run", "--graph", "two_gates", "--dry-run", "--answer", "key=hello"]);
+      expect(stdout).toContain("completed");
+      expect(stdout).not.toContain("waiting on");
+    });
+
+    it("resuming with a scoped answer for gate_b completes the session", () => {
+      const { env } = project();
+      const first = runCli(env, ["run", "--graph", "two_gates", "--dry-run", "--answer", "gate_a:key=hello"]);
+      const sessionId = /^session (\S+)/m.exec(first.stdout)?.[1];
+      expect(sessionId).toBeDefined();
+      const second = runCli(env, ["resume", sessionId!, "--dry-run", "--answer", "gate_b:key=world"]);
+      expect(second.stdout).toContain("completed");
+    });
+
+    it("caps how many times an unscoped answer auto-answers the same looping gate", () => {
+      const { env } = project();
+      const { stdout, stderr, code } = runCli(env, ["run", "--graph", "loop_gate", "--dry-run", "--answer", "key=hello"]);
+      // Bounded and reported, not an infinite loop burning turns forever.
+      expect(stderr).toMatch(/gate was auto-answered 5 times/);
+      expect(stdout).toContain("stopped");
+      expect(stdout).toContain("waiting on gate");
+      expect(code).toBe(0);
+    });
+  });
 });

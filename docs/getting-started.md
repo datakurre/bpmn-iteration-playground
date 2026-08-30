@@ -273,21 +273,29 @@ $ graph-agent run "Add a service task that runs 'npm test' after the LLM turn" \
 
 session 61801712  stopped  1 turn(s)
 waiting on lint_fragment, gw_lint, review_fragment
-resume with: graph-agent resume 61801712 --answer key=value
+resume with: graph-agent resume 61801712 --answer review_fragment:key=value
 ```
 
 Approve it and the session's own control flow changes:
 
 ```
-$ graph-agent resume 61801712 --answer approval=apply --model anthropic/claude-haiku-4-5
+$ graph-agent resume 61801712 --answer review_fragment:approval=apply --model anthropic/claude-haiku-4-5
   apply_extension  graph:extend  spliced in 2 element(s)
 
 session 61801712  completed  1 turn(s)
 ```
 
 `graph-agent show` then reports `graph revisions: 2`, and revision `001.bpmn`
-really does contain the new element. `--answer approval=reject` leaves the
-graph at one revision, as it should.
+really does contain the new element. `--answer review_fragment:approval=reject`
+leaves the graph at one revision, as it should.
+
+`--answer` accepts a bare `key=value` too, which answers *any* gate that asks
+for that key -- convenient for a graph with one gate, like `craft-graph`
+above, but scope it to one activity (`activity:key=value`, as above) once a
+graph has more than one: an unscoped answer is replayed at every gate that
+parks, which is how an unrelated payload (say, the intent that started the
+session) used to get fed to an approval gate it was never meant to answer
+([#44](https://github.com/datakurre/graph-agent/issues/44)).
 
 ### Review an approved fragment yourself
 

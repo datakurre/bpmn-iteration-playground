@@ -44,7 +44,14 @@ Options
                         model, or the first model with credentials)
   --dry-run            walk the graph without calling a model
   --name <name>        label the session
-  --answer key=value   answer a parked human gate (resume only; repeatable)
+  --answer [activity:]key=value
+                        answer a parked human gate reached during run/resume
+                        (repeatable). Unscoped (bare key=value) answers apply
+                        to whichever gate asks for that key, at every gate
+                        that parks during the run -- scope one to a single
+                        activity with 'activity:key=value' so a payload
+                        meant for one gate (e.g. an intent) is never replayed
+                        at another (e.g. an unrelated approval)
   --port <n>           studio port (0 picks a free one)
   --host <addr>        studio bind address (default: loopback only; the
                         studio has no authentication, so a non-loopback
@@ -247,9 +254,21 @@ interface RunFlags {
   model?: string;
   dryRun: boolean;
   name?: string;
-  answer?: Record<string, unknown>;
+  answer?: ScopedAnswers;
   positionals: string[];
 }
+
+/**
+ * `--answer` payloads keyed by the activity they answer, `"*"` for an
+ * unscoped one that applies to whichever gate asks for that key. See
+ * `answersFor` and issue #44: a single global payload replayed at every gate
+ * is how `run --graph session-skeleton` used to loop forever, since the
+ * intent answer meant for `await_intent` was also fed to `review_fragment`'s
+ * approval gate.
+ */
+type ScopedAnswers = Map<string, Record<string, unknown>>;
+
+const UNSCOPED = "*";
 
 function runFlags(args: string[]): RunFlags {
   const { values, positionals } = parseArgs({
@@ -274,17 +293,74 @@ function runFlags(args: string[]): RunFlags {
   };
 }
 
-/** `key=value` pairs from repeated `--answer`, coercing obvious booleans and numbers. */
-function parseAnswers(pairs: string[]): Record<string, unknown> {
-  const answer: Record<string, unknown> = {};
+/**
+ * `[activity:]key=value` pairs from repeated `--answer`, coercing obvious
+ * booleans and numbers. A colon before the first `=` scopes the pair to one
+ * activity id; otherwise it lands in the unscoped bucket. Activity ids never
+ * contain `=`, and a value is free to contain `:` (only the first colon
+ * ahead of the first `=` is treated as the scope separator), so
+ * `--answer command=echo a:b` is `{command: "echo a:b"}` unscoped, and
+ * `--answer review_fragment:approval=apply` scopes to `review_fragment`.
+ */
+export function parseAnswers(pairs: string[]): ScopedAnswers {
+  const answers: ScopedAnswers = new Map();
   for (const pair of pairs) {
-    const eq = pair.indexOf("=");
-    if (eq === -1) throw new Error(`--answer '${pair}' is not 'key=value'`);
-    const key = pair.slice(0, eq);
-    const raw = pair.slice(eq + 1);
-    answer[key] = raw === "true" ? true : raw === "false" ? false : raw !== "" && !Number.isNaN(Number(raw)) ? Number(raw) : raw;
+    const colon = pair.indexOf(":");
+    const firstEq = pair.indexOf("=");
+    const scoped = colon !== -1 && (firstEq === -1 || colon < firstEq);
+    const scope = scoped ? pair.slice(0, colon) : UNSCOPED;
+    const rest = scoped ? pair.slice(colon + 1) : pair;
+
+    const eq = rest.indexOf("=");
+    if (eq === -1) throw new Error(`--answer '${pair}' is not '[activity:]key=value'`);
+    const key = rest.slice(0, eq);
+    const raw = rest.slice(eq + 1);
+    const value = raw === "true" ? true : raw === "false" ? false : raw !== "" && !Number.isNaN(Number(raw)) ? Number(raw) : raw;
+
+    const bucket = answers.get(scope) ?? {};
+    bucket[key] = value;
+    answers.set(scope, bucket);
   }
-  return answer;
+  return answers;
+}
+
+/** The unscoped bucket merged under whatever is scoped to this activity, or `undefined` when neither exists. */
+export function answersFor(answers: ScopedAnswers, activityId: string): Record<string, unknown> | undefined {
+  const wildcard = answers.get(UNSCOPED);
+  const scoped = answers.get(activityId);
+  if (wildcard === undefined && scoped === undefined) return undefined;
+  return { ...wildcard, ...scoped };
+}
+
+/**
+ * Caps how many times the same activity id may be auto-answered from
+ * `--answer` in a single run/resume invocation. An unscoped answer is meant
+ * to apply wherever its key is asked for, which can legitimately be the same
+ * activity more than once (a loop that revisits a gate) -- but nothing else
+ * bounds that, so a graph that cannot otherwise terminate would keep
+ * replaying the same payload and billing a model turn per lap forever. Once
+ * the cap is hit this reports the same "leave it parked, snapshot and stop"
+ * outcome an unanswered gate gets, rather than throwing out of an
+ * event-emitter callback.
+ */
+const MAX_AUTO_ANSWERS_PER_ACTIVITY = 5;
+
+export function boundedOnWait(answers: ScopedAnswers): (activityId: string) => Record<string, unknown> | undefined {
+  const seen = new Map<string, number>();
+  return (activityId) => {
+    const answer = answersFor(answers, activityId);
+    if (answer === undefined) return undefined;
+    const count = (seen.get(activityId) ?? 0) + 1;
+    seen.set(activityId, count);
+    if (count > MAX_AUTO_ANSWERS_PER_ACTIVITY) {
+      process.stderr.write(
+        `graph-agent: ${activityId} was auto-answered ${count - 1} times with the same payload; ` +
+          `scope your answer with --answer ${activityId}:key=value if it should not be replayed here.\n`,
+      );
+      return undefined;
+    }
+    return answer;
+  };
 }
 
 async function resolveRunModel(flags: RunFlags, p: Paths): Promise<Awaited<ReturnType<typeof resolveModel>>> {
@@ -343,7 +419,7 @@ async function cmdRun(args: string[]): Promise<number> {
       streamFn: chosen.streamFn,
       tools: createPiToolExecutor(project),
       onProgress: (line) => process.stdout.write(`  ${line}\n`),
-      ...(flags.answer === undefined ? {} : { onWait: () => flags.answer }),
+      ...(flags.answer === undefined ? {} : { onWait: boundedOnWait(flags.answer) }),
       signal,
     }),
   );
@@ -386,7 +462,7 @@ async function cmdResume(args: string[]): Promise<number> {
         streamFn: chosen.streamFn,
         tools: createPiToolExecutor(projectId()),
         onProgress: (line) => process.stdout.write(`  ${line}\n`),
-        ...(flags.answer === undefined ? {} : { onWait: () => flags.answer }),
+        ...(flags.answer === undefined ? {} : { onWait: boundedOnWait(flags.answer) }),
         signal,
       }),
     );
@@ -408,7 +484,8 @@ function reportWait(p: Paths, sessionId: string, outcome: string): void {
   const tokens = new SessionStore(p, sessionId).readMeta().tokens;
   if (tokens.length === 0) return;
   process.stdout.write(
-    `waiting on ${tokens.join(", ")}\nresume with: graph-agent resume ${sessionId} --answer key=value\n`,
+    `waiting on ${tokens.join(", ")}\n` +
+      `resume with: graph-agent resume ${sessionId} --answer ${tokens[0]}:key=value\n`,
   );
 }
 
