@@ -76,3 +76,61 @@ describe("piping CLI output to a short consumer (issue #41)", () => {
     expect(stderr).not.toContain("EPIPE");
   }, 20000);
 });
+
+describe("cmdStudio flags (issue #56)", () => {
+  const distFile = join(import.meta.dirname, "..", "..", "dist", "graph-agent.js");
+
+  async function runStudio(args: string[]): Promise<{ stdout: string; stderr: string }> {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-studio-"));
+    execFileSync("node", [distFile, "init"], {
+      env: { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") },
+    });
+    const cli = spawn("node", [distFile, "studio", "--port", "0", ...args], {
+      env: { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    cli.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+    cli.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    // The bundle pulls in bpmn-engine/ws/etc, so cold start to first output can
+    // take over a second -- wait for the banner rather than a fixed delay, then
+    // give the (synchronous, immediately-following) host warning and best-effort
+    // browser-opener spawn a moment to run before shutting down.
+    await new Promise<void>((resolve) => {
+      const check = (): void => {
+        if (stdout.includes("graph-agent studio")) resolve();
+      };
+      cli.stdout.on("data", check);
+      check();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    cli.kill("SIGINT");
+    await new Promise<void>((resolve) => cli.on("close", () => resolve()));
+    return { stdout, stderr };
+  }
+
+  it("does not crash when the default --open cannot find a browser opener", async () => {
+    // No PATH assumption made about xdg-open/open/start being installed --
+    // the point is that a missing opener is best-effort, never fatal.
+    const { stderr } = await runStudio([]);
+    expect(stderr).not.toContain("Unhandled 'error' event");
+    expect(stderr).not.toContain("ENOENT");
+  }, 20000);
+
+  it("--no-open is honoured (parseArgs has no built-in negation)", async () => {
+    const { stderr } = await runStudio(["--no-open"]);
+    expect(stderr).not.toContain("Unhandled 'error' event");
+  }, 20000);
+
+  it("warns when --host binds off loopback, since the studio has no authentication", async () => {
+    const { stderr } = await runStudio(["--host", "0.0.0.0", "--no-open"]);
+    expect(stderr).toContain("0.0.0.0");
+    expect(stderr).toMatch(/no authentication/);
+  }, 20000);
+
+  it("does not warn for the loopback default", async () => {
+    const { stderr } = await runStudio(["--host", "127.0.0.1", "--no-open"]);
+    expect(stderr).not.toMatch(/no authentication/);
+  }, 20000);
+});

@@ -69,7 +69,7 @@ run: build-cli
 studio: build
 	$(NODE) dist/graph-agent.js studio --port $(PORT)
 
-dev:
+dev: build
 	$(NODE) scripts/dev.mjs
 
 # ---------------------------------------------------------------- check

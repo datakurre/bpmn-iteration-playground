@@ -2,6 +2,7 @@ import { parseArgs } from "node:util";
 import { copyFileSync, existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
 import { graphPath, startStudio } from "../studio/server.ts";
 import { resumeSession, runSession } from "../agent/runner.ts";
 import { createPiToolExecutor } from "../agent/tool-executor.ts";
@@ -45,6 +46,10 @@ Options
   --name <name>        label the session
   --answer key=value   answer a parked human gate (resume only; repeatable)
   --port <n>           studio port (0 picks a free one)
+  --host <addr>        studio bind address (default: loopback only; the
+                        studio has no authentication, so a non-loopback
+                        --host exposes its write routes to the network)
+  --open / --no-open   open the studio URL in a browser (default: --open)
   --all                with ls, include sessions from other projects
   -h, --help           show this help
   -v, --version        show the version
@@ -158,6 +163,31 @@ function cmdWhere(): number {
   return 0;
 }
 
+function isLoopbackHost(host: string): boolean {
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+function openInBrowser(url: string): void {
+  const platform = process.platform;
+  const [command, args] =
+    platform === "darwin"
+      ? ["open", [url]]
+      : platform === "win32"
+        ? ["cmd", ["/c", "start", "", url]]
+        : ["xdg-open", [url]];
+  try {
+    const child = spawn(command, args, { stdio: "ignore", detached: true });
+    // Best-effort: no browser opener available is not fatal, the printed URL
+    // still works -- but an unhandled 'error' event would otherwise crash
+    // the process (spawn() errors are reported asynchronously, so try/catch
+    // alone does not catch e.g. a missing `xdg-open`).
+    child.once("error", () => {});
+    child.unref();
+  } catch {
+    // Synchronous spawn failure (rare); same best-effort story.
+  }
+}
+
 async function cmdStudio(args: string[]): Promise<number> {
   const p = requirePaths();
   if (!p) return 1;
@@ -169,15 +199,20 @@ async function cmdStudio(args: string[]): Promise<number> {
       port: { type: "string" },
       host: { type: "string" },
       open: { type: "boolean", default: true },
+      // parseArgs has no built-in `--no-<flag>` negation; a bare `no-open`
+      // key is how a boolean's negation shows up (see also #56).
+      "no-open": { type: "boolean", default: false },
     },
     allowPositionals: true,
     strict: false,
   });
+  const shouldOpen = Boolean(values.open) && !values["no-open"];
 
+  const host = values.host === undefined ? undefined : String(values.host);
   const studio = await startStudio({
     paths: p,
     project,
-    ...(values.host === undefined ? {} : { host: String(values.host) }),
+    ...(host === undefined ? {} : { host }),
     ...(values.port === undefined ? {} : { port: Number(values.port) }),
   });
 
@@ -185,6 +220,17 @@ async function cmdStudio(args: string[]): Promise<number> {
   process.stdout.write(`  project   ${projectName(project)}  ${project}\n`);
   process.stdout.write(`  sessions  ${studio.url}/\n`);
   process.stdout.write(`  graphs    ${studio.url}/graph\n`);
+
+  if (host !== undefined && !isLoopbackHost(host)) {
+    process.stderr.write(
+      `warning: studio has no authentication and is bound to ${host}, which is not loopback -- ` +
+        `its write routes (e.g. PUT /api/graphs/:id) are reachable from the network.\n`,
+    );
+  }
+
+  if (shouldOpen) {
+    openInBrowser(studio.url);
+  }
 
   await new Promise<void>((done) => {
     const stop = (): void => {
