@@ -435,6 +435,15 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
       try {
         const splice = await checkSplice(deps.getGraph(), fragment, new Set(Object.keys(registry)));
         if (!splice.ok) return failed(splice.reason ?? "the fragment is not an additive splice");
+        // An empty splice.added is a valid additive splice (the model
+        // returned the graph it was shown, unchanged) -- but setGraph writes
+        // a new revision and forces a stop/resume re-entry regardless of
+        // whether anything actually changed (issue #45's mechanism). Applying
+        // that for a no-op churns the engine and inflates the revision
+        // history without ever giving the redraft loop anything new to run
+        // (issue #60), so this is the one case setGraph is deliberately not
+        // called for.
+        if (splice.added.length === 0) return ok("no new elements; graph unchanged", { added: [] });
         deps.setGraph(fragment, "graph:extend", splice.added);
         return ok(`spliced in ${splice.added.length} element(s)`, { added: splice.added });
       } catch (error) {

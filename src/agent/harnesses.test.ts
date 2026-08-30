@@ -218,6 +218,76 @@ describe("graph:lint and graph:extend reject an unregistered job type (issue #40
   });
 });
 
+describe("graph:extend is a no-op on an empty splice (issue #60)", () => {
+  const currentGraph = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="start" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+  function extendHarness(setGraph: HarnessDeps["setGraph"]) {
+    const deps: HarnessDeps = {
+      pi: {} as HarnessDeps["pi"],
+      tools: {} as HarnessDeps["tools"],
+      store: {} as HarnessDeps["store"],
+      getGraph: () => currentGraph,
+      setGraph,
+      takeSteering: () => [],
+      takeFollowUp: () => [],
+    };
+    const extend = createHarnesses(deps)["graph:extend"];
+    if (!extend) throw new Error("no 'graph:extend' harness registered");
+    return extend;
+  }
+
+  it("succeeds without calling setGraph when the fragment adds nothing", async () => {
+    let calls = 0;
+    const extend = extendHarness(() => {
+      calls++;
+    });
+
+    // The model "drafted" the graph it was shown, unchanged -- a valid
+    // additive splice (nothing removed or renamed) that adds zero elements.
+    const result = await extend({
+      activityId: "apply_extension",
+      harness: "graph:extend",
+      properties: {},
+      input: { fragment: currentGraph },
+      variables: {},
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.added).toEqual([]);
+    expect(calls).toBe(0);
+  });
+
+  it("still calls setGraph, and reports what was added, for a genuine splice", async () => {
+    const withMarker = currentGraph.replace(
+      "<bpmn:startEvent id=\"start\" />",
+      '<bpmn:startEvent id="start" /><bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="marker" /><bpmn:endEvent id="marker" />',
+    );
+    const setGraph = (
+      _xml: string,
+      _reason: string,
+      added: string[],
+    ) => {
+      expect(added).toEqual(["f1", "marker"]);
+    };
+    const extend = extendHarness(setGraph);
+
+    const result = await extend({
+      activityId: "apply_extension",
+      harness: "graph:extend",
+      properties: {},
+      input: { fragment: withMarker },
+      variables: {},
+    });
+    expect(result.status).toBe("success");
+    expect(result.added).toEqual(["f1", "marker"]);
+  });
+});
+
 describe("graph:layout strips a wrapping markdown fence (issue #37)", () => {
   function layoutHarness() {
     const deps = {

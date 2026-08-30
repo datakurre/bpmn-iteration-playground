@@ -384,13 +384,17 @@ describe("a splice executes in the same run that drafted it (issue #45)", () => 
     expect(detail.visited).toContain("extend");
   });
 
-  it("bounds re-entry against a graph that never stops re-splicing", async () => {
+  it("bounds re-entry against a graph that never stops growing", async () => {
     // draft -> extend loops back to draft unconditionally, with no end event
-    // reachable at all; the "draft" turn re-echoes the graph verbatim each
-    // time, which checkSplice accepts trivially (nothing added or removed).
-    // Left unbounded, a splice-triggered stop that always re-enters would
-    // spin this forever, one model turn per lap.
-    const loopGraph = `<?xml version="1.0" encoding="UTF-8"?>
+    // reachable at all; each "draft" turn adds one more, genuinely new marker
+    // element (issue #60 made an unchanged fragment a no-op that never
+    // triggers a splice-forced stop at all, so a loop that never actually
+    // adds anything is now bounded by BPMN itself having nowhere else to go
+    // -- not by this re-entry cap. What this still has to bound is a splice
+    // that keeps genuinely growing the graph, which is exactly what
+    // session-skeleton's own outer loop does in practice, re-invoking
+    // craft_graph with a fresh intent each lap).
+    const loopGraph = (n: number): string => `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions id="Defs_loop_splice" ${NS}>
   <bpmn:process id="loop_splice" isExecutable="true">
     <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
@@ -416,15 +420,16 @@ describe("a splice executes in the same run that drafted it (issue #45)", () => 
       <bpmn:incoming>f2</bpmn:incoming><bpmn:outgoing>loop</bpmn:outgoing>
     </bpmn:serviceTask>
     <bpmn:sequenceFlow id="loop" sourceRef="extend" targetRef="draft" />
+    ${Array.from({ length: n }, (_, i) => `<bpmn:task id="marker_${i}" />`).join("\n    ")}
   </bpmn:process>
 </bpmn:definitions>`;
 
     const graphPath = join(home, "loop_splice_test.bpmn");
-    writeFileSync(graphPath, loopGraph);
-    // The turn echoes back whatever graph it is handed -- always additive,
-    // always accepted, always triggers another splice-forced stop.
+    writeFileSync(graphPath, loopGraph(0));
+    // Each turn's draft adds one more marker than the last -- always
+    // additive, always accepted, always a genuine (non-empty) splice.
     const faux = scripted(
-      Array.from({ length: 20 }, () => fauxAssistantMessage([fauxText(loopGraph)], { stopReason: "stop" })),
+      Array.from({ length: 20 }, (_, i) => fauxAssistantMessage([fauxText(loopGraph(i + 1))], { stopReason: "stop" })),
     );
 
     const result = await runSession(options(faux, { graphPath, prompt: "splice forever" }));
@@ -435,6 +440,22 @@ describe("a splice executes in the same run that drafted it (issue #45)", () => 
     expect(result.outcome).toBe("stopped");
     expect(result.turns).toBeLessThanOrEqual(6);
   }, 10000);
+
+  it("an unchanged fragment does not trigger a splice re-entry at all (issue #60)", async () => {
+    const graphPath = join(home, "noop_splice_test.bpmn");
+    writeFileSync(graphPath, original);
+    // "draft" echoes the graph back completely unchanged -- checkSplice
+    // accepts it (nothing removed or renamed), but there is nothing to add.
+    const faux = scripted([fauxAssistantMessage([fauxText(original)], { stopReason: "stop" })]);
+
+    const result = await runSession(options(faux, { graphPath, project: home, prompt: "nothing to add" }));
+
+    expect(result.error).toBeUndefined();
+    // Before the fix, `graph:extend` committing a no-op still forced a
+    // stop-and-resume re-entry, appending an identical revision each time.
+    const detail = new SessionStore(paths, result.sessionId).detail();
+    expect(detail.revisions.length).toBe(1);
+  });
 });
 
 describe("hang guard and phantom-running status (issue #52)", () => {
