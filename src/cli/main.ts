@@ -35,9 +35,12 @@ Commands
                         (--refresh: take the bundled version of any graph
                         that differs from your library copy, backed up first)
   run [prompt]         start a session in this project and drive it turn by turn
-  tui [prompt]         start a session in an interactive terminal UI: a live
-                        transcript, a trail of the last few activities, and a
-                        prompt for any human gate the graph parks on
+  tui [prompt] | tui --resume <session>
+                       start a session in an interactive terminal UI: a live
+                       transcript, a trail of the last few activities, and a
+                       prompt for any human gate the graph parks on --
+                       --resume reattaches to a parked session instead of
+                       starting a new one
   resume <session>     recover engine + transcript state and continue
   steer <session> <text>
                        queue a steering message, injected before the next turn
@@ -73,6 +76,15 @@ Options
                         activity with 'activity:key=value' so a payload
                         meant for one gate (e.g. an intent) is never replayed
                         at another (e.g. an unrelated approval)
+  --max-auto-answers <n>
+                        how many times run/resume may auto-answer the same
+                        gate from --answer before leaving it parked instead
+                        (default: 5) -- raise it for a graph that
+                        legitimately revisits one gate more than that many
+                        times in a single invocation
+  --resume <session>  tui only: reattach to a parked session instead of
+                        starting a new one ('graph-agent resume' takes the
+                        session id positionally instead)
   --steer <text>       queue a steering message before the run starts, drained
                         by the first agent:steer the graph reaches (repeatable)
   --follow-up <text>   queue a follow-up message before the run starts, drained
@@ -294,6 +306,8 @@ interface RunFlags {
   positionals: string[];
   /** `tui --resume <id>` reattaches instead of starting a new session (issue #67). */
   resume?: string;
+  /** Overrides DEFAULT_MAX_AUTO_ANSWERS_PER_ACTIVITY for `run`/`resume` (issue #71). Unvalidated here -- see resolveMaxAutoAnswers. */
+  maxAutoAnswers?: number;
 }
 
 /**
@@ -320,6 +334,7 @@ function runFlags(args: string[]): RunFlags {
       steer: { type: "string", multiple: true },
       "follow-up": { type: "string", multiple: true },
       resume: { type: "string" },
+      "max-auto-answers": { type: "string" },
     },
     allowPositionals: true,
     strict: false,
@@ -334,6 +349,7 @@ function runFlags(args: string[]): RunFlags {
     followUp: (values["follow-up"] as string[] | undefined) ?? [],
     positionals: positionals.map(String),
     ...(values.resume === undefined ? {} : { resume: String(values.resume) }),
+    ...(values["max-auto-answers"] === undefined ? {} : { maxAutoAnswers: Number(values["max-auto-answers"]) }),
   };
 }
 
@@ -395,17 +411,34 @@ export function answersFor(answers: ScopedAnswers, activityId: string): Record<s
  * the cap is hit this reports the same "leave it parked, snapshot and stop"
  * outcome an unanswered gate gets, rather than throwing out of an
  * event-emitter callback.
+ *
+ * Overridable with `--max-auto-answers <n>` (issue #71): a deliberately
+ * looping graph driven headlessly (CI, a batch of intents) is otherwise
+ * undriveable past this many laps, and the cap message used to tell the
+ * reader to "raise the cap" with no way to actually do that.
  */
-const MAX_AUTO_ANSWERS_PER_ACTIVITY = 5;
+const DEFAULT_MAX_AUTO_ANSWERS_PER_ACTIVITY = 5;
 
-export function boundedOnWait(answers: ScopedAnswers): (activityId: string) => Record<string, unknown> | undefined {
+/** `--max-auto-answers`, validated -- a positive integer, or the default when the flag is absent. */
+function resolveMaxAutoAnswers(flags: RunFlags): number | { error: string } {
+  if (flags.maxAutoAnswers === undefined) return DEFAULT_MAX_AUTO_ANSWERS_PER_ACTIVITY;
+  if (!Number.isInteger(flags.maxAutoAnswers) || flags.maxAutoAnswers < 1) {
+    return { error: `graph-agent: --max-auto-answers must be a positive integer, got '${flags.maxAutoAnswers}'\n` };
+  }
+  return flags.maxAutoAnswers;
+}
+
+export function boundedOnWait(
+  answers: ScopedAnswers,
+  maxAutoAnswers: number = DEFAULT_MAX_AUTO_ANSWERS_PER_ACTIVITY,
+): (activityId: string) => Record<string, unknown> | undefined {
   const seen = new Map<string, number>();
   return (activityId) => {
     const answer = answersFor(answers, activityId);
     if (answer === undefined) return undefined;
     const count = (seen.get(activityId) ?? 0) + 1;
     seen.set(activityId, count);
-    if (count > MAX_AUTO_ANSWERS_PER_ACTIVITY) {
+    if (count > maxAutoAnswers) {
       // A scoped answer (`activity:key=value`) was aimed at this exact gate
       // deliberately -- the cap firing means the graph keeps revisiting it,
       // not that the payload leaked in from elsewhere, so "scope it" is a
@@ -416,11 +449,12 @@ export function boundedOnWait(answers: ScopedAnswers): (activityId: string) => R
       const scoped = answers.has(activityId);
       process.stderr.write(
         scoped
-          ? `graph-agent: ${activityId} was auto-answered ${count - 1} times with the same payload; ` +
-              `the graph keeps revisiting this gate -- answer whatever ends the loop ` +
-              `(e.g. a 'done' or 'approved' field), or raise the cap.\n`
-          : `graph-agent: ${activityId} was auto-answered ${count - 1} times with the same payload; ` +
-              `scope your answer with --answer ${activityId}:key=value if it should not be replayed here.\n`,
+          ? `graph-agent: ${activityId} was auto-answered ${count - 1} times with the same payload (the cap is ` +
+              `${maxAutoAnswers} per activity); the graph keeps revisiting this gate -- answer whatever ends the ` +
+              `loop (e.g. a 'done' or 'approved' field), or raise the cap with --max-auto-answers.\n`
+          : `graph-agent: ${activityId} was auto-answered ${count - 1} times with the same payload (the cap is ` +
+              `${maxAutoAnswers} per activity); scope your answer with --answer ${activityId}:key=value if it ` +
+              `should not be replayed here, or raise the cap with --max-auto-answers.\n`,
       );
       return undefined;
     }
@@ -487,6 +521,12 @@ async function cmdRun(args: string[]): Promise<number> {
     return 1;
   }
 
+  const maxAutoAnswers = resolveMaxAutoAnswers(flags);
+  if (typeof maxAutoAnswers !== "number") {
+    process.stderr.write(maxAutoAnswers.error);
+    return 1;
+  }
+
   process.stdout.write(`graph  ${flags.graph}\nmodel  ${chosen.label}\n\n`);
 
   const result = await withInterrupt((signal) =>
@@ -501,7 +541,7 @@ async function cmdRun(args: string[]): Promise<number> {
       streamFn: chosen.streamFn,
       tools: createPiToolExecutor(project),
       onProgress: (line) => process.stdout.write(`  ${line}\n`),
-      ...(flags.answer === undefined ? {} : { onWait: boundedOnWait(flags.answer) }),
+      ...(flags.answer === undefined ? {} : { onWait: boundedOnWait(flags.answer, maxAutoAnswers) }),
       ...(flags.steer.length === 0 ? {} : { steering: flags.steer }),
       ...(flags.followUp.length === 0 ? {} : { followUp: flags.followUp }),
       signal,
@@ -612,6 +652,12 @@ async function cmdResume(args: string[]): Promise<number> {
     return 1;
   }
 
+  const maxAutoAnswers = resolveMaxAutoAnswers(flags);
+  if (typeof maxAutoAnswers !== "number") {
+    process.stderr.write(maxAutoAnswers.error);
+    return 1;
+  }
+
   try {
     const result = await withInterrupt((signal) =>
       resumeSession({
@@ -623,7 +669,7 @@ async function cmdResume(args: string[]): Promise<number> {
         streamFn: chosen.streamFn,
         tools: createPiToolExecutor(projectId()),
         onProgress: (line) => process.stdout.write(`  ${line}\n`),
-        ...(flags.answer === undefined ? {} : { onWait: boundedOnWait(flags.answer) }),
+        ...(flags.answer === undefined ? {} : { onWait: boundedOnWait(flags.answer, maxAutoAnswers) }),
       ...(flags.steer.length === 0 ? {} : { steering: flags.steer }),
       ...(flags.followUp.length === 0 ? {} : { followUp: flags.followUp }),
         signal,

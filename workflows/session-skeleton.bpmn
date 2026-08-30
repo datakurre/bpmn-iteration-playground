@@ -5,8 +5,15 @@
 
 A session is one long-lived process instance whose definition is not fixed: as
 the agent takes on work, fragments are spliced in and this graph grows. What you
-see here is only the seed -- ask for the intent, craft an extension for it, run
-whatever that extension added, and come back for more.
+see here is only the seed -- ask for the intent, decide whether to end the
+session right there, craft an extension for the intent otherwise, run whatever
+that extension added, and come back for more.
+
+Deciding "more work?" immediately after the form, before craft ever runs
+(issue #72), rather than after a whole crafted lap: session_done is only
+known once the form is answered, so that is also the earliest point it can
+honestly be checked, and checking any later bills a craft lap -- including a
+model turn -- on a prompt nobody wanted acted on.
 
 The definitions id must stay stable for the life of the session: recovery
 matches a snapshot to a graph on that id.</bpmn:documentation>
@@ -50,7 +57,7 @@ two-way implicit merge bpmnlint's fake-join rule used to only warn about
 join at all in this engine, it just runs again per arrival, which is
 exactly the behaviour this gateway keeps.</bpmn:documentation>
       <bpmn:incoming>to_intent</bpmn:incoming>
-      <bpmn:incoming>more_work</bpmn:incoming>
+      <bpmn:incoming>back_to_intent</bpmn:incoming>
       <bpmn:outgoing>into_await_intent</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="into_await_intent" sourceRef="gw_intent_entry" targetRef="await_intent" />
@@ -65,27 +72,31 @@ exactly the behaviour this gateway keeps.</bpmn:documentation>
         </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>into_await_intent</bpmn:incoming>
-      <bpmn:outgoing>to_craft</bpmn:outgoing>
+      <bpmn:outgoing>to_gw_more</bpmn:outgoing>
     </bpmn:userTask>
-    <bpmn:sequenceFlow id="to_craft" sourceRef="await_intent" targetRef="craft" />
+    <bpmn:sequenceFlow id="to_gw_more" sourceRef="await_intent" targetRef="gw_more" />
+    <bpmn:exclusiveGateway id="gw_more" name="More work?" default="more_work">
+      <bpmn:documentation>Checked immediately after await_intent's own form, before craft ever runs
+-- not after a whole crafted lap, the way an earlier version of this graph
+had it (issue #72). Ticking "End the session instead" now ends the session
+without another craft lap being run on a prompt nobody wanted acted on.</bpmn:documentation>
+      <bpmn:incoming>to_gw_more</bpmn:incoming>
+      <bpmn:outgoing>more_work</bpmn:outgoing>
+      <bpmn:outgoing>session_over</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="more_work" name="continue" sourceRef="gw_more" targetRef="craft" />
+    <bpmn:sequenceFlow id="session_over" name="done" sourceRef="gw_more" targetRef="session_end">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=session_done = true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
     <bpmn:callActivity id="craft" name="Craft an extension" calledElement="craft_graph">
       <bpmn:documentation>Calls the crafting graph, which is spliced into this definition when the
 session is created -- bpmn-elements resolves calledElement within the same
 definition, and keeping it inline makes the session one self-contained,
 self-documenting artifact.</bpmn:documentation>
-      <bpmn:incoming>to_craft</bpmn:incoming>
-      <bpmn:outgoing>to_gw_more</bpmn:outgoing>
+      <bpmn:incoming>more_work</bpmn:incoming>
+      <bpmn:outgoing>back_to_intent</bpmn:outgoing>
     </bpmn:callActivity>
-    <bpmn:sequenceFlow id="to_gw_more" sourceRef="craft" targetRef="gw_more" />
-    <bpmn:exclusiveGateway id="gw_more" name="More work?" default="more_work">
-      <bpmn:incoming>to_gw_more</bpmn:incoming>
-      <bpmn:outgoing>more_work</bpmn:outgoing>
-      <bpmn:outgoing>session_over</bpmn:outgoing>
-    </bpmn:exclusiveGateway>
-    <bpmn:sequenceFlow id="more_work" name="continue" sourceRef="gw_more" targetRef="gw_intent_entry" />
-    <bpmn:sequenceFlow id="session_over" name="done" sourceRef="gw_more" targetRef="session_end">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=session_done = true</bpmn:conditionExpression>
-    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="back_to_intent" sourceRef="craft" targetRef="gw_intent_entry" />
     <bpmn:endEvent id="session_end" name="Session ended">
       <bpmn:incoming>session_over</bpmn:incoming>
     </bpmn:endEvent>
@@ -101,14 +112,14 @@ self-documenting artifact.</bpmn:documentation>
       <bpmndi:BPMNShape id="await_intent_di" bpmnElement="await_intent">
         <dc:Bounds x="325" y="30" width="100" height="80" />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="craft_di" bpmnElement="craft">
-        <dc:Bounds x="475" y="30" width="100" height="80" />
-      </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_more_di" bpmnElement="gw_more" isMarkerVisible="true">
-        <dc:Bounds x="650" y="45" width="50" height="50" />
+        <dc:Bounds x="500" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="craft_di" bpmnElement="craft">
+        <dc:Bounds x="625" y="30" width="100" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="session_end_di" bpmnElement="session_end">
-        <dc:Bounds x="807" y="52" width="36" height="36" />
+        <dc:Bounds x="657" y="192" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNEdge id="to_intent_di" bpmnElement="to_intent">
         <di:waypoint x="93" y="70" />
@@ -118,23 +129,24 @@ self-documenting artifact.</bpmn:documentation>
         <di:waypoint x="250" y="70" />
         <di:waypoint x="325" y="70" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="to_craft_di" bpmnElement="to_craft">
-        <di:waypoint x="425" y="70" />
-        <di:waypoint x="475" y="70" />
-      </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="to_gw_more_di" bpmnElement="to_gw_more">
-        <di:waypoint x="575" y="70" />
-        <di:waypoint x="650" y="70" />
+        <di:waypoint x="425" y="70" />
+        <di:waypoint x="500" y="70" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="more_work_di" bpmnElement="more_work">
-        <di:waypoint x="675" y="95" />
+        <di:waypoint x="550" y="70" />
+        <di:waypoint x="625" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="session_over_di" bpmnElement="session_over">
+        <di:waypoint x="525" y="95" />
+        <di:waypoint x="525" y="210" />
+        <di:waypoint x="657" y="210" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="back_to_intent_di" bpmnElement="back_to_intent">
+        <di:waypoint x="675" y="110" />
         <di:waypoint x="675" y="140" />
         <di:waypoint x="225" y="140" />
         <di:waypoint x="225" y="95" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="session_over_di" bpmnElement="session_over">
-        <di:waypoint x="700" y="70" />
-        <di:waypoint x="807" y="70" />
       </bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>

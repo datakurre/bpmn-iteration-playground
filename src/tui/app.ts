@@ -100,7 +100,12 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
   const store = new SessionStore(options.paths, sessionId);
   const coerce = options.coerceValue ?? ((raw: string) => raw);
   const trailSize = options.trailSize ?? 5;
-  const graphLabel = options.start.kind === "run" ? options.start.graphLabel : "(resumed)";
+  // A resumed session already exists on disk, with its own graph id recorded
+  // at runSession time (issue #73) -- read it back rather than showing the
+  // literal placeholder "(resumed)", falling back to that placeholder only
+  // for a session old enough to predate the field.
+  const graphLabel =
+    options.start.kind === "run" ? options.start.graphLabel : (store.exists() ? store.readMeta().graph : undefined) ?? "(resumed)";
 
   const tui = new TuiMainScreen(options.terminal);
   const transcript = new Container();

@@ -9,6 +9,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { basename, extname } from "node:path";
 import { inspect } from "node:util";
 import { indexLibrary, linkGraph } from "./link.ts";
 import { bundledWorkflowsDir, listBpmnFiles } from "./paths.ts";
@@ -140,7 +141,13 @@ function debugLogError(label: string, error: unknown): void {
 export async function runSession(options: RunSessionOptions): Promise<SessionOutcome> {
   const sessionId = options.sessionId ?? randomUUID().slice(0, 8);
   const store = new SessionStore(options.paths, sessionId);
-  if (!store.exists()) store.create(options.project, options.name);
+  if (!store.exists()) {
+    store.create(options.project, options.name);
+    const graphId = basename(options.graphPath, extname(options.graphPath));
+    store.update((meta) => {
+      meta.graph = graphId;
+    });
+  }
 
   // Resolve callActivity targets from the shared library before the session owns
   // the graph: bpmn-elements only finds a called process inside the same
