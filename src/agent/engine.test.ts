@@ -299,4 +299,30 @@ describe("resumeGraph", () => {
     expect(ran).toEqual(["c_turn"]);
     expect(second.outcome).toBe("completed");
   });
+
+  it("the hang guard still settles a resume against a snapshot with nothing left to dispatch (issue #52/#63)", async () => {
+    // `runner.ts`'s resumeSession now refuses this case outright once a
+    // session's own status is "completed" (issue #63), but the underlying
+    // mechanism this proves -- engine.resume() dispatching nothing at all,
+    // with none of drive()'s raced promises ever settling on their own --
+    // is a property of resumeGraph itself, reachable by anything that hands
+    // it a snapshot with no token left, regardless of what a caller's own
+    // bookkeeping says. This is that guard, exercised directly.
+    const trivial = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions ${DEFS}>
+  <process id="p" isExecutable="true">
+    <startEvent id="start" />
+    <sequenceFlow id="f1" sourceRef="start" targetRef="end" />
+    <endEvent id="end" />
+  </process>
+</definitions>`;
+
+    const first = await runGraph(trivial, { harnesses: {} });
+    expect(first.outcome).toBe("completed");
+
+    const second = await resumeGraph(first.state, trivial, { harnesses: {}, hangGuardMs: 50 });
+
+    expect(second.outcome).toBe("stopped");
+    expect(second.note).toMatch(/dispatched nothing/);
+  });
 });

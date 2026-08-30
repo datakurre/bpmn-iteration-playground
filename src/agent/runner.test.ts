@@ -459,31 +459,6 @@ describe("a splice executes in the same run that drafted it (issue #45)", () => 
 });
 
 describe("hang guard and phantom-running status (issue #52)", () => {
-  it("resuming an already-completed session settles instead of hanging forever", async () => {
-    // Reproduced against a real session: `graph-agent resume` on a session
-    // that had already reached its own end event hung the whole CLI process
-    // (an "unsettled top-level await", Node exit 13) because engine.resume()
-    // dispatched nothing at all -- no activity, no wait, no end, no error --
-    // so none of the three promises drive() raced ever settled.
-    const faux = scripted([fauxAssistantMessage([fauxText("done")], { stopReason: "stop" })]);
-    const first = await runSession(options(faux, { prompt: "say hello", hangGuardMs: 50 }));
-    expect(first.outcome).toBe("completed");
-
-    const second = await resumeSession({
-      ...options(scripted([]), { hangGuardMs: 50 }),
-      sessionId: first.sessionId,
-    });
-
-    // Settles (the test itself would time out otherwise) as "stopped", with a
-    // note explaining why, rather than hanging or claiming a bogus "completed".
-    expect(second.outcome).toBe("stopped");
-
-    const meta = new SessionStore(paths, first.sessionId).readMeta();
-    expect(meta.status).not.toBe("running");
-    expect(meta.pid).toBeUndefined();
-    expect(meta.harnessError).toMatch(/dispatched nothing/);
-  });
-
   it('never leaves status:"running" when resuming throws before the engine settles', async () => {
     // runSession's own linkGraph/appendGraph setup runs before drive() is ever
     // called, so a broken *graph* throws before status even becomes
@@ -493,9 +468,29 @@ describe("hang guard and phantom-running status (issue #52)", () => {
     // cannot make sense of is what actually exercises the gap issue #52
     // found: nothing between such a throw and the ordinary return path wrote
     // a terminal status.
-    const faux = scripted([fauxAssistantMessage([fauxText("hi")], { stopReason: "stop" })]);
-    const first = await runSession(options(faux, { prompt: "hi", hangGuardMs: 50 }));
-    expect(first.outcome).toBe("completed");
+    //
+    // The session must be genuinely parked ("wait"), not completed -- issue
+    // #63 gives a *completed* session its own, earlier refusal, which would
+    // otherwise short-circuit this test before it ever reaches the corrupted
+    // engine state this is actually about.
+    const NS =
+      'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"';
+    const parkGraph = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_park_test" ${NS}>
+  <bpmn:process id="park_test" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="gate" />
+    <bpmn:userTask id="gate"><bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing></bpmn:userTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="gate" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+    const graphPath = join(home, "park_test.bpmn");
+    writeFileSync(graphPath, parkGraph);
+
+    const first = await runSession(options(scripted([]), { graphPath, hangGuardMs: 50 }));
+    expect(first.outcome).toBe("stopped");
+    expect(new SessionStore(paths, first.sessionId).readMeta().status).toBe("wait");
 
     const store = new SessionStore(paths, first.sessionId);
     store.writeEngineState({ nonsense: true, definitions: "not an array" });
@@ -508,6 +503,29 @@ describe("hang guard and phantom-running status (issue #52)", () => {
     expect(meta.status).toBe("error");
     expect(meta.pid).toBeUndefined();
     expect(meta.harnessError).toBeDefined();
+  });
+});
+
+describe("resume refuses a completed session outright (issue #63)", () => {
+  it("rejects fast, with a clear message, instead of stalling on the hang guard", async () => {
+    const faux = scripted([fauxAssistantMessage([fauxText("done")], { stopReason: "stop" })]);
+    const first = await runSession(options(faux, { prompt: "say hello", hangGuardMs: 5000 }));
+    expect(first.outcome).toBe("completed");
+
+    const store = new SessionStore(paths, first.sessionId);
+    const before = store.readMeta();
+
+    const startedAt = Date.now();
+    await expect(
+      resumeSession({ ...options(scripted([]), { hangGuardMs: 5000 }), sessionId: first.sessionId }),
+    ).rejects.toThrow(/already completed/);
+    // Well under the 5s hang guard configured above -- this must never reach
+    // resumeGraph (let alone wait out its guard) at all.
+    expect(Date.now() - startedAt).toBeLessThan(1000);
+
+    // meta.json is untouched -- not even `updatedAt` -- since the refusal
+    // happens before any store.update() call.
+    expect(store.readMeta()).toEqual(before);
   });
 });
 
