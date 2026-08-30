@@ -37,6 +37,35 @@ id(s), the same as `graph:extend`'s stricter rule would reject any removal at
 all. It still applies `checkSplice`'s job-type contract to any genuinely new
 activity, and refuses a changed `<bpmn:definitions id>` outright (issue #46).
 
+`PUT` requires an `If-Match` header naming the revision the client loaded
+(the same value `GET` returns as `ETag`) and rejects a stale one with `409`
+and the revision actually on disk, so two editors who loaded the same
+revision cannot silently overwrite each other -- the second is told to
+reload rather than winning quietly (issue #76). The library's own `PUT
+/api/graphs/:id` gets the same treatment, keyed by a content hash rather
+than a revision count since a library file carries no revision history of
+its own; there, a missing `If-Match` is permitted, since a brand-new graph
+has nothing yet to conflict with.
+
+An edit accepted while `graph-agent run`/`resume` is actively driving that
+same session is not silently discarded (issue #75). `drive()` (`runner.ts`)
+never trusts an in-memory copy of the graph: `graph:lint`/`graph:extend`'s own
+`getGraph()` always re-reads `SessionStore.currentGraph()` from disk, and the
+same stop/resume mechanism `graph:extend` uses to pick up its own splice mid-run
+([#45](https://github.com/datakurre/graph-agent/issues/45)) also fires the
+moment it notices the on-disk revision count grew for a reason this process
+did not cause -- reported as `note: graph revision N applied externally,
+resuming`, bounded by the same `MAX_SPLICE_REENTRIES` cap. Concretely: an edit
+that lands while an activity is in flight takes effect the next time the
+engine would otherwise advance past that activity; if the model's own next
+`graph:extend` was drafted against the pre-edit graph and its fragment is now
+missing something the edit added, `checkSplice` rejects it as a removal rather
+than overwriting the edit. `SessionStore.appendGraph` additionally takes the
+revision index a write believed it was extending and rejects a stale one with
+`GraphRevisionConflictError`, so a write racing an edit in the narrow window
+between validating a splice and committing it fails loudly instead of
+clobbering the edit.
+
 ### Verifying this table
 
 `--dry-run` stops after one scripted turn, so it never reaches the tool batch,

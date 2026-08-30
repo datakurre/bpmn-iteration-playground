@@ -238,7 +238,12 @@ state by id; deleting one the token has never reached is fine. Saving
 appends a new revision the same way `graph:extend` does, tagged `studio
 edit`, and a running session picks it up the next time it stops and resumes
 (see ["a spliced-in step" above](#extending-a-graph-from-inside-a-session)
-for what "the next time" means for a run already in flight).
+for what "the next time" means for a run already in flight). The editor
+saves against the revision it opened, so a second tab (or a second person)
+that loaded the same revision and saves first wins normally; whichever saves
+second is told to reopen the editor and reapply its change rather than
+silently overwriting the first, and entering "Edit" on a running session
+says so up front ([#76](https://github.com/datakurre/graph-agent/issues/76)).
 
 A parked human gate -- `session-skeleton`'s `await_intent`, `craft-graph`'s
 `review_fragment` approval -- shows up on the session page as a real form-js
@@ -425,6 +430,17 @@ $ graph-agent run --graph session-skeleton \
 
 session 1a9e3cfc  completed  1 turn(s)
 ```
+
+The same stop/resume mechanism also fires for a revision this run did *not*
+cause itself -- a studio edit saved to the same session's graph while
+`run`/`resume` is still driving it ([#75](https://github.com/datakurre/graph-agent/issues/75)).
+It is picked up at the next activity boundary, reported as `note: graph
+revision N applied externally, resuming` rather than the plain `applied,
+resuming` a self-caused splice gets, and the edit is never silently
+overwritten by a `graph:extend` that was drafted against the graph as it
+stood before the edit landed: `checkSplice` always validates against what is
+actually on disk, so a fragment missing something the edit added is rejected
+as a removal instead of committed over it.
 
 `--answer` accepts a bare `key=value` too, which answers *any* gate that asks
 for that key -- convenient for a graph with one gate, like `craft-graph`

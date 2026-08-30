@@ -13,6 +13,14 @@ let markedElements: Array<{ id: string; marker: string }> = [];
 let modeler: BpmnDiagramInstance | null = null;
 let editing = false;
 let latestDetail: SessionDetail | null = null;
+/**
+ * The revision count read when edit mode was entered -- sent back as
+ * `If-Match` on save (issue #76). Captured once, not re-read from
+ * `latestDetail` at save time: `refresh()` keeps updating `latestDetail` from
+ * its poll even while `editing`, so re-reading it there would defeat the
+ * whole point of checking against what was actually loaded.
+ */
+let editingBaseRevision = 0;
 
 /** One form-js instance per currently-rendered pending gate, keyed by activity id -- never recreated on refresh, so mid-answer input survives a websocket-triggered poll. */
 const pendingForms = new Map<string, FormInstance>();
@@ -294,7 +302,7 @@ async function refreshPending(): Promise<void> {
   }
 }
 
-function editMsg(message: string, tone: "ok" | "error" | "none" = "none"): void {
+function editMsg(message: string, tone: "ok" | "error" | "info" | "none" = "none"): void {
   const host = $("edit-msg");
   if (!host) return;
   host.classList.toggle("hidden", tone === "none");
@@ -303,7 +311,9 @@ function editMsg(message: string, tone: "ok" | "error" | "none" = "none"): void 
       ? "hidden"
       : tone === "ok"
         ? "mb-2 p-2 rounded-md text-xs bg-accent-dim text-accent border border-accent-border"
-        : "mb-2 p-2 rounded-md text-xs bg-danger-dim text-danger border border-danger-border";
+        : tone === "info"
+          ? "mb-2 p-2 rounded-md text-xs bg-sky-dim text-sky border border-sky-border"
+          : "mb-2 p-2 rounded-md text-xs bg-danger-dim text-danger border border-danger-border";
   host.textContent = message;
 }
 
@@ -377,6 +387,7 @@ async function enterEdit(): Promise<void> {
   if (!instance) return editMsg("Editor failed to load.", "error");
 
   editing = true;
+  editingBaseRevision = latestDetail.revisions.length;
   $("viewer")?.classList.add("hidden");
   $("editor")?.classList.remove("hidden");
   $("properties-container")?.classList.remove("hidden");
@@ -384,7 +395,17 @@ async function enterEdit(): Promise<void> {
   $("edit-btn")?.classList.add("hidden");
   $("save-btn")?.classList.remove("hidden");
   $("cancel-btn")?.classList.remove("hidden");
-  editMsg("", "none");
+  // `detail.status` is already `effectiveStatus` (session-store.ts), so a
+  // killed process's session reports "stale" here, not "running" -- this
+  // banner only appears for a genuinely live driving process (issue #76).
+  if (latestDetail.status === "running") {
+    editMsg(
+      "This session is currently running. If it is still driving when you save, your edit is accepted and picked up automatically at the next activity boundary rather than refused.",
+      "info",
+    );
+  } else {
+    editMsg("", "none");
+  }
 
   await instance.importXML(latestDetail.graph);
   markLocked(instance, liveIds(latestDetail));
@@ -411,15 +432,17 @@ async function saveEdit(): Promise<void> {
   const { xml } = await modeler.saveXML({ format: true });
   const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/graph`, {
     method: "PUT",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "if-match": String(editingBaseRevision) },
     body: JSON.stringify({ xml }),
   });
   if (res.status === 409) {
-    const body = (await res.json()) as { error?: string; removed?: string[] };
+    const body = (await res.json()) as { error?: string; removed?: string[]; conflict?: string };
     editMsg(
-      body.removed?.length
-        ? `Cannot save: ${body.error} (${body.removed.join(", ")})`
-        : (body.error ?? "Cannot save: rejected"),
+      body.conflict === "stale"
+        ? `${body.error ?? "Cannot save: someone else's edit landed first"} Reopen the editor to reload it.`
+        : body.removed?.length
+          ? `Cannot save: ${body.error} (${body.removed.join(", ")})`
+          : (body.error ?? "Cannot save: rejected"),
       "error",
     );
     return;
@@ -429,7 +452,8 @@ async function saveEdit(): Promise<void> {
     editMsg(`Save failed: ${body.error ?? res.statusText}`, "error");
     return;
   }
-  editMsg("Saved as a new revision.", "ok");
+  const body = (await res.json()) as { revisions: number; note?: string };
+  editMsg(body.note ? `Saved as a new revision. ${body.note}.` : "Saved as a new revision.", "ok");
   exitEdit();
 }
 

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startStudio, type Studio } from "./server.ts";
@@ -95,6 +95,12 @@ describe("GET /api/sessions/:id/graph", () => {
     const res = await fetch(`${studio.url}/api/sessions/nope/graph`);
     expect(res.status).toBe(404);
   });
+
+  it("carries an ETag naming the current revision count (issue #76)", async () => {
+    createSession("s1b");
+    const res = await fetch(`${studio.url}/api/sessions/s1b/graph`);
+    expect(res.headers.get("etag")).toBe("1");
+  });
 });
 
 describe("PUT /api/sessions/:id/graph (issue #46)", () => {
@@ -102,7 +108,7 @@ describe("PUT /api/sessions/:id/graph (issue #46)", () => {
     const store = createSession("s2");
     const res = await fetch(`${studio.url}/api/sessions/s2/graph`, {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "if-match": "1" },
       body: JSON.stringify({ xml: graphWithSplice }),
     });
     expect(res.status).toBe(200);
@@ -115,7 +121,7 @@ describe("PUT /api/sessions/:id/graph (issue #46)", () => {
     createSession("s3", []);
     const res = await fetch(`${studio.url}/api/sessions/s3/graph`, {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "if-match": "1" },
       body: JSON.stringify({ xml: graphWithoutGate }),
     });
     expect(res.status).toBe(200);
@@ -125,7 +131,7 @@ describe("PUT /api/sessions/:id/graph (issue #46)", () => {
     createSession("s4", ["gate"]);
     const res = await fetch(`${studio.url}/api/sessions/s4/graph`, {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "if-match": "1" },
       body: JSON.stringify({ xml: graphWithoutGate }),
     });
     expect(res.status).toBe(409);
@@ -145,7 +151,7 @@ describe("PUT /api/sessions/:id/graph (issue #46)", () => {
     store.markVisited(["shell_check"]);
     const res = await fetch(`${studio.url}/api/sessions/s4b/graph`, {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "if-match": "1" },
       body: JSON.stringify({ xml: graphWithoutGate }),
     });
     expect(res.status).toBe(409);
@@ -223,7 +229,7 @@ describe("PUT /api/sessions/:id/graph (issue #46)", () => {
 
     const removingCTurn = await fetch(`${studio.url}/api/sessions/s6/graph`, {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "if-match": "1" },
       body: JSON.stringify({ xml: graphWithCompletedCalleeMinusCTurn }),
     });
     expect(removingCTurn.status).toBe(200);
@@ -233,7 +239,7 @@ describe("PUT /api/sessions/:id/graph (issue #46)", () => {
 
     const removingGate2 = await fetch(`${studio.url}/api/sessions/s6/graph`, {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "if-match": "3" },
       body: JSON.stringify({ xml: graphWithCompletedCalleeMinusGate2 }),
     });
     expect(removingGate2.status).toBe(409);
@@ -250,7 +256,7 @@ describe("PUT /api/sessions/:id/graph (issue #46)", () => {
 
     const res = await fetch(`${studio.url}/api/sessions/s6b/graph`, {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "if-match": "1" },
       body: JSON.stringify({ xml: graphWithoutGate }),
     });
     expect(res.status).toBe(200);
@@ -261,7 +267,7 @@ describe("PUT /api/sessions/:id/graph (issue #46)", () => {
     const withBadJobType = graphWithSplice.replace('type="shell"', 'type="shell:exec"');
     const res = await fetch(`${studio.url}/api/sessions/s5/graph`, {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "if-match": "1" },
       body: JSON.stringify({ xml: withBadJobType }),
     });
     expect(res.status).toBe(409);
@@ -276,6 +282,88 @@ describe("PUT /api/sessions/:id/graph (issue #46)", () => {
       body: JSON.stringify({ xml: graph }),
     });
     expect(res.status).toBe(404);
+  });
+});
+
+describe("PUT /api/sessions/:id/graph optimistic concurrency (issue #76)", () => {
+  it("400s without an If-Match header", async () => {
+    createSession("c1");
+    const res = await fetch(`${studio.url}/api/sessions/c1/graph`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ xml: graphWithSplice }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/If-Match/);
+  });
+
+  it("two sequential PUTs from the same loaded revision: the first succeeds, the second gets 409 naming the current revision", async () => {
+    const store = createSession("c2");
+    const first = await fetch(`${studio.url}/api/sessions/c2/graph`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", "if-match": "1" },
+      body: JSON.stringify({ xml: graphWithSplice }),
+    });
+    expect(first.status).toBe(200);
+    expect((await first.json()) as { revisions: number }).toEqual({ revisions: 2 });
+
+    // A second editor who loaded the graph at the same revision -- before
+    // the first PUT landed -- tries to save with the same stale If-Match.
+    const second = await fetch(`${studio.url}/api/sessions/c2/graph`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", "if-match": "1" },
+      body: JSON.stringify({ xml: graphWithoutGate }),
+    });
+    expect(second.status).toBe(409);
+    const body = (await second.json()) as { error: string; revision: number; conflict: string; removed?: string[] };
+    expect(body.revision).toBe(2);
+    expect(body.conflict).toBe("stale");
+    // Never silently applied: still the first editor's revision.
+    expect(store.currentGraph()).toBe(graphWithSplice);
+    expect(store.readMeta().revisions).toHaveLength(2);
+  });
+
+  it("rejects a stale If-Match distinctly from a migration rejection", async () => {
+    createSession("c3", ["gate"]);
+    const res = await fetch(`${studio.url}/api/sessions/c3/graph`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", "if-match": "1" },
+      body: JSON.stringify({ xml: graphWithoutGate }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { conflict: string };
+    expect(body.conflict).toBe("migration");
+  });
+
+  it("accepts an edit to a session with a live driving process, and says so", async () => {
+    const store = createSession("c4");
+    store.update((meta) => {
+      // This test process itself is alive for the whole run, so this is a
+      // real, live pid rather than a stand-in.
+      meta.pid = process.pid;
+      meta.status = "running";
+    });
+    const res = await fetch(`${studio.url}/api/sessions/c4/graph`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", "if-match": "1" },
+      body: JSON.stringify({ xml: graphWithSplice }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { revisions: number; note?: string };
+    expect(body.note).toMatch(/pick.*up automatically/);
+  });
+
+  it("does not claim a pickup note for a session with no live process", async () => {
+    createSession("c5");
+    const res = await fetch(`${studio.url}/api/sessions/c5/graph`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", "if-match": "1" },
+      body: JSON.stringify({ xml: graphWithSplice }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { note?: string };
+    expect(body.note).toBeUndefined();
   });
 });
 
@@ -376,5 +464,60 @@ describe("POST /api/sessions/:id/answer (issue #51)", () => {
       body: JSON.stringify({ activityId: "gate", payload: {} }),
     });
     expect(res.status).toBe(404);
+  });
+});
+
+describe("PUT /api/graphs/:id optimistic concurrency (issue #76)", () => {
+  const libraryGraph = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_lib" ${NS}>
+  <bpmn:process id="lib" isExecutable="true">
+    <bpmn:startEvent id="start" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+  it("GET carries an ETag; a PUT with a matching If-Match succeeds", async () => {
+    writeFileSync(join(paths.workflowsDir, "lib.bpmn"), libraryGraph);
+    const got = await fetch(`${studio.url}/api/graphs/lib`);
+    const etag = got.headers.get("etag");
+    expect(etag).toBeTruthy();
+
+    const res = await fetch(`${studio.url}/api/graphs/lib`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", "if-match": etag as string },
+      body: JSON.stringify({ xml: libraryGraph.replace("lib", "lib2") }),
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("409s a stale If-Match rather than overwriting someone else's write", async () => {
+    writeFileSync(join(paths.workflowsDir, "lib2.bpmn"), libraryGraph);
+    const got = await fetch(`${studio.url}/api/graphs/lib2`);
+    const staleEtag = got.headers.get("etag") as string;
+
+    // Someone else's write lands first.
+    await fetch(`${studio.url}/api/graphs/lib2`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", "if-match": staleEtag },
+      body: JSON.stringify({ xml: libraryGraph.replace("lib", "libx") }),
+    });
+
+    const res = await fetch(`${studio.url}/api/graphs/lib2`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", "if-match": staleEtag },
+      body: JSON.stringify({ xml: libraryGraph.replace("lib", "liby") }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; etag: string; conflict: string };
+    expect(body.conflict).toBe("stale");
+    expect(body.etag).not.toBe(staleEtag);
+  });
+
+  it("allows a PUT with no If-Match at all -- lower stakes than a session's own graph", async () => {
+    const res = await fetch(`${studio.url}/api/graphs/brand_new`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ xml: libraryGraph.replace("lib", "brand_new") }),
+    });
+    expect(res.status).toBe(200);
   });
 });

@@ -8,6 +8,8 @@ import type { GraphSummary } from "../types";
 
 let modeler: BpmnDiagramInstance | null = null;
 let currentId = "";
+/** The ETag `open()` loaded `currentId` at -- sent back as `If-Match` on save (issue #76), so overwriting a graph someone else just changed is refused rather than silent. Cleared whenever the name field no longer names what was loaded, e.g. a "Save As" under a fresh name has nothing to conflict with. */
+let loadedEtag: string | null = null;
 
 /** A new graph starts as one agent turn: the smallest thing that does something. */
 const BLANK = `<?xml version="1.0" encoding="UTF-8"?>
@@ -64,6 +66,7 @@ async function open(id: string): Promise<void> {
   if (!res.ok) return status(`Could not open ${id}`, "error");
   await modeler.importXML(await res.text());
   currentId = id;
+  loadedEtag = res.headers.get("etag");
   const name = $("graph-name") as HTMLInputElement | null;
   if (name) name.value = id;
   fitDiagram(modeler);
@@ -74,14 +77,23 @@ async function save(): Promise<void> {
   if (!modeler) return;
   const name = ($("graph-name") as HTMLInputElement | null)?.value.trim() || currentId || "new_graph";
   const { xml } = await modeler.saveXML({ format: true });
+  // Only the id actually loaded has an ETag to conflict against -- typing a
+  // different name is a "Save As" into a graph nothing here has read yet.
+  const ifMatch = name === currentId ? loadedEtag : null;
   const res = await fetch(`/api/graphs/${encodeURIComponent(name)}`, {
     method: "PUT",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...(ifMatch ? { "if-match": ifMatch } : {}) },
     body: JSON.stringify({ xml }),
   });
+  if (res.status === 409) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    status(`${body.error ?? "Cannot save: someone else's edit landed first"} Reopen it to reload it.`, "error");
+    return;
+  }
   if (!res.ok) return status(`Save failed: ${await res.text()}`, "error");
-  const saved = (await res.json()) as { id: string; processIds: string[] };
+  const saved = (await res.json()) as { id: string; processIds: string[]; etag: string };
   currentId = saved.id;
+  loadedEtag = saved.etag;
   // Saving a bundled graph writes a library copy that shadows it from now on.
   status(`Saved to your graph library as ${saved.id} (process ${saved.processIds.join(", ")})`, "ok");
   await loadList(saved.id);

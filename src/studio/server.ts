@@ -14,9 +14,10 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, readdirSync, readFileSync, watch, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { listSessions, SessionStore } from "../agent/session-store.ts";
+import { GraphRevisionConflictError, isProcessAlive, listSessions, SessionStore } from "../agent/session-store.ts";
 import {
   bundledWorkflowsDir,
   elementTemplatesDir,
@@ -193,6 +194,28 @@ async function handle(
       if (current === null) return sendJson(res, 404, { error: "session has no graph" });
 
       const meta = store.readMeta();
+      const revisionCount = meta.revisions.length;
+      // Optimistic concurrency (issue #76): the client names the revision
+      // it loaded the graph at, via If-Match -- the same header GET sets as
+      // ETag below. A mismatch means someone else's edit (or a running
+      // session's own splice) landed first, so this loses rather than
+      // silently overwriting it.
+      const ifMatch = req.headers["if-match"];
+      if (typeof ifMatch !== "string" || ifMatch.length === 0) {
+        return sendJson(res, 400, {
+          error: "If-Match header is required to save a graph edit; GET the graph first for its current revision",
+        });
+      }
+      const expectedIndex = Number(ifMatch.replace(/^"|"$/g, ""));
+      if (!Number.isInteger(expectedIndex) || expectedIndex !== revisionCount) {
+        return sendJson(res, 409, {
+          error: `the graph has moved to revision ${revisionCount} since you loaded it; reload and reapply your edit`,
+          removed: [],
+          revision: revisionCount,
+          conflict: "stale",
+        });
+      }
+
       // A completed session has nothing left to migrate -- everything is
       // fair game (issue #70). Otherwise, live state is whatever the last
       // engine snapshot can actually recover, plus the in-memory token set
@@ -213,16 +236,40 @@ async function handle(
       } catch (error) {
         return sendJson(res, 400, { error: `not valid BPMN: ${error instanceof Error ? error.message : String(error)}` });
       }
-      if (!check.ok) return sendJson(res, 409, { error: check.reason, removed: check.removed });
+      if (!check.ok) {
+        return sendJson(res, 409, { error: check.reason, removed: check.removed, revision: revisionCount, conflict: "migration" });
+      }
 
-      store.appendGraph(body.xml, "studio edit", []);
+      try {
+        store.appendGraph(body.xml, "studio edit", [], expectedIndex);
+      } catch (error) {
+        // The narrower race checkStopAfterActivity's own re-entry (#75) does
+        // not cover: a write landed between the revisionCount read above and
+        // this write. Reported the same way as the If-Match mismatch above.
+        if (error instanceof GraphRevisionConflictError) {
+          return sendJson(res, 409, {
+            error: `the graph has moved to revision ${error.currentIndex} since you loaded it; reload and reapply your edit`,
+            removed: [],
+            revision: error.currentIndex,
+            conflict: "stale",
+          });
+        }
+        throw error;
+      }
       broadcast({ type: "session_changed", sessionId: store.id });
-      return sendJson(res, 200, { revisions: store.readMeta().revisions.length });
+      // A running session is not refused (issue #75 makes this the honest
+      // answer): its own drive() picks up the new revision at the next
+      // activity boundary, the same way it would pick up its own splice.
+      const runningLive = meta.pid !== undefined && isProcessAlive(meta.pid);
+      return sendJson(res, 200, {
+        revisions: store.readMeta().revisions.length,
+        ...(runningLive ? { note: "a running session will pick this up automatically" } : {}),
+      });
     }
 
     const xml = store.currentGraph();
     if (xml === null) return sendJson(res, 404, { error: "session has no graph" });
-    return send(res, 200, "application/xml; charset=utf-8", xml);
+    return send(res, 200, "application/xml; charset=utf-8", xml, { etag: String(store.readMeta().revisions.length) });
   }
 
   // ---- human gates a session is currently parked on, and answering one
@@ -267,12 +314,34 @@ async function handle(
       if (!body.xml) return sendJson(res, 400, { error: "xml is required" });
       const target = safeJoin(paths.workflowsDir, `${safeId(id)}.bpmn`);
       if (!target) return sendJson(res, 400, { error: "bad graph id" });
+
+      // Same optimistic concurrency as the session route (issue #76), lower
+      // stakes here since no running instance depends on a library graph --
+      // so a missing If-Match is permitted (a brand-new graph has nothing to
+      // conflict with), and this is skipped entirely when nothing is on disk
+      // yet under this id. Checked against whatever GET would have returned
+      // (the library copy if one exists, otherwise the bundled graph it
+      // shadows), since that is what the client actually loaded.
+      const ifMatch = req.headers["if-match"];
+      const existing = graphPath(paths, id);
+      if (existing && typeof ifMatch === "string" && ifMatch.length > 0) {
+        const currentEtag = etagFor(readFileSync(existing));
+        if (ifMatch.replace(/^"|"$/g, "") !== currentEtag) {
+          return sendJson(res, 409, {
+            error: "the graph has changed since you loaded it; reload and reapply your edit",
+            etag: currentEtag,
+            conflict: "stale",
+          });
+        }
+      }
+
       writeFileSync(target, body.xml);
-      return sendJson(res, 200, { id: safeId(id), path: target, processIds: processIds(body.xml) });
+      return sendJson(res, 200, { id: safeId(id), path: target, processIds: processIds(body.xml), etag: etagFor(body.xml) });
     }
     const file = graphPath(paths, id);
     if (!file) return send(res, 404, "text/plain", "unknown graph");
-    return send(res, 200, "application/xml; charset=utf-8", readFileSync(file));
+    const xml = readFileSync(file);
+    return send(res, 200, "application/xml; charset=utf-8", xml, { etag: etagFor(xml) });
   }
 
   if (path === "/api/element-templates") return sendJson(res, 200, elementTemplates());
@@ -342,9 +411,20 @@ function sendPage(res: ServerResponse, pagesDir: string, name: string): void {
   send(res, 200, "text/html; charset=utf-8", readFileSync(file));
 }
 
-function send(res: ServerResponse, status: number, type: string, body: string | Buffer): void {
-  res.writeHead(status, { "content-type": type, "cache-control": "no-store" });
+function send(
+  res: ServerResponse,
+  status: number,
+  type: string,
+  body: string | Buffer,
+  extraHeaders: Record<string, string> = {},
+): void {
+  res.writeHead(status, { "content-type": type, "cache-control": "no-store", ...extraHeaders });
   res.end(body);
+}
+
+/** Content hash for the library graph route's own ETag (issue #76) -- unlike a session, a library file carries no revision counter of its own. */
+function etagFor(content: string | Buffer): string {
+  return createHash("sha256").update(content).digest("hex");
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { fauxProvider, fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
 import { createHarnesses, type HarnessDeps } from "./harnesses.ts";
 import type { HarnessContext } from "./harness.ts";
-import { SessionStore } from "./session-store.ts";
+import { GraphRevisionConflictError, SessionStore } from "./session-store.ts";
 import { ensurePaths, paths as resolvePaths } from "./paths.ts";
 import { PiSession } from "./pi-session.ts";
 
@@ -227,10 +227,16 @@ describe("graph:extend is a no-op on an empty splice (issue #60)", () => {
 </bpmn:definitions>`;
 
   function extendHarness(setGraph: HarnessDeps["setGraph"]) {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-extend-"));
+    const paths = ensurePaths(
+      resolvePaths({ XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") } as NodeJS.ProcessEnv),
+    );
+    const store = new SessionStore(paths, "s1");
+    store.create("/tmp/some-project");
     const deps: HarnessDeps = {
       pi: {} as HarnessDeps["pi"],
       tools: {} as HarnessDeps["tools"],
-      store: {} as HarnessDeps["store"],
+      store,
       getGraph: () => currentGraph,
       setGraph,
       takeSteering: () => [],
@@ -285,6 +291,51 @@ describe("graph:extend is a no-op on an empty splice (issue #60)", () => {
     });
     expect(result.status).toBe("success");
     expect(result.added).toEqual(["f1", "marker"]);
+  });
+
+  it("passes the revision count read alongside the graph as setGraph's expectedIndex (issue #75)", async () => {
+    const withMarker = currentGraph.replace(
+      "<bpmn:startEvent id=\"start\" />",
+      '<bpmn:startEvent id="start" /><bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="marker" /><bpmn:endEvent id="marker" />',
+    );
+    let seenExpectedIndex: number | undefined;
+    const extend = extendHarness((_xml, _reason, _added, expectedIndex) => {
+      seenExpectedIndex = expectedIndex;
+    });
+
+    await extend({
+      activityId: "apply_extension",
+      harness: "graph:extend",
+      properties: {},
+      input: { fragment: withMarker },
+      variables: {},
+    });
+    // A freshly-created store has no revisions yet, so the splice this
+    // handler validated is extending revision 0.
+    expect(seenExpectedIndex).toBe(0);
+  });
+
+  it("reports a revision conflict as a failed splice instead of an uncaught throw (issue #75)", async () => {
+    const withMarker = currentGraph.replace(
+      "<bpmn:startEvent id=\"start\" />",
+      '<bpmn:startEvent id="start" /><bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="marker" /><bpmn:endEvent id="marker" />',
+    );
+    // Simulates SessionStore.appendGraph rejecting the write because someone
+    // else's revision landed first.
+    const extend = extendHarness(() => {
+      throw new GraphRevisionConflictError(3);
+    });
+
+    const result = await extend({
+      activityId: "apply_extension",
+      harness: "graph:extend",
+      properties: {},
+      input: { fragment: withMarker },
+      variables: {},
+    });
+    expect(result.status).toBe("failed");
+    expect(result.summary).toMatch(/revision 3/);
+    expect(result.summary).toMatch(/retry/);
   });
 });
 

@@ -11,7 +11,7 @@ import { checkSplice, type HarnessIOContract } from "./graph.ts";
 import { failed, HARNESS_RESULT_BASE_FIELDS, ok, type Harness, type HarnessRegistry, type HarnessResult } from "./harness.ts";
 import type { PiSession, ToolCallRequest } from "./pi-session.ts";
 import type { ToolExecutor } from "./tool-executor.ts";
-import type { SessionStore } from "./session-store.ts";
+import { GraphRevisionConflictError, type SessionStore } from "./session-store.ts";
 import type { TurnRecord } from "../studio/types.ts";
 
 /** Matches craft-graph.bpmn's own `gw_lint` condition (`lint_attempts >= 3`). */
@@ -222,7 +222,14 @@ export interface HarnessDeps {
   store: SessionStore;
   /** Current session graph; `graph:extend` replaces it. */
   getGraph: () => string;
-  setGraph: (xml: string, reason: string, addedElementIds: string[]) => void;
+  /**
+   * `expectedIndex`, when given, is the revision count read alongside the
+   * graph `graph:extend` validated its splice against -- passed straight
+   * through to `SessionStore.appendGraph`'s own optimistic-concurrency check
+   * (issue #75), so a splice raced by someone else's write (a studio edit
+   * landing mid-run) is rejected rather than silently overwritten.
+   */
+  setGraph: (xml: string, reason: string, addedElementIds: string[], expectedIndex?: number) => void;
   /** Steering and follow-up text the CLI has queued for this session. */
   takeSteering: () => string[];
   takeFollowUp: () => string[];
@@ -483,6 +490,13 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
       const fragment = String(context.input.fragment ?? "");
       if (!fragment) return failed("no fragment to apply");
       try {
+        // The revision count read alongside the graph the splice below is
+        // validated against -- passed to setGraph so a write raced by
+        // someone else's edit (issue #75) is caught rather than silently
+        // overwritten. Must be read right next to getGraph(), before the
+        // `await`, so nothing else in this handler can observe a newer graph
+        // in between.
+        const expectedIndex = store.readMeta().revisions.length;
         const splice = await checkSplice(deps.getGraph(), fragment, new Set(Object.keys(registry)), harnessIOContract());
         if (!splice.ok) return failed(splice.reason ?? "the fragment is not an additive splice");
         // An empty splice.added is a valid additive splice (the model
@@ -494,9 +508,14 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
         // (issue #60), so this is the one case setGraph is deliberately not
         // called for.
         if (splice.added.length === 0) return ok("no new elements; graph unchanged", { added: [] });
-        deps.setGraph(fragment, "graph:extend", splice.added);
+        deps.setGraph(fragment, "graph:extend", splice.added, expectedIndex);
         return ok(`spliced in ${splice.added.length} element(s)`, { added: splice.added });
       } catch (error) {
+        if (error instanceof GraphRevisionConflictError) {
+          return failed(
+            `the graph changed to revision ${error.currentIndex} while this splice was being validated; retry against the new graph`,
+          );
+        }
         return failed(`could not apply the fragment: ${message(error)}`);
       }
     },
