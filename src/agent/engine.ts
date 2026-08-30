@@ -389,7 +389,9 @@ async function drive(
   const currentTokens = (): string[] => [...new Set([...postponedIds(engine), ...waiting])];
 
   // Set the moment bpmn-elements dispatches *anything*, well before any
-  // harness's own async work returns -- see the hang guard below.
+  // harness's own async work returns -- see the hang guard below. Also set
+  // from "activity.wait" (issue #69): a resumed run re-announcing an
+  // already-parked activity is real activity too, not silence.
   let dispatchedAnything = false;
   listener.on("activity.start", () => {
     dispatchedAnything = true;
@@ -407,6 +409,15 @@ async function drive(
     }
   });
   listener.on("activity.wait", (api: { id: string; signal?: (message?: unknown) => void }) => {
+    // A resumed run can reach this without ever firing "activity.start" first
+    // -- bpmn-elements re-announces an activity that was already parked when
+    // the snapshot was taken, rather than starting it again -- so relying on
+    // "activity.start" alone left a legitimately-waiting resume indistinguishable
+    // from the #52 hang this guard exists for: `graph-agent tui --resume`
+    // showed the parked gate, then the hang guard fired 5s later and stopped
+    // the engine out from under the person still typing an answer (issue #69).
+    // A wait is real activity, proof the engine is alive and responsive.
+    dispatchedAnything = true;
     waiting.add(api.id);
     void options.onTokens?.(currentTokens(), [...visited]);
 

@@ -325,6 +325,34 @@ describe("resumeGraph", () => {
     expect(second.outcome).toBe("stopped");
     expect(second.note).toMatch(/dispatched nothing/);
   });
+
+  it("does not force-stop a resume that is genuinely waiting on a slow answer (issue #69)", async () => {
+    // Resuming into an already-parked user task re-announces it via
+    // "activity.wait" without ever firing "activity.start" first -- bpmn-elements
+    // is re-signalling a postponed activity, not starting a new one. Before
+    // issue #69's fix, dispatchedAnything was only ever set from
+    // "activity.start", so this looked identical to the #52 hang the guard
+    // exists for: `graph-agent tui --resume` showed the parked gate, then the
+    // hang guard fired and force-stopped the engine before the person
+    // watching it could type an answer. A short hangGuardMs and an onWait
+    // that resolves well after it proves the guard no longer mistakes this
+    // for silence.
+    const first = await runGraph(parking, { harnesses: {} });
+    expect(first.outcome).toBe("stopped");
+
+    const answeredAfter = new Promise<Record<string, unknown>>((resolve) => {
+      setTimeout(() => resolve({ approved: true }), 80);
+    });
+
+    const second = await resumeGraph(first.state, parking, {
+      harnesses: {},
+      hangGuardMs: 20,
+      onWait: () => answeredAfter,
+    });
+
+    expect(second.note).toBeUndefined();
+    expect(second.outcome).toBe("completed");
+  });
 });
 
 describe("a callActivity's own zeebe:output (issue #66)", () => {
