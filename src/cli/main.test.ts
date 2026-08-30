@@ -458,6 +458,41 @@ describe("--answer scoping (issue #44)", () => {
       expect(stdout).toContain("stopped");
       expect(code).toBe(0);
     });
+
+    it("--max-auto-answers lowers the cap, and the message names the flag to raise it (issue #71)", () => {
+      const { env } = project();
+      const { stdout, stderr, code } = runCli(env, [
+        "run",
+        "--graph",
+        "loop_gate",
+        "--dry-run",
+        "--answer",
+        "key=hello",
+        "--max-auto-answers",
+        "2",
+      ]);
+      expect(stderr).toMatch(/gate was auto-answered 2 times/);
+      expect(stderr).toMatch(/the cap is 2 per activity/);
+      expect(stderr).toMatch(/--max-auto-answers/);
+      expect(stdout).toContain("stopped");
+      expect(code).toBe(0);
+    });
+
+    it("rejects a non-positive-integer --max-auto-answers instead of silently ignoring it", () => {
+      const { env } = project();
+      const { stderr, code } = runCli(env, [
+        "run",
+        "--graph",
+        "loop_gate",
+        "--dry-run",
+        "--answer",
+        "key=hello",
+        "--max-auto-answers",
+        "0",
+      ]);
+      expect(stderr).toMatch(/--max-auto-answers must be a positive integer/);
+      expect(code).toBe(1);
+    });
   });
 });
 

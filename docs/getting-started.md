@@ -434,6 +434,14 @@ parks, which is how an unrelated payload (say, the intent that started the
 session) used to get fed to an approval gate it was never meant to answer
 ([#44](https://github.com/datakurre/graph-agent/issues/44)).
 
+The same gate is auto-answered at most 5 times in one `run`/`resume`
+invocation -- a graph that loops back onto a gate more than that stops with
+it still parked, rather than an unscoped `--answer` silently re-satisfying
+the same loop forever and billing a model turn per lap. `--max-auto-answers
+<n>` raises (or lowers) that cap for a graph that legitimately needs more
+laps than the default allows
+([#71](https://github.com/datakurre/graph-agent/issues/71)).
+
 `session-craft` runs the same loop as `session-skeleton`, but crafts first
 and only falls back to a plain Pi turn when nothing was crafted -- so a
 prompt goes straight into `craft-graph` with no gate in front of it at all:
