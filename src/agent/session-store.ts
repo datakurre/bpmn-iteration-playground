@@ -23,6 +23,15 @@ export interface SessionMeta {
   name?: string;
   /** Absolute path of the project directory this session ran against. */
   project: string;
+  /**
+   * The `--graph <id>` this session was started from (the graph file's own
+   * basename, without its `.bpmn` extension) -- set once, at `runSession`
+   * time. Recorded directly rather than parsed back out of a revision's own
+   * free-text `reason` string, so a reattached TUI (issue #73) or anything
+   * else that wants to name the graph a session runs has a stable field to
+   * read instead of scraping prose.
+   */
+  graph?: string;
   status: SessionSummary["status"];
   createdAt: number;
   updatedAt: number;

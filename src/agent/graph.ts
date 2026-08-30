@@ -293,19 +293,23 @@ async function checkJobTypes(
     const mapping = ioMapping(task);
     for (const { target } of mapping.input) {
       if (target === undefined || (contract.inputs ?? []).includes(target)) continue;
-      const valid = contract.inputs?.length ? contract.inputs.join(", ") : "no zeebe:input";
+      const valid = contract.inputs?.length
+        ? `valid zeebe:input targets: ${contract.inputs.join(", ")}`
+        : `'${jobType}' reads no zeebe:input at all`;
       return {
         ok: false,
-        reason: `${task.id} maps input '${target}', which '${jobType}' never reads -- valid zeebe:input targets: ${valid}`,
+        reason: `${task.id} maps input '${target}', which '${jobType}' never reads -- ${valid}`,
       };
     }
 
     for (const key of Object.keys(activityProperties(task))) {
       if ((contract.headers ?? []).includes(key)) continue;
-      const valid = contract.headers?.length ? contract.headers.join(", ") : "no zeebe:taskHeaders";
+      const valid = contract.headers?.length
+        ? `valid zeebe:taskHeaders: ${contract.headers.join(", ")}`
+        : `'${jobType}' reads no zeebe:taskHeaders at all`;
       return {
         ok: false,
-        reason: `${task.id} sets header '${key}', which '${jobType}' never reads -- valid zeebe:taskHeaders: ${valid}`,
+        reason: `${task.id} sets header '${key}', which '${jobType}' never reads -- ${valid}`,
       };
     }
 
@@ -320,10 +324,12 @@ async function checkJobTypes(
       const match = /^=(?!null$|true$|false$)([A-Za-z_][A-Za-z0-9_]*)$/.exec(source ?? "");
       const field = match?.[1];
       if (field === undefined || (contract.outputs ?? []).includes(field)) continue;
-      const valid = contract.outputs?.length ? contract.outputs.join(", ") : "none";
+      const valid = contract.outputs?.length
+        ? `valid outputs are: ${contract.outputs.join(", ")}`
+        : `'${jobType}' publishes no outputs at all`;
       return {
         ok: false,
-        reason: `${task.id} reads output '${field}', which '${jobType}' never publishes; valid outputs are: ${valid}`,
+        reason: `${task.id} reads output '${field}', which '${jobType}' never publishes -- ${valid}`,
       };
     }
   }

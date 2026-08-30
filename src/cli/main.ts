@@ -35,9 +35,12 @@ Commands
                         (--refresh: take the bundled version of any graph
                         that differs from your library copy, backed up first)
   run [prompt]         start a session in this project and drive it turn by turn
-  tui [prompt]         start a session in an interactive terminal UI: a live
-                        transcript, a trail of the last few activities, and a
-                        prompt for any human gate the graph parks on
+  tui [prompt] | tui --resume <session>
+                       start a session in an interactive terminal UI: a live
+                       transcript, a trail of the last few activities, and a
+                       prompt for any human gate the graph parks on --
+                       --resume reattaches to a parked session instead of
+                       starting a new one
   resume <session>     recover engine + transcript state and continue
   steer <session> <text>
                        queue a steering message, injected before the next turn
@@ -79,6 +82,9 @@ Options
                         (default: 5) -- raise it for a graph that
                         legitimately revisits one gate more than that many
                         times in a single invocation
+  --resume <session>  tui only: reattach to a parked session instead of
+                        starting a new one ('graph-agent resume' takes the
+                        session id positionally instead)
   --steer <text>       queue a steering message before the run starts, drained
                         by the first agent:steer the graph reaches (repeatable)
   --follow-up <text>   queue a follow-up message before the run starts, drained

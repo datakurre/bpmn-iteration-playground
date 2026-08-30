@@ -229,6 +229,11 @@ describe("graph-agent tui --resume (issue #67)", () => {
       const rendered = handles?.root.render(80).join("\n") ?? "";
       expect(rendered).toContain("Hello from the first leg");
       expect(rendered).toContain("waiting on gate");
+      // The status strip names the session's own graph (issue #73), read
+      // back from meta.graph (set at runSession time) rather than showing
+      // the literal placeholder "(resumed)".
+      expect(rendered).toContain("graph resume ·");
+      expect(rendered).not.toContain("(resumed)");
     });
 
     handles?.editor.onSubmit?.("hello from the reattached gate");

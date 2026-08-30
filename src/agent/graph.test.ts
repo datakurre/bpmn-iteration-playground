@@ -240,6 +240,11 @@ describe("checkSplice validates a new activity's I/O against a harness contract 
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/t maps input 'command'/);
     expect(result.reason).toMatch(/'shell' never reads/);
+    // 'shell' has no zeebe:input contract at all (shellIO above declares no
+    // `inputs` key) -- the message reads as a sentence naming that, not the
+    // placeholder "valid zeebe:input targets: no zeebe:input" an earlier
+    // version of this check produced for an empty list (issue #73).
+    expect(result.reason).toMatch(/'shell' reads no zeebe:input at all/);
   });
 
   it("rejects a zeebe:output reading a field the harness never publishes", async () => {
