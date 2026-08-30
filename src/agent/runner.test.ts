@@ -372,6 +372,16 @@ describe("a splice executes in the same run that drafted it (issue #45)", () => 
     // `resume` would pick up the new revision and reach it.
     expect(detail.visited).toContain("marker");
     expect(detail.revisions.length).toBe(2);
+    // Issue #59: the splice re-entry above is a second pass through the
+    // engine (a fresh `visited` set per `resumeGraph` call) -- `draft` and
+    // `extend` only ran in the *first* pass. Before the fix, `onTokens`
+    // replaced `meta.visited` wholesale on the re-entry's own token moves,
+    // so the studio's migration guard would stop protecting them the moment
+    // the splice landed, even though both are still live (the token passed
+    // through them to get here, and `Definition.recover()` would replay
+    // their state by id on any future resume).
+    expect(detail.visited).toContain("draft");
+    expect(detail.visited).toContain("extend");
   });
 
   it("bounds re-entry against a graph that never stops re-splicing", async () => {

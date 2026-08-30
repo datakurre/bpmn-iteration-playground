@@ -132,6 +132,25 @@ describe("PUT /api/sessions/:id/graph (issue #46)", () => {
     expect(body.error).toMatch(/live state/);
   });
 
+  it("409s on a rename from an earlier pass, not just the most recent one (issue #59)", async () => {
+    // Mirrors what runner.ts's onTokens now does across a splice re-entry:
+    // two separate calls, each merging its own pass's tokens into
+    // meta.visited rather than replacing it. Before the fix, the second call
+    // would have replaced ["gate"] with ["shell_check"] outright, and this
+    // PUT would have been wrongly accepted.
+    const store = createSession("s4b", []);
+    store.markVisited(["gate"]);
+    store.markVisited(["shell_check"]);
+    const res = await fetch(`${studio.url}/api/sessions/s4b/graph`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ xml: graphWithoutGate }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; removed: string[] };
+    expect(body.removed).toEqual(["gate"]);
+  });
+
   it("409s (via checkMigration's job-type contract) on an unregistered job type", async () => {
     createSession("s5");
     const withBadJobType = graphWithSplice.replace('type="shell"', 'type="shell:exec"');

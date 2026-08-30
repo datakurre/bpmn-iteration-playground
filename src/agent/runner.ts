@@ -15,7 +15,7 @@ import { bundledWorkflowsDir, listBpmnFiles } from "./paths.ts";
 import { runGraph, resumeGraph, type ActivityOutcome, type RunResult } from "./engine.ts";
 import { createHarnesses } from "./harnesses.ts";
 import { PiSession } from "./pi-session.ts";
-import { SessionStore } from "./session-store.ts";
+import { mergeVisited, SessionStore } from "./session-store.ts";
 import type { ToolExecutor } from "./tool-executor.ts";
 import type { EngineState } from "./graph.ts";
 import type { Paths } from "./paths.ts";
@@ -274,7 +274,11 @@ async function drive(
     onTokens: (tokens: string[], visited: string[]) => {
       store.update((meta) => {
         meta.tokens = tokens;
-        meta.visited = visited;
+        // `visited` is this call's own, per-pass set -- merged, never
+        // replacing meta.visited outright (see `mergeVisited`/`markVisited`
+        // in session-store.ts). Issue #59 found the studio's migration guard
+        // silently un-protecting an earlier pass's activities without this.
+        meta.visited = mergeVisited(meta.visited, visited);
       });
     },
     // A queued studio answer (issue #51) always takes precedence over --answer:
