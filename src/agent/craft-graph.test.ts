@@ -46,6 +46,13 @@ async function linkedSessionSkeleton(): Promise<string> {
   return (await linkGraph(source, index)).xml;
 }
 
+async function linkedSessionCraft(): Promise<string> {
+  const files = listBpmnFiles(bundledWorkflowsDir()).map((f) => ({ source: f.path, xml: readFileSync(f.path, "utf8") }));
+  const index = await indexLibrary(files);
+  const source = readFileSync(join(bundledWorkflowsDir(), "session-craft.bpmn"), "utf8");
+  return (await linkGraph(source, index)).xml;
+}
+
 describe("linking session-skeleton", () => {
   it("resolves the callActivity's craft_graph into the same definitions", async () => {
     const files = listBpmnFiles(bundledWorkflowsDir()).map((f) => ({ source: f.path, xml: readFileSync(f.path, "utf8") }));
@@ -63,6 +70,12 @@ describe("running the linked graph (mock harnesses, matching the real contract)"
     const seen: string[] = [];
     const waited: string[] = [];
     const draftPrompts: unknown[] = [];
+    // session-skeleton now checks "more work?" immediately after await_intent,
+    // before craft ever runs (issue #72) -- so the first ask has to say
+    // "not done yet" to let craft run at all, and only the second ask (once
+    // craft has rejected and control has looped back) says "done", which is
+    // exactly what this test's own single craft-then-end shape needs.
+    let intentAsked = 0;
 
     const result = await runGraph(xml, {
       harnesses: {
@@ -86,7 +99,10 @@ describe("running the linked graph (mock harnesses, matching the real contract)"
       },
       onWait: (activityId) => {
         waited.push(activityId);
-        if (activityId === "await_intent") return { intent: "add a shell step", context: "", done: true };
+        if (activityId === "await_intent") {
+          intentAsked += 1;
+          return { intent: "add a shell step", context: "", done: intentAsked > 1 };
+        }
         return undefined;
       },
     });
@@ -94,7 +110,7 @@ describe("running the linked graph (mock harnesses, matching the real contract)"
     // lint_exhausted fires on attempt 3 without ever needing a human review --
     // the mock always reports "failed", so craft_rejected ends the callActivity.
     expect(seen).toEqual(["agent:turn", "graph:layout", "graph:lint"]);
-    expect(waited).toEqual(["await_intent"]);
+    expect(waited).toEqual(["await_intent", "await_intent"]);
     expect(result.outcome).toBe("completed");
     // await_intent's answer has to cross the callActivity boundary to reach
     // draft_fragment, inside craft_graph -- the crux of issue #12.
@@ -106,6 +122,11 @@ describe("running the linked graph (mock harnesses, matching the real contract)"
     const seen: string[] = [];
     const waited: string[] = [];
     const draftPrompts: unknown[] = [];
+    // Same reasoning as the previous test: "more work?" is checked before
+    // craft now (issue #72), so the first ask has to say "not done yet" to
+    // let craft run, and only the second ask (after craft applies and
+    // returns) ends the session.
+    let intentAsked = 0;
 
     const result = await runGraph(xml, {
       harnesses: {
@@ -129,14 +150,17 @@ describe("running the linked graph (mock harnesses, matching the real contract)"
       },
       onWait: (activityId) => {
         waited.push(activityId);
-        if (activityId === "await_intent") return { intent: "add a shell step", context: "", done: true };
+        if (activityId === "await_intent") {
+          intentAsked += 1;
+          return { intent: "add a shell step", context: "", done: intentAsked > 1 };
+        }
         if (activityId === "review_fragment") return { approval: "apply", notes: "looks good" };
         return undefined;
       },
     });
 
     expect(seen).toEqual(["agent:turn", "graph:layout", "graph:lint", "graph:extend"]);
-    expect(waited).toEqual(["await_intent", "review_fragment"]);
+    expect(waited).toEqual(["await_intent", "review_fragment", "await_intent"]);
     expect(result.outcome).toBe("completed");
     expect(draftPrompts).toEqual(["add a shell step"]);
     // craft_graph's own results (computed in its own, separate process) are
@@ -153,11 +177,20 @@ describe("running the linked graph (mock harnesses, matching the real contract)"
       "graph:lint": async () => ok("lint result", { status: "success", summary: "ok", attempt: 1 }),
       "graph:extend": async () => ok("extended", { status: "success" }),
     };
+    // Shared across both runGraph calls: the first ask (before this park)
+    // has to say "not done yet" so craft runs at all (issue #72 moved that
+    // check ahead of craft), and the second ask (after resuming, once craft
+    // applies and returns) is what actually ends the session.
+    let intentAsked = 0;
+    const answerIntent = () => {
+      intentAsked += 1;
+      return { intent: "add a shell step", context: "", done: intentAsked > 1 };
+    };
 
     // Park mid-craft_graph, at the human-approval user task.
     const first = await runGraph(xml, {
       harnesses,
-      onWait: (activityId) => (activityId === "await_intent" ? { intent: "add a shell step", context: "", done: true } : undefined),
+      onWait: (activityId) => (activityId === "await_intent" ? answerIntent() : undefined),
     });
     expect(first.outcome).toBe("stopped");
     expect(first.variables.fragment).toBe("for: add a shell step");
@@ -166,11 +199,51 @@ describe("running the linked graph (mock harnesses, matching the real contract)"
     // before the snapshot, must still be visible to a fresh process spawn.
     const second = await resumeGraph(first.state, xml, {
       harnesses,
-      onWait: (activityId) => (activityId === "review_fragment" ? { approval: "apply", notes: "" } : undefined),
+      onWait: (activityId) => {
+        if (activityId === "review_fragment") return { approval: "apply", notes: "" };
+        if (activityId === "await_intent") return answerIntent();
+        return undefined;
+      },
     });
     expect(second.outcome).toBe("completed");
     expect(second.variables.intent).toBe("add a shell step");
     expect(second.variables.approval).toBe("apply");
+  });
+});
+
+describe("session-craft checks session_done before re-entering craft (issue #72)", () => {
+  it("ends right after await_intent's answer, without another draft_fragment turn", async () => {
+    // Real Haiku repro this pins: `--answer await_intent:done=true` on
+    // session-craft still cost one full extra craft lap (a billed model
+    // turn for a second draft_fragment) before the earlier version of this
+    // graph got around to checking session_done, because that check sat
+    // after craft rather than immediately after the form that sets it.
+    const xml = await linkedSessionCraft();
+    let draftFragmentCalls = 0;
+
+    const result = await runGraph(xml, {
+      variables: { prompt: "add a shell step" },
+      harnesses: {
+        "agent:turn": async (context) => {
+          draftFragmentCalls += 1;
+          return ok("drafted", { text: `for: ${context.input.prompt}` });
+        },
+        "graph:layout": async (context) => ok("laid out", { fragment: context.input.fragment }),
+        "graph:lint": async () => ok("lint result", { status: "success", summary: "ok", attempt: 1 }),
+        "graph:extend": async () => ok("extended", { status: "success" }),
+      },
+      onWait: (activityId) => {
+        if (activityId === "review_fragment") return { approval: "apply", notes: "" };
+        // The first (and, if the fix holds, only) ask: ends the session
+        // right here rather than looping back into craft for a second lap.
+        if (activityId === "await_intent") return { intent: "", context: "", done: true };
+        return undefined;
+      },
+    });
+
+    expect(result.outcome).toBe("completed");
+    // One lap: the first craft, spliced successfully. Not two.
+    expect(draftFragmentCalls).toBe(1);
   });
 });
 
@@ -232,8 +305,11 @@ describe("craft-graph's redraft loop is bounded (issues #31, #34)", () => {
       systemPrompt: "test agent",
       streamFn: ((m: never, context: never, o: never) => faux.provider.streamSimple(m, context, o)) as RunSessionOptions["streamFn"],
       tools: createNoopToolExecutor(["read", "bash"]),
+      // done: false -- issue #72 checks "more work?" immediately after
+      // await_intent, before craft ever runs, so a true here would end the
+      // session without ever reaching craft at all.
       onWait: (activityId) =>
-        activityId === "await_intent" ? { intent: "add a lint step", context: "", done: true } : undefined,
+        activityId === "await_intent" ? { intent: "add a lint step", context: "", done: false } : undefined,
     });
 
     // The cap gives up rather than reaching a graceful craft_rejected --
@@ -267,8 +343,9 @@ describe("craft-graph's redraft loop is bounded (issues #31, #34)", () => {
       systemPrompt: "test agent",
       streamFn: ((m: never, context: never, o: never) => faux.provider.streamSimple(m, context, o)) as RunSessionOptions["streamFn"],
       tools: createNoopToolExecutor(["read", "bash"]),
+      // done: false -- see the previous test's own comment (issue #72).
       onWait: (activityId) =>
-        activityId === "await_intent" ? { intent: "add a lint step", context: "", done: true } : undefined,
+        activityId === "await_intent" ? { intent: "add a lint step", context: "", done: false } : undefined,
     });
 
     const detail = new SessionStore(paths, result.sessionId).detail();
@@ -303,8 +380,11 @@ describe("running the linked graph with the real harness registry", () => {
       streamFn: ((m: never, context: never, o: never) => faux.provider.streamSimple(m, context, o)) as RunSessionOptions["streamFn"],
       tools: createNoopToolExecutor(["read", "bash"]),
       onProgress: (line) => progress.push(line),
+      // done: false -- see the earlier test's own comment (issue #72): a true
+      // here would end the session before draft_fragment's first turn, which
+      // is the very thing this test exists to check reaches it at all.
       onWait: (activityId) => {
-        if (activityId === "await_intent") return { intent: "add a shell verification step", context: "", done: true };
+        if (activityId === "await_intent") return { intent: "add a shell verification step", context: "", done: false };
         if (activityId === "review_fragment") return { approval: "reject", notes: "" };
         return undefined;
       },
