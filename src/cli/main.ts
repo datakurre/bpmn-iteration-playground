@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { graphPath, startStudio } from "../studio/server.ts";
 import { resumeSession, runSession } from "../agent/runner.ts";
+import { ProcessTerminal } from "../tui/pi-bridge.ts";
+import { startTui } from "../tui/app.ts";
 import { firstActivity, withDefinitionsId } from "../agent/graph.ts";
 import { unlinkGraph } from "../agent/link.ts";
 import { lintBpmn } from "../agent/bpmn-lint.ts";
@@ -32,6 +34,9 @@ Commands
                         (--refresh: take the bundled version of any graph
                         that differs from your library copy, backed up first)
   run [prompt]         start a session in this project and drive it turn by turn
+  tui [prompt]         start a session in an interactive terminal UI: a live
+                        transcript, a trail of the last few activities, and a
+                        prompt for any human gate the graph parks on
   resume <session>     recover engine + transcript state and continue
   steer <session> <text>
                        queue a steering message, injected before the next turn
@@ -107,6 +112,8 @@ export async function main(argv: string[]): Promise<number> {
       return cmdShow(argv[1]);
     case "run":
       return cmdRun(argv.slice(1));
+    case "tui":
+      return cmdTui(argv.slice(1));
     case "resume":
       return cmdResume(argv.slice(1));
     case "steer":
@@ -347,13 +354,22 @@ export function parseAnswers(pairs: string[]): ScopedAnswers {
     if (eq === -1) throw new Error(`--answer '${pair}' is not '[activity:]key=value'`);
     const key = rest.slice(0, eq);
     const raw = rest.slice(eq + 1);
-    const value = raw === "true" ? true : raw === "false" ? false : raw !== "" && !Number.isNaN(Number(raw)) ? Number(raw) : raw;
 
     const bucket = answers.get(scope) ?? {};
-    bucket[key] = value;
+    bucket[key] = coerceAnswerValue(raw);
     answers.set(scope, bucket);
   }
   return answers;
+}
+
+/**
+ * Coerces an obvious boolean or number out of a raw string answer, the way
+ * `--answer key=value` always has -- shared with the TUI's gate wizard
+ * (`src/tui/app.ts`, issue #50) so a typed "true" or "3" behaves the same
+ * whether it came from a flag or an interactive prompt.
+ */
+export function coerceAnswerValue(raw: string): unknown {
+  return raw === "true" ? true : raw === "false" ? false : raw !== "" && !Number.isNaN(Number(raw)) ? Number(raw) : raw;
 }
 
 /** The unscoped bucket merged under whatever is scoped to this activity, or `undefined` when neither exists. */
@@ -477,6 +493,64 @@ async function cmdRun(args: string[]): Promise<number> {
 
   process.stdout.write(`\nsession ${result.sessionId}  ${result.outcome}  ${result.turns} turn(s)\n`);
   reportWait(p, result.sessionId, result.outcome);
+  if (result.error) {
+    process.stderr.write(`error: ${result.error.message}\n`);
+    return 1;
+  }
+  return 0;
+}
+
+async function cmdTui(args: string[]): Promise<number> {
+  const p = requirePaths();
+  if (!p) return 1;
+  const flags = runFlags(args);
+  const project = projectId();
+
+  const graphFile = graphPath(p, flags.graph);
+  if (!graphFile) {
+    process.stderr.write(`graph-agent: no graph named '${flags.graph}' in ${p.workflowsDir}\n`);
+    return 1;
+  }
+
+  const prompt = flags.positionals.join(" ");
+  if (prompt) {
+    const first = await firstActivity(readFileSync(graphFile, "utf8"));
+    if (first?.type === "bpmn:UserTask") {
+      process.stderr.write(
+        `graph-agent: '${flags.graph}' starts on '${first.id}', a human gate that reads its own form, ` +
+          `not the initial prompt -- the tui will prompt for it interactively instead.\n`,
+      );
+    }
+  }
+
+  let chosen;
+  try {
+    chosen = await resolveRunModel(flags, p);
+  } catch (error) {
+    process.stderr.write(`graph-agent: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+
+  const result = await withInterrupt((signal) =>
+    startTui({
+      paths: p,
+      project,
+      graphPath: graphFile,
+      graphLabel: flags.graph,
+      prompt,
+      ...(flags.name === undefined ? {} : { name: flags.name }),
+      model: chosen.model,
+      modelLabel: chosen.label,
+      systemPrompt: "",
+      streamFn: chosen.streamFn,
+      tools: createPiToolExecutor(project),
+      terminal: new ProcessTerminal(),
+      coerceValue: coerceAnswerValue,
+      signal,
+    }),
+  );
+
+  process.stdout.write(`\nsession ${result.sessionId}  ${result.outcome}  ${result.turns} turn(s)\n`);
   if (result.error) {
     process.stderr.write(`error: ${result.error.message}\n`);
     return 1;

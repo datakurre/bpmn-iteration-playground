@@ -96,6 +96,12 @@ process next drives the session (`run`/`resume`) consumes a matching queued
 answer from its `onWait(activityId)` seam before falling back to `--answer`,
 and deletes it once consumed so it cannot be replayed.
 
+`graph-agent tui` ([#50](https://github.com/datakurre/graph-agent/issues/50))
+answers one directly, in the same process: `onWait` renders one prompt per
+`zeebe:userTaskForm` field and resolves once every field is answered, so a
+gate never needs a second `resume --answer` invocation at all when driven
+this way. See [Getting started](getting-started.html#the-tui).
+
 ## Variables across a callActivity
 
 `link.ts` splices a called graph (`craft_graph`, called by `session-skeleton.bpmn`'s

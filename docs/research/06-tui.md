@@ -1,3 +1,15 @@
+> **Implemented** as `graph-agent tui` ([#50](https://github.com/datakurre/graph-agent/issues/50)),
+> following the recommendation below: `pi-tui` directly, `AssistantMessageComponent`/
+> `ToolExecutionComponent` a la carte through `src/tui/pi-bridge.ts`, and the
+> trail/status strip/gate wizard as graph-agent's own components. Phase 1's
+> transcript, trail, status strip and steering, and phase 2's gate answering
+> via `onWait`, shipped together rather than staged, since the issue's own
+> acceptance criteria needed gate answering from the start. The graph pane
+> (`^g`, `graphOutline()`) and phase 3's `--follow <session>`/`/sessions`/
+> `/graph` remain unbuilt -- see [Getting started](../getting-started.html#the-tui)
+> and [Harness reference](../harnesses.html#user-tasks) for what actually
+> shipped.
+
 # A terminal UI for a graph-driven agent, on top of Pi's TUI toolkit
 
 Checked against Pi 0.84.3 (`@earendil-works/pi-tui`, `@earendil-works/pi-coding-agent`,

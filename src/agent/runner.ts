@@ -37,6 +37,18 @@ export interface RunSessionOptions {
   /** Emitted as the run progresses, for the CLI to print. */
   onProgress?: (line: string) => void;
   /**
+   * Called once, right after the session's `PiSession` is constructed and
+   * before the first turn runs. `PiSession.agent` (`pi-agent-core`'s `Agent`)
+   * emits `message_start`/`message_update`/`message_end` and
+   * `tool_execution_start`/`_update`/`_end` via `.subscribe()` -- a caller
+   * that wants to render a transcript live (`graph-agent tui`, issue #50)
+   * subscribes here rather than waiting for a whole turn's `onActivity`
+   * summary.
+   */
+  onSessionReady?: (pi: PiSession) => void;
+  /** Called after each harness-backed activity completes, alongside `onProgress`'s formatted line. */
+  onActivity?: (activity: ActivityOutcome) => void;
+  /**
    * Called when the graph parks on a human gate -- a user task, a receive task.
    * Return a payload to answer it and let the run continue, or undefined to stop
    * with a snapshot so it can be resumed once someone answers.
@@ -208,6 +220,7 @@ async function drive(
     streamFn: options.streamFn,
     sessionId: store.id,
   });
+  options.onSessionReady?.(pi);
 
   // Steering and follow-up arrive from outside the graph; the graph decides when
   // to drain them. The initial prompt is not one of these -- it enters as a
@@ -256,6 +269,7 @@ async function drive(
     variables: { prompt: options.prompt ?? "", project: options.project },
     onActivity: (activity: ActivityOutcome) => {
       options.onProgress?.(`${activity.activityId}  ${activity.harness}  ${activity.result.summary}`);
+      options.onActivity?.(activity);
     },
     onTokens: (tokens: string[], visited: string[]) => {
       store.update((meta) => {

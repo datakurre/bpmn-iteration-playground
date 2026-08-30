@@ -307,6 +307,41 @@ $ graph-agent run "Say hello in one word." \
 session ce90951b  completed  2 turn(s)
 ```
 
+## The TUI
+
+`run` prints one line per activity and exits; it has no way to answer a
+parked human gate interactively, and steering/follow-up only ever queue from
+outside the process. `graph-agent tui [prompt]`
+([#50](https://github.com/datakurre/graph-agent/issues/50)) is the same
+`runSession`/`resumeSession` machinery from an interactive terminal instead:
+
+```
+graph-agent tui --graph session-skeleton --model anthropic/claude-haiku-4-5
+```
+
+The screen is the same shape `run`'s output implies, made live: a transcript
+of the session (Pi's own `AssistantMessageComponent`/`ToolExecutionComponent`,
+fed straight from `PiSession.agent`'s events -- nothing is re-implemented),
+a trail of the last few harness-backed activities, and a status strip with
+the graph, turn count, token cache usage, the graph revision, and the live
+token ids (`meta.tokens`).
+
+The one thing `run` genuinely cannot do: when the graph parks on a
+`bpmn:UserTask`, the TUI renders a prompt for it right there --
+`session-skeleton`'s `await_intent` and `craft-graph`'s `review_fragment`
+both stop the terminal with `waiting on <activity> — <field label>
+(<field key>):`, one line per field in the task's `zeebe:userTaskForm`
+schema (falling back to a single generic field if the task has no form at
+all). Type an answer and press enter; once every field is answered the
+session continues without leaving the process. Typed text answers a gate
+when one is parked; otherwise it queues -- bare text as a steering message,
+`/follow <text>` as a follow-up -- exactly like `graph-agent steer`/`follow-up`
+would from another terminal, since it goes through the same
+`SessionStore.queueInbox`.
+
+`graph-agent run` is unchanged: non-interactive, scriptable, what CI uses.
+The TUI is a new command, not a flag on `run`.
+
 ## The bundled graphs
 
 `make init` seeds five graphs. All five run:

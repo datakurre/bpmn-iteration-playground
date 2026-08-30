@@ -83,6 +83,23 @@ where`'s graphs directory, before concluding a graph is still broken.
 
 (Under Nix: `nix develop --command make <target>`.)
 
+## TUI
+
+```
+graph-agent tui "say hello" --dry-run
+```
+
+drives the same `run`/`resume` machinery from an interactive terminal instead
+of one printed line per activity: a live transcript (Pi's own message and
+tool-call rendering), a trail of the last few activities, a status strip with
+the live token ids, and -- the thing `run` cannot do at all -- a prompt for
+any human gate the graph parks on, right there in the terminal.
+`session-skeleton`'s intent gate and `craft-graph`'s approval gate both answer
+this way; type an answer per form field and press enter. Bare text queues as
+a steering message once a turn is under way; `/follow <text>` queues a
+follow-up instead. `run` stays exactly as it is -- non-interactive, scriptable,
+what CI uses.
+
 ## Studio
 
 ```
