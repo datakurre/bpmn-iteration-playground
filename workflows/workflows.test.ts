@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { BpmnModdle } from "bpmn-moddle";
 import zeebe from "zeebe-bpmn-moddle/resources/zeebe.json" with { type: "json" };
 import { activityProperties, harnessOf, ioMapping, type ActivityLike } from "../src/agent/zeebe.ts";
-import { toSourceContext } from "../src/agent/graph.ts";
+import { firstActivity, toSourceContext } from "../src/agent/graph.ts";
 import { createHarnesses, harnessIOContract, type HarnessDeps } from "../src/agent/harnesses.ts";
 
 const DIR = join(import.meta.dirname);
@@ -66,6 +66,28 @@ async function elementsOf(file: string): Promise<FlowElement[]> {
     (e) => e.$type === "bpmn:Process",
   );
   return processes.flatMap((p) => [p, ...flatten(p.flowElements)]);
+}
+
+/** Which bundled file defines which process id -- callActivity's calledElement names a process, not a file. */
+async function processIdToFile(): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  for (const f of files) {
+    for (const element of await elementsOf(f)) {
+      if (element.$type === "bpmn:Process" && typeof element.id === "string") map.set(element.id, f);
+    }
+  }
+  return map;
+}
+
+function outputTargets(elements: FlowElement[]): string[] {
+  const targets: string[] = [];
+  for (const element of elements) {
+    const io = element.extensionElements?.values?.find((v) => v.$type === "zeebe:IoMapping") as
+      | { outputParameters?: Array<{ target?: string }> }
+      | undefined;
+    for (const out of io?.outputParameters ?? []) if (out.target) targets.push(out.target);
+  }
+  return targets;
 }
 
 describe.each(files)("%s", (file) => {
@@ -221,13 +243,30 @@ describe.each(files)("%s", (file) => {
     // branch was dead; session_done was the same bug in another graph. Checking
     // only one graph missed the second, so this runs over all of them.
     const elements = await elementsOf(file);
-    const produced = new Set<string>(["prompt"]);
-    for (const element of elements) {
-      const io = element.extensionElements?.values?.find((v) => v.$type === "zeebe:IoMapping") as
-        | { outputParameters?: Array<{ target?: string }> }
-        | undefined;
-      for (const out of io?.outputParameters ?? []) if (out.target) produced.add(out.target);
+    const produced = new Set<string>(["prompt", ...outputTargets(elements)]);
+
+    // A callActivity's called process shares this session's variable pool via
+    // sharedOutput (see docs/harnesses.md's "Variables across a callActivity"),
+    // so a gateway here may legitimately route on something only the *called*
+    // graph's own activities ever publish (session-craft.bpmn's gw_crafted
+    // routes on craft_graph's own extend_status, issue #66).
+    const idToFile = await processIdToFile();
+    const visitedFiles = new Set<string>([file]);
+    const pending = elements
+      .filter((e) => e.$type === "bpmn:CallActivity")
+      .map((e) => e.calledElement as string | undefined);
+    while (pending.length > 0) {
+      const calledElement = pending.shift();
+      const calleeFile = calledElement ? idToFile.get(calledElement) : undefined;
+      if (!calleeFile || visitedFiles.has(calleeFile)) continue;
+      visitedFiles.add(calleeFile);
+      const calleeElements = await elementsOf(calleeFile);
+      for (const target of outputTargets(calleeElements)) produced.add(target);
+      for (const e of calleeElements.filter((e) => e.$type === "bpmn:CallActivity")) {
+        pending.push(e.calledElement as string | undefined);
+      }
     }
+
     const read = new Set<string>();
     for (const flow of elements.filter((e) => e.$type === "bpmn:SequenceFlow")) {
       const body = (flow.conditionExpression as { body?: string } | undefined)?.body;
@@ -363,5 +402,32 @@ describe("session-default.bpmn (issue #47)", () => {
     const elements = await elementsOf("session-default.bpmn");
     const processes = elements.filter((e) => e.$type === "bpmn:Process");
     expect(processes.map((p) => p.id)).toEqual(["session_default"]);
+  });
+});
+
+describe("session-craft.bpmn (issue #66)", () => {
+  it("reaches both craft_graph and pi_default_loop through a callActivity, not an inlined copy", async () => {
+    // The vision's own sentence as one graph only holds if craft and the
+    // fallback loop both stay callActivities someone can iterate on
+    // independently -- pinning this so neither is quietly inlined later.
+    const elements = await elementsOf("session-craft.bpmn");
+    const callActivities = elements.filter((e) => e.$type === "bpmn:CallActivity") as Array<
+      FlowElement & { calledElement?: string }
+    >;
+    expect(callActivities.some((c) => c.calledElement === "craft_graph")).toBe(true);
+    expect(callActivities.some((c) => c.calledElement === "pi_default_loop")).toBe(true);
+    expect(elements.some((e) => e.id === "draft_fragment")).toBe(false);
+    expect(elements.some((e) => e.id === "llm_turn")).toBe(false);
+  });
+
+  it("does not inline either called graph as an executable process", async () => {
+    const elements = await elementsOf("session-craft.bpmn");
+    const processes = elements.filter((e) => e.$type === "bpmn:Process");
+    expect(processes.map((p) => p.id)).toEqual(["session_craft"]);
+  });
+
+  it("does not start on a human gate, so a positional prompt reaches craft directly", async () => {
+    const first = await firstActivity(readFileSync(join(DIR, "session-craft.bpmn"), "utf8"));
+    expect(first?.type).not.toBe("bpmn:UserTask");
   });
 });

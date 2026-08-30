@@ -1,0 +1,216 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_session_craft" targetNamespace="http://graph-agent/bpmn">
+  <bpmn:process id="session_craft" name="Agent session (craft-first)" isExecutable="true">
+    <bpmn:documentation>The vision's own sentence, as one graph: start with a prompt, hand it to
+craft_graph to interpret and build the steps that follow, then run those
+steps -- with the simple case reproducing Pi's own loop.
+
+The first lap goes straight from the prompt into craft; only a later lap,
+looping back after "more work?", asks for a fresh intent through a form.
+When craft has nothing to add (rejected, or exhausted its redraft attempts),
+this falls back to pi_default_loop rather than ending having done nothing --
+so the vision's "start simple ... allow iterating to more dedicated
+definitions" is one graph, not two.
+
+The definitions id must stay stable for the life of the session: recovery
+matches a snapshot to a graph on that id.</bpmn:documentation>
+    <bpmn:extensionElements>
+      <zeebe:userTaskForm id="session_craft_intent_form">{
+  "$schema": "https://unpkg.com/@bpmn-io/form-js@1/dist/assets/form-json-schema/schema.json",
+  "components": [
+    {
+      "label": "Goal",
+      "type": "textarea",
+      "key": "intent",
+      "id": "intent"
+    },
+    {
+      "label": "Context or constraints",
+      "type": "textarea",
+      "key": "context",
+      "id": "context"
+    },
+    {
+      "label": "End the session instead",
+      "type": "checkbox",
+      "key": "done",
+      "id": "done"
+    }
+  ],
+  "type": "default",
+  "id": "session_craft_intent_form",
+  "schemaVersion": 18
+}</zeebe:userTaskForm>
+    </bpmn:extensionElements>
+    <bpmn:startEvent id="session_craft_start" name="Session start">
+      <bpmn:outgoing>to_craft</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="to_craft" sourceRef="session_craft_start" targetRef="craft" />
+    <bpmn:callActivity id="craft" name="Craft an extension" calledElement="craft_graph">
+      <bpmn:documentation>Calls the crafting graph, which is spliced into this definition when the
+session is created -- bpmn-elements resolves calledElement within the same
+definition, and keeping it inline makes the session one self-contained,
+self-documenting artifact.
+
+The first lap's intent is unset, so draft_fragment's own
+"=if intent = null then prompt else intent" reads the prompt runSession
+seeds directly -- no gate needed before this first call.
+
+The zeebe:output below is required, not cosmetic: gw_crafted routes on
+extend_status, which craft_graph's own apply_extension sets deep inside a
+*different* linked process. engine.ts never bridges a callActivity's own
+child-process variables into the caller's scope for gateway conditions the
+way it does for a harness's zeebe:ioMapping (sharedOutput) -- a gateway
+condition is evaluated natively by bpmn-elements against this process's own
+environment only. Without this output mapping, extend_status is simply
+never a variable here at all, and gw_crafted's condition always warns
+"not found" and falls through to its default (fallback_default), even right
+after a successful apply (real Haiku repro, issue #66: apply_extension
+splices fine, but gw_crafted still takes the "nothing crafted" branch into
+run_default -- which the *next* graph:extend-triggered stop/resume cycle
+then tries to resume a second time, throwing "cannot resume running
+process pi_default_loop"). "=extend_status" reads bare, the same as any
+other zeebe:output source -- see engine.ts's applyUnharnessedOutput for why
+a callActivity's own signaled output needs unwrapping first to make that
+true.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:output source="=extend_status" target="extend_status" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>to_craft</bpmn:incoming>
+      <bpmn:incoming>back_to_craft</bpmn:incoming>
+      <bpmn:outgoing>craft_to_route</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:sequenceFlow id="craft_to_route" sourceRef="craft" targetRef="gw_crafted" />
+    <bpmn:exclusiveGateway id="gw_crafted" name="Something crafted?" default="fallback_default">
+      <bpmn:documentation>extend_status is only ever "success" for the lap that just spliced
+something in -- draft_fragment resets it to null on every entry into
+craft_graph, so a rejected or exhausted lap never inherits a stale value
+from an earlier successful one.
+
+The "crafted_ok" flow below is the single obvious place a splice lands:
+graph:extend rewires its target from gw_more into whatever it added, the
+same way session-skeleton's own craft -&gt; gw_more edge works.</bpmn:documentation>
+      <bpmn:incoming>craft_to_route</bpmn:incoming>
+      <bpmn:outgoing>crafted_ok</bpmn:outgoing>
+      <bpmn:outgoing>fallback_default</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="crafted_ok" name="crafted" sourceRef="gw_crafted" targetRef="gw_craft_done">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=extend_status = "success"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="fallback_default" name="nothing crafted" sourceRef="gw_crafted" targetRef="run_default" />
+    <bpmn:callActivity id="run_default" name="Run the default Pi loop" calledElement="pi_default_loop">
+      <bpmn:documentation>Degrades to session-default's own behaviour when craft rejected the
+extension or gave up redrafting it, so a lap with nothing crafted still does
+the work the prompt or intent asked for instead of ending empty.</bpmn:documentation>
+      <bpmn:incoming>fallback_default</bpmn:incoming>
+      <bpmn:outgoing>default_done</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:sequenceFlow id="default_done" sourceRef="run_default" targetRef="gw_craft_done" />
+    <bpmn:exclusiveGateway id="gw_craft_done" name="Lap done">
+      <bpmn:documentation>A plain join, kept separate from gw_more's own fork -- a single gateway
+that both joins and forks is ambiguous BPMN (bpmnlint's
+no-gateway-join-fork) even though bpmn-elements would run it.</bpmn:documentation>
+      <bpmn:incoming>crafted_ok</bpmn:incoming>
+      <bpmn:incoming>default_done</bpmn:incoming>
+      <bpmn:outgoing>to_gw_more</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="to_gw_more" sourceRef="gw_craft_done" targetRef="gw_more" />
+    <bpmn:exclusiveGateway id="gw_more" name="More work?" default="continue">
+      <bpmn:incoming>to_gw_more</bpmn:incoming>
+      <bpmn:outgoing>continue</bpmn:outgoing>
+      <bpmn:outgoing>session_over</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="continue" name="continue" sourceRef="gw_more" targetRef="await_intent" />
+    <bpmn:sequenceFlow id="session_over" name="done" sourceRef="gw_more" targetRef="session_craft_end">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=session_done = true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:userTask id="await_intent" name="What should the agent do next?">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:formDefinition formId="session_craft_intent_form" />
+        <zeebe:ioMapping>
+          <zeebe:output source="=intent" target="intent" />
+          <zeebe:output source="=context" target="context" />
+          <zeebe:output source="=done" target="session_done" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>continue</bpmn:incoming>
+      <bpmn:outgoing>back_to_craft</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="back_to_craft" sourceRef="await_intent" targetRef="craft" />
+    <bpmn:endEvent id="session_craft_end" name="Session ended">
+      <bpmn:incoming>session_over</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_session_craft">
+    <bpmndi:BPMNPlane id="BPMNPlane_session_craft" bpmnElement="session_craft">
+      <bpmndi:BPMNShape id="session_craft_start_di" bpmnElement="session_craft_start">
+        <dc:Bounds x="57" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="craft_di" bpmnElement="craft">
+        <dc:Bounds x="175" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_crafted_di" bpmnElement="gw_crafted" isMarkerVisible="true">
+        <dc:Bounds x="350" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_craft_done_di" bpmnElement="gw_craft_done" isMarkerVisible="true">
+        <dc:Bounds x="650" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_more_di" bpmnElement="gw_more" isMarkerVisible="true">
+        <dc:Bounds x="800" y="45" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="await_intent_di" bpmnElement="await_intent">
+        <dc:Bounds x="925" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="run_default_di" bpmnElement="run_default">
+        <dc:Bounds x="475" y="170" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="session_craft_end_di" bpmnElement="session_craft_end">
+        <dc:Bounds x="957" y="192" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="to_craft_di" bpmnElement="to_craft">
+        <di:waypoint x="93" y="70" />
+        <di:waypoint x="175" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="craft_to_route_di" bpmnElement="craft_to_route">
+        <di:waypoint x="275" y="70" />
+        <di:waypoint x="350" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="crafted_ok_di" bpmnElement="crafted_ok">
+        <di:waypoint x="400" y="70" />
+        <di:waypoint x="650" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="fallback_default_di" bpmnElement="fallback_default">
+        <di:waypoint x="375" y="95" />
+        <di:waypoint x="375" y="210" />
+        <di:waypoint x="475" y="210" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_gw_more_di" bpmnElement="to_gw_more">
+        <di:waypoint x="700" y="70" />
+        <di:waypoint x="800" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="continue_di" bpmnElement="continue">
+        <di:waypoint x="850" y="70" />
+        <di:waypoint x="925" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="session_over_di" bpmnElement="session_over">
+        <di:waypoint x="825" y="95" />
+        <di:waypoint x="825" y="210" />
+        <di:waypoint x="957" y="210" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="back_to_craft_di" bpmnElement="back_to_craft">
+        <di:waypoint x="975" y="110" />
+        <di:waypoint x="975" y="140" />
+        <di:waypoint x="225" y="140" />
+        <di:waypoint x="225" y="110" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="default_done_di" bpmnElement="default_done">
+        <di:waypoint x="575" y="210" />
+        <di:waypoint x="675" y="210" />
+        <di:waypoint x="675" y="95" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

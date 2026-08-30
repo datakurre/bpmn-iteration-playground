@@ -48,6 +48,29 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
     </bpmn:startEvent>
     <bpmn:sequenceFlow id="to_draft" sourceRef="craft_start" targetRef="draft_fragment" />
     <bpmn:serviceTask id="draft_fragment" name="Draft BPMN fragment">
+      <bpmn:documentation>Resets extend_status to null on every entry (a fresh craft_start, or a
+lint_retry redraft) -- apply_extension is the only activity that ever sets
+it, and only on a successful splice, so without this reset a caller that
+routes on extend_status (session-craft.bpmn's gw_crafted, chiefly) would see
+a stale "success" from an earlier lap's craft_graph invocation survive into
+a lap that rejected or gave up on this one.
+
+Also republishes agent:turn's own resolved "prompt" output back to the
+"prompt" variable: a callActivity does not process its own zeebe:ioMapping
+(only a harness-backed activity does, in this project's engine wrapper) and
+does not inherit the caller's variables either, so pi_default_loop's own
+llm_turn -- reached through session-craft.bpmn's run_default fallback, in a
+*different* linked process than this one -- would otherwise see "prompt" as
+never seeded at all on any lap after the first, calling Pi's continue()
+over a transcript that still ends on this activity's own unanswered
+assistant turn (real Haiku repro: "Cannot continue from message role:
+assistant"). The output source is "=prompt", not a re-derived
+intent-or-prompt expression, because resolveOutput's scope is only the
+harness's own returned result fields, never other process variables --
+agent:turn's harness now returns the input it actually resolved this turn
+as its own "prompt" result field for exactly this reason. Session-
+skeleton.bpmn never reads "prompt" again after its own first lap, so this
+republish is an inert overwrite there.</bpmn:documentation>
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="agent:turn" />
         <zeebe:taskHeaders>
@@ -57,6 +80,8 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
           <zeebe:input source="=if intent = null then prompt else intent" target="prompt" />
           <zeebe:input source="=lint_feedback" target="lint_feedback" />
           <zeebe:output source="=text" target="fragment" />
+          <zeebe:output source="=null" target="extend_status" />
+          <zeebe:output source="=prompt" target="prompt" />
         </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>to_draft</bpmn:incoming>

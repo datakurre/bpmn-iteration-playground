@@ -326,3 +326,70 @@ describe("resumeGraph", () => {
     expect(second.note).toMatch(/dispatched nothing/);
   });
 });
+
+describe("a callActivity's own zeebe:output (issue #66)", () => {
+  it("reads the called process's published variable by its bare name, for a gateway back in the caller", async () => {
+    // Unlike a harness-backed activity's zeebe:ioMapping (bridged session-wide
+    // via sharedOutput) or a user task's answered form (applied directly from
+    // its flat signaled output), a callActivity's own signaled output arrives
+    // wrapped one layer deeper -- bpmn-elements relays it through the same
+    // delegate-signal machinery a message end event uses, as
+    // `{ executionId, output: {...theCalledProcess'sOwnEnvironmentOutput} }`.
+    // Unwrapped, "=status" would read undefined (there is no bare `status` at
+    // that depth) and "=output.status" would *also* fail, since `output` is
+    // itself a reserved root in feelContext pointing at this activity's own
+    // (empty) environment.output, not at the nested payload. This is the
+    // general mechanism `session-craft.bpmn`'s `gw_crafted` needs to route on
+    // `extend_status`, set by `apply_extension` deep inside `craft_graph`.
+    const callerReadsCallee = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions ${DEFS}>
+  <process id="p" isExecutable="true">
+    <startEvent id="start" />
+    <sequenceFlow id="f1" sourceRef="start" targetRef="call" />
+    <callActivity id="call" calledElement="callee">
+      <extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:output source="=status" target="result" />
+        </zeebe:ioMapping>
+      </extensionElements>
+    </callActivity>
+    <sequenceFlow id="f2" sourceRef="call" targetRef="gw" />
+    <exclusiveGateway id="gw" default="no" />
+    <sequenceFlow id="yes" sourceRef="gw" targetRef="end_yes">
+      <conditionExpression xsi:type="tFormalExpression">=result = "success"</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="no" sourceRef="gw" targetRef="end_no" />
+    <endEvent id="end_yes" />
+    <endEvent id="end_no" />
+  </process>
+  <process id="callee" isExecutable="false">
+    <startEvent id="c_start" />
+    <sequenceFlow id="cf1" sourceRef="c_start" targetRef="c_turn" />
+    <serviceTask id="c_turn">
+      <extensionElements>
+        <zeebe:taskDefinition type="agent:turn" />
+        <zeebe:ioMapping>
+          <zeebe:output source="=status" target="status" />
+        </zeebe:ioMapping>
+      </extensionElements>
+    </serviceTask>
+    <sequenceFlow id="cf2" sourceRef="c_turn" targetRef="c_end" />
+    <endEvent id="c_end" />
+  </process>
+</definitions>`;
+
+    const warnings: string[] = [];
+    const visited = new Set<string>();
+    const result = await runGraph(callerReadsCallee, {
+      harnesses: { "agent:turn": async () => ok("did the thing", { status: "success" }) },
+      onExpressionWarning: (w) => warnings.push(w.message),
+      onTokens: (_tokens, v) => v.forEach((id) => visited.add(id)),
+    });
+
+    expect(result.outcome).toBe("completed");
+    expect(warnings).toEqual([]);
+    expect(result.variables.result).toBe("success");
+    expect(visited.has("end_yes")).toBe(true);
+    expect(visited.has("c_turn")).toBe(true);
+  });
+});

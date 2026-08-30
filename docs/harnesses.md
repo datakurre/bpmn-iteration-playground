@@ -128,6 +128,53 @@ process's own `environment.output` on `resumeGraph`, via
 `collectSharedOutput()` in `engine.ts`), so this only ever needs to be
 correct within one run.
 
+One more consequence worth knowing: `sharedOutput` only ever gets a variable
+from a harness's or user task's own *output* mapping -- a plain seed
+variable (`runSession`'s own `prompt`, chiefly) is never in it, since nothing
+ever "outputs" it. `engine.ts` also never processes a `callActivity`'s own
+`zeebe:input` at all (only a harness-backed activity's does, via
+`makeExtension`'s `HarnessService` wrapper), so a `callActivity` cannot
+bridge a seed variable back into scope that way either.
+`session-craft.bpmn`'s `run_default` fallback found this the hard way
+([#66](https://github.com/datakurre/graph-agent/issues/66)): `pi_default_loop`,
+called through `run_default` after `craft_graph` had already run a turn, saw
+`prompt` as never seeded at all -- it is a seed variable, invisible outside
+the top-level process it was seeded into -- so its own `llm_turn` called
+Pi's `continue()` instead of a real prompt, against a transcript that still
+ended on `craft_graph`'s own unanswered assistant turn. `Cannot continue
+from message role: assistant` was the result. `craft-graph.bpmn`'s
+`draft_fragment` now republishes its own resolved intent-or-prompt back to
+`"prompt"` on every entry for exactly this reason -- a seed variable that
+might be read again downstream, across a `callActivity` boundary, needs a
+harness to re-publish it as an output first.
+
+A `callActivity`'s own `zeebe:output`, unlike its `zeebe:input`, *is*
+processed (the same generic, no-harness path a user task's answered form
+uses), which is how a value a called process's own harness published can
+reach a gateway condition back in the calling process -- gateway conditions
+are evaluated natively by bpmn-elements against the calling process's own
+scope only, never against `sharedOutput`. `session-craft.bpmn`'s `craft`
+needs exactly this: `gw_crafted` routes on `extend_status`, set deep inside
+`craft_graph` by `apply_extension`, so `craft` carries its own
+`zeebe:output source="=extend_status"`. Getting the FEEL expression right
+took a second real-Haiku repro of its own ([#66](https://github.com/datakurre/graph-agent/issues/66)
+again): a `callActivity`'s own signaled output arrives one layer deeper than
+a user task's flat answered form does -- bpmn-elements relays a called
+process's completion through the same delegate-signal machinery a message
+end event uses, wrapped as `{ executionId, output: {...} }` -- so the bare
+`extend_status` only becomes visible once `engine.ts`'s
+`applyUnharnessedOutput` unwraps that one extra layer for a `bpmn:CallActivity`
+specifically; `=output.extend_status` does not work either, since `output`
+is itself a reserved root in `feelContext` (`src/agent/expressions.ts`)
+pointing at the *caller's own* (empty, at that point) `environment.output`,
+not at the called process's. Left unfixed, `gw_crafted`'s condition always
+warned "Variable 'extend_status' not found" and silently took its own
+default branch (`fallback_default`, into `run_default`) even right after a
+successful apply -- and a *second* `graph:extend`-triggered stop/resume
+cycle landing on top of that stray, already-running `pi_default_loop`
+instance is what actually threw "cannot resume running process
+pi_default_loop".
+
 ## Retries
 
 `zeebe:taskDefinition retries="n"` sets how many times an activity's harness

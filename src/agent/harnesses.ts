@@ -30,6 +30,10 @@ const MAX_LINT_ATTEMPTS = 3;
 const AGENT_ROLES: Record<string, string> = {
   graph_architect:
     "You are drafting a replacement for the session graph below. " +
+    "Do not call any tool for this response, even if one is offered to you -- " +
+    "nothing in this drafting step can run a tool call, and one left " +
+    "unanswered wedges the rest of this session. Read the current graph from " +
+    "the block below; there is nothing to inspect on disk. " +
     "Respond with ONLY a complete, valid <bpmn:definitions> XML document -- " +
     "no markdown code fences, no prose before or after, nothing but the XML. " +
     "Define exactly one <bpmn:process> in it. What you return REPLACES the " +
@@ -69,9 +73,21 @@ function stripCodeFence(text: string): string {
  * context window: the graph a splice targets is a single session graph, not
  * the whole shared library, so this is a safety margin against a pathological
  * one, not an expected truncation.
+ *
+ * 20,000 was that margin until session-craft.bpmn (issue #66): a session
+ * graph that links two called graphs at once -- craft_graph and
+ * pi_default_loop, rather than session-skeleton's one -- runs to over 41,000
+ * characters even before anything is spliced in. A real Haiku run against
+ * that truncated document reliably "reproduced" only the visible half,
+ * dropping pi_default_loop's own later activities wholesale and getting
+ * rejected as "removed or renamed" everything checkSplice never actually
+ * saw removed -- the redraft loop then burns its whole attempt budget
+ * against a fragment it was never physically shown enough of to preserve.
+ * Raised well past what composing two of today's bundled graphs needs, with
+ * headroom for a third, and still small next to Haiku's own context window.
  */
 const ROLES_NEEDING_CURRENT_GRAPH = new Set(["graph_architect"]);
-const MAX_CURRENT_GRAPH_CHARS = 20_000;
+const MAX_CURRENT_GRAPH_CHARS = 100_000;
 
 function currentGraphBlock(xml: string): string {
   const truncated = xml.length > MAX_CURRENT_GRAPH_CHARS;
@@ -133,7 +149,7 @@ export const HARNESS_IO: Record<string, { inputs?: string[]; headers?: string[];
   "agent:turn": {
     inputs: ["prompt", "lint_feedback"],
     headers: ["agent_role"],
-    outputs: ["stop_reason", "tool_calls", "usage", "text"],
+    outputs: ["stop_reason", "tool_calls", "usage", "text", "prompt"],
   },
   "agent:tool": {
     inputs: ["tool_call"],
@@ -298,6 +314,15 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
       // model's full response as data (craft-graph.bpmn's drafted fragment,
       // say) reads this instead.
       text: outcome.text,
+      // The resolved input this turn actually used (before the role/graph/job
+      // blocks were layered on), or null when this turn continued an existing
+      // transcript instead of starting one. `resolveOutput` only ever sees a
+      // harness's own result fields, never other process variables directly
+      // (issue #66) -- so a graph that needs its *input* prompt visible again
+      // downstream, across a callActivity boundary sharedOutput does bridge,
+      // has to read it back from here rather than re-deriving it in a
+      // zeebe:output expression.
+      prompt: raw ?? null,
     });
   };
 

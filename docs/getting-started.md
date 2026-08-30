@@ -344,7 +344,7 @@ The TUI is a new command, not a flag on `run`.
 
 ## The bundled graphs
 
-`make init` seeds five graphs. All five run:
+`make init` seeds six graphs. All six run:
 
 | Graph | What it is |
 |---|---|
@@ -353,6 +353,7 @@ The TUI is a new command, not a flag on `run`.
 | `shell-demo` | one Pi turn paired with a deterministic `shell` step |
 | `craft-graph` | drafts a BPMN fragment and splices it into the running session |
 | `session-skeleton` | asks for an intent, then calls `craft-graph` |
+| `session-craft` | the vision's own sentence as one graph: a prompt goes straight into `craft-graph`, which builds the steps that follow and runs them in the same invocation, falling back to `pi-default-loop` when nothing was crafted ([#66](https://github.com/datakurre/graph-agent/issues/66)) -- opt-in via `--graph session-craft`, not (yet) the default |
 
 ### Extending a graph from inside a session
 
@@ -414,6 +415,73 @@ graph has more than one: an unscoped answer is replayed at every gate that
 parks, which is how an unrelated payload (say, the intent that started the
 session) used to get fed to an approval gate it was never meant to answer
 ([#44](https://github.com/datakurre/graph-agent/issues/44)).
+
+`session-craft` runs the same loop as `session-skeleton`, but crafts first
+and only falls back to a plain Pi turn when nothing was crafted -- so a
+prompt goes straight into `craft-graph` with no gate in front of it at all:
+
+```
+$ graph-agent run "Add a shell task that echoes hello after the start event" \
+    --graph session-craft --model anthropic/claude-haiku-4-5
+  draft_fragment  agent:turn  ```xml <?xml version="1.0" ...
+  layout_fragment  graph:layout  laid out
+  lint_fragment  graph:lint  adds 2 element(s)
+
+session 31b2d5d0  stopped  1 turn(s)
+waiting on craft, lint_fragment, gw_lint, review_fragment
+answer with: graph-agent resume 31b2d5d0 --answer review_fragment:approval=value
+```
+
+Approving it routes straight past the fallback -- `gw_crafted` sees
+`extend_status` and takes `crafted_ok`, not `run_default` -- and parks on
+the next lap's own intent gate:
+
+```
+$ graph-agent resume 31b2d5d0 --answer review_fragment:approval=apply \
+    --model anthropic/claude-haiku-4-5
+  apply_extension  graph:extend  spliced in 2 element(s)
+    note: graph revision 1 applied, resuming
+
+session 31b2d5d0  stopped  1 turn(s)
+waiting on await_intent
+answer with: graph-agent resume 31b2d5d0 --answer await_intent:intent=value
+```
+
+*Rejecting* a lap is what exercises the fallback: with nothing crafted,
+`gw_crafted` takes `run_default` into `pi-default-loop` instead, which picks
+up that lap's own prompt as a normal Pi turn -- tool calls and all -- rather
+than the plain end-to-end draft/lint/review loop above:
+
+```
+$ graph-agent resume 31b2d5d0 \
+    --answer await_intent:intent="Add a service task that logs a message" \
+    --answer await_intent:session_done=false --model anthropic/claude-haiku-4-5
+  draft_fragment  agent:turn  ```xml <?xml version="1.0" ...
+  ...
+session 31b2d5d0  stopped  2 turn(s)
+waiting on craft, back_to_craft, lint_fragment, gw_lint, review_fragment
+
+$ graph-agent resume 31b2d5d0 --answer review_fragment:approval=reject \
+    --model anthropic/claude-haiku-4-5
+  inject_pending  agent:steer  nothing queued
+  llm_turn  agent:turn  I'd be happy to help you add a service task...
+  drain_followup  agent:follow-up  no follow-up
+
+session 31b2d5d0  stopped  3 turn(s)
+waiting on run_default, gw_craft_done, gw_more, await_intent
+```
+
+Getting this far took two real-model-shaped bugs, both fixed and covered by
+`workflows/workflows.test.ts` and `src/agent/engine.test.ts`: a seed
+variable like the session's own `prompt` is invisible once a fallback
+`callActivity` reaches a *different* linked process (`craft-graph`'s
+`draft_fragment` now republishes its own resolved prompt as an output for
+exactly this reason), and a gateway back in the calling process cannot see
+a value a called process's own harness set unless the calling
+`callActivity` carries its own `zeebe:output` naming it (`session-craft.bpmn`'s
+`craft` does, for `extend_status`) -- see
+[Variables across a callActivity](harnesses.html#variables-across-a-callactivity)
+for why both are true.
 
 ### What lint checks, and what review is still for
 
