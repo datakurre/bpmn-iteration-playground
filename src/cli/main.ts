@@ -262,11 +262,21 @@ async function cmdStudio(args: string[]): Promise<number> {
   const shouldOpen = Boolean(values.open) && !values["no-open"];
 
   const host = values.host === undefined ? undefined : String(values.host);
+  let port: number | undefined;
+  if (values.port !== undefined) {
+    const portRaw = String(values.port);
+    const parsed = Number(portRaw);
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
+      process.stderr.write(`graph-agent: --port must be an integer between 0 and 65535, got '${portRaw}'\n`);
+      return 1;
+    }
+    port = parsed;
+  }
   const studio = await startStudio({
     paths: p,
     project,
     ...(host === undefined ? {} : { host }),
-    ...(values.port === undefined ? {} : { port: Number(values.port) }),
+    ...(port === undefined ? {} : { port }),
   });
 
   process.stdout.write(`graph-agent studio  ${studio.url}\n`);
@@ -306,8 +316,12 @@ interface RunFlags {
   positionals: string[];
   /** `tui --resume <id>` reattaches instead of starting a new session (issue #67). */
   resume?: string;
-  /** Overrides DEFAULT_MAX_AUTO_ANSWERS_PER_ACTIVITY for `run`/`resume` (issue #71). Unvalidated here -- see resolveMaxAutoAnswers. */
-  maxAutoAnswers?: number;
+  /**
+   * Overrides DEFAULT_MAX_AUTO_ANSWERS_PER_ACTIVITY for `run`/`resume` (issue #71). Kept as the raw
+   * string the user typed -- not coerced here -- so resolveMaxAutoAnswers can echo it back verbatim
+   * in its error instead of a coerced `NaN` (issue #77).
+   */
+  maxAutoAnswers?: string;
 }
 
 /**
@@ -349,7 +363,7 @@ function runFlags(args: string[]): RunFlags {
     followUp: (values["follow-up"] as string[] | undefined) ?? [],
     positionals: positionals.map(String),
     ...(values.resume === undefined ? {} : { resume: String(values.resume) }),
-    ...(values["max-auto-answers"] === undefined ? {} : { maxAutoAnswers: Number(values["max-auto-answers"]) }),
+    ...(values["max-auto-answers"] === undefined ? {} : { maxAutoAnswers: String(values["max-auto-answers"]) }),
   };
 }
 
@@ -422,10 +436,11 @@ const DEFAULT_MAX_AUTO_ANSWERS_PER_ACTIVITY = 5;
 /** `--max-auto-answers`, validated -- a positive integer, or the default when the flag is absent. */
 function resolveMaxAutoAnswers(flags: RunFlags): number | { error: string } {
   if (flags.maxAutoAnswers === undefined) return DEFAULT_MAX_AUTO_ANSWERS_PER_ACTIVITY;
-  if (!Number.isInteger(flags.maxAutoAnswers) || flags.maxAutoAnswers < 1) {
+  const parsed = Number(flags.maxAutoAnswers);
+  if (!Number.isInteger(parsed) || parsed < 1) {
     return { error: `graph-agent: --max-auto-answers must be a positive integer, got '${flags.maxAutoAnswers}'\n` };
   }
-  return flags.maxAutoAnswers;
+  return parsed;
 }
 
 export function boundedOnWait(

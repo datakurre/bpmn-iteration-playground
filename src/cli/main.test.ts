@@ -133,6 +133,16 @@ describe("cmdStudio flags (issue #56)", () => {
     const { stderr } = await runStudio(["--host", "127.0.0.1", "--no-open"]);
     expect(stderr).not.toMatch(/no authentication/);
   }, 20000);
+
+  it("rejects a non-numeric --port instead of crashing with a NaN listen() error (issue #77)", () => {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-studio-"));
+    const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
+    execFileSync("node", [distFile, "init"], { env });
+    const result = spawnSync("node", [distFile, "studio", "--port", "abc", "--no-open"], { env, encoding: "utf8" });
+    expect(result.stderr).toContain("--port must be an integer");
+    expect(result.stderr).toContain("got 'abc'");
+    expect(result.status).toBe(1);
+  });
 });
 
 describe("--answer scoping (issue #44)", () => {
@@ -491,6 +501,23 @@ describe("--answer scoping (issue #44)", () => {
         "0",
       ]);
       expect(stderr).toMatch(/--max-auto-answers must be a positive integer/);
+      expect(code).toBe(1);
+    });
+
+    it("echoes the raw value, not a coerced NaN, for a non-numeric --max-auto-answers (issue #77)", () => {
+      const { env } = project();
+      const { stderr, code } = runCli(env, [
+        "run",
+        "--graph",
+        "loop_gate",
+        "--dry-run",
+        "--answer",
+        "key=hello",
+        "--max-auto-answers",
+        "abc",
+      ]);
+      expect(stderr).toMatch(/--max-auto-answers must be a positive integer, got 'abc'/);
+      expect(stderr).not.toMatch(/NaN/);
       expect(code).toBe(1);
     });
   });
