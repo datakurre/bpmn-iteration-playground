@@ -1,7 +1,7 @@
 # graph-agent
 
 A [Pi](https://github.com/earendil-works/pi) coding agent whose control flow
-is a mutable Camunda-8-flavour BPMN graph.
+is a mutable BPMN graph.
 
 The loop that drives the agent -- when to call the model, when to run a tool,
 when to stop -- is not code you have to read to change. It is a diagram,
