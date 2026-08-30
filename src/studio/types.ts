@@ -58,7 +58,12 @@ export interface SessionSummary {
   /** Absolute path of the project directory the session ran against. */
   project: string;
   name?: string;
-  status: "running" | "wait" | "timer" | "idle" | "completed" | "error";
+  /**
+   * `stale` is never written directly -- it is `SessionStore.summary()`
+   * reporting a `"running"` session whose recorded pid is no longer alive,
+   * rather than a phantom "running" forever (issue #52).
+   */
+  status: "running" | "wait" | "timer" | "idle" | "completed" | "error" | "stale";
   updatedAt: number;
   turnCount: number;
 }

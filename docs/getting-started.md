@@ -378,3 +378,18 @@ or set `[agent] model` in `config.toml` -- see [Naming a model](#naming-a-model)
 **`graph-agent: not set up yet. Run graph-agent init first.`** Every command
 except `init`, `where` and `--help` requires the user-level config directory to
 exist. `make init` creates it.
+
+**A session says `error` with no useful message, or `graph-agent ls` shows one
+stuck `running` forever.** `GRAPH_AGENT_DEBUG=1 graph-agent resume <id> ...`
+dumps the raw, un-walked engine error to stderr -- useful when the reported
+message is still unhelpful after the causes below are ruled out
+([#52](https://github.com/datakurre/graph-agent/issues/52)):
+
+- `graph-agent ls`/`show` report `stale`, not `running`, once the process that
+  was driving a session is confirmed gone -- a `running` you actually see is a
+  session some other process is (or very recently was) driving, not a stuck
+  one.
+- Resuming a session whose snapshot bpmn-elements cannot actually recover
+  (rather than erroring) used to hang the whole CLI process indefinitely; it
+  now stops itself after a few seconds and reports why on the session's error
+  line instead.

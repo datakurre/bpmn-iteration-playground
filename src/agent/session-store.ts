@@ -33,6 +33,14 @@ export interface SessionMeta {
   /** Activity ids executed at least once. */
   visited: string[];
   /**
+   * The pid of the process currently driving this session, set while
+   * `status` is `"running"` and cleared once it settles. Lets `summary()`
+   * tell a genuinely live run apart from one a killed process left claiming
+   * to be running forever (issue #52).
+   */
+  pid?: number;
+  startedAt?: number;
+  /**
    * Set by a harness that gave up and deliberately ended the run outside the
    * ordinary agent:turn path (graph:lint's redraft-attempt cap, chiefly).
    * bpmn-elements re-wraps a thrown error at every callActivity boundary it
@@ -152,7 +160,7 @@ export class SessionStore {
       id: meta.id,
       project: meta.project,
       ...(meta.name === undefined ? {} : { name: meta.name }),
-      status: meta.status,
+      status: effectiveStatus(meta),
       updatedAt: meta.updatedAt,
       turnCount: meta.turns.length,
     };
@@ -184,6 +192,22 @@ export function listSessions(paths: Paths, project?: string): SessionStore[] {
     .filter((s) => s.exists())
     .filter((s) => project === undefined || s.readMeta().project === project)
     .sort((a, b) => b.readMeta().updatedAt - a.readMeta().updatedAt);
+}
+
+/** Whether `pid` still names a live process (issue #52). `EPERM` means alive, just owned by someone else. */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** `meta.status`, except a `"running"` session whose recorded process is gone reports `"stale"` instead. */
+function effectiveStatus(meta: SessionMeta): SessionSummary["status"] {
+  if (meta.status === "running" && (meta.pid === undefined || !isProcessAlive(meta.pid))) return "stale";
+  return meta.status;
 }
 
 /** Write via a temp file + rename so a reader never observes a half-written file. */

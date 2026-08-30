@@ -117,10 +117,16 @@ describe("runSession on the built-in loop", () => {
     // the loop terminates rather than looping forever, and reports the failure
     // rather than looking like any other completed run (issue #18)
     expect(result.outcome).toBe("error");
+    // Names the real, known fact (which turn's own stopReason was "error"
+    // with no message) rather than the fabricated "llm_turn stopped: error"
+    // this used to assert -- the engine itself never reported an error here,
+    // it reached a plain terminate end event (issue #52).
     expect(result.error?.message).toContain("llm_turn");
+    expect(result.error?.message).toContain('stopReason "error"');
     const detail = new SessionStore(paths, result.sessionId).detail();
     expect(detail.status).toBe("error");
     expect(detail.turns[0]?.stopReason).toBe("error");
+    expect(detail.harnessError).toBe(result.error?.message);
   });
 
   it("does not re-send the initial prompt once the transcript has a tool result (issue #25)", async () => {
@@ -269,5 +275,58 @@ describe("graphOffersTools (issue #36)", () => {
     const withoutTools = readFileSync(join(bundledWorkflowsDir(), "craft-graph.bpmn"), "utf8");
     expect(graphOffersTools(withTools)).toBe(true);
     expect(graphOffersTools(withoutTools)).toBe(false);
+  });
+});
+
+describe("hang guard and phantom-running status (issue #52)", () => {
+  it("resuming an already-completed session settles instead of hanging forever", async () => {
+    // Reproduced against a real session: `graph-agent resume` on a session
+    // that had already reached its own end event hung the whole CLI process
+    // (an "unsettled top-level await", Node exit 13) because engine.resume()
+    // dispatched nothing at all -- no activity, no wait, no end, no error --
+    // so none of the three promises drive() raced ever settled.
+    const faux = scripted([fauxAssistantMessage([fauxText("done")], { stopReason: "stop" })]);
+    const first = await runSession(options(faux, { prompt: "say hello", hangGuardMs: 50 }));
+    expect(first.outcome).toBe("completed");
+
+    const second = await resumeSession({
+      ...options(scripted([]), { hangGuardMs: 50 }),
+      sessionId: first.sessionId,
+    });
+
+    // Settles (the test itself would time out otherwise) as "stopped", with a
+    // note explaining why, rather than hanging or claiming a bogus "completed".
+    expect(second.outcome).toBe("stopped");
+
+    const meta = new SessionStore(paths, first.sessionId).readMeta();
+    expect(meta.status).not.toBe("running");
+    expect(meta.pid).toBeUndefined();
+    expect(meta.harnessError).toMatch(/dispatched nothing/);
+  });
+
+  it('never leaves status:"running" when resuming throws before the engine settles', async () => {
+    // runSession's own linkGraph/appendGraph setup runs before drive() is ever
+    // called, so a broken *graph* throws before status even becomes
+    // "running" -- not the gap this guards. resumeSession's start() callback
+    // (resumeGraph) is invoked from *inside* drive(), after status:"running"
+    // is already written, so a state snapshot bpmn-elements' own recovery
+    // cannot make sense of is what actually exercises the gap issue #52
+    // found: nothing between such a throw and the ordinary return path wrote
+    // a terminal status.
+    const faux = scripted([fauxAssistantMessage([fauxText("hi")], { stopReason: "stop" })]);
+    const first = await runSession(options(faux, { prompt: "hi", hangGuardMs: 50 }));
+    expect(first.outcome).toBe("completed");
+
+    const store = new SessionStore(paths, first.sessionId);
+    store.writeEngineState({ nonsense: true, definitions: "not an array" });
+
+    await expect(
+      resumeSession({ ...options(scripted([]), { hangGuardMs: 50 }), sessionId: first.sessionId }),
+    ).rejects.toThrow();
+
+    const meta = store.readMeta();
+    expect(meta.status).toBe("error");
+    expect(meta.pid).toBeUndefined();
+    expect(meta.harnessError).toBeDefined();
   });
 });

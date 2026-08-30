@@ -9,6 +9,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { inspect } from "node:util";
 import { indexLibrary, linkGraph } from "./link.ts";
 import { bundledWorkflowsDir, listBpmnFiles } from "./paths.ts";
 import { runGraph, resumeGraph, type RunResult } from "./engine.ts";
@@ -43,6 +44,8 @@ export interface RunSessionOptions {
   onWait?: (activityId: string) => Promise<unknown> | unknown;
   /** Aborting stops the engine -- a snapshot is still saved, so `resume` picks up from there. */
   signal?: AbortSignal;
+  /** See `RunnerOptions.hangGuardMs` (engine.ts) -- overridable so tests need not wait out the production value. */
+  hangGuardMs?: number;
 }
 
 export interface SessionOutcome {
@@ -67,6 +70,56 @@ const DEFAULT_SYSTEM_PROMPT =
  */
 export function graphOffersTools(xml: string): boolean {
   return xml.includes('type="agent:tool"');
+}
+
+/**
+ * Property names a wrapped error's real cause is known to hide behind.
+ * bpmn-elements re-wraps a thrown error at every callActivity boundary it
+ * crosses (issue #52), so `error.message` alone is not reliably where the
+ * original cause ends up by the time it reaches here.
+ */
+const ERROR_WRAP_KEYS = ["inner", "error", "source", "cause"] as const;
+
+/**
+ * Recursively looks for a real, non-empty message on a thrown value or
+ * anything it wraps -- `.message` first, then each of `ERROR_WRAP_KEYS`, plus
+ * `.content.error` (the shape bpmn-elements itself uses). Bounded depth
+ * against a cyclic or pathological wrapper; five is already more than any
+ * observed wrapping chain needs.
+ */
+export function walkErrorMessage(error: unknown, depth = 0): string | undefined {
+  if (depth > 5 || error === null || error === undefined) return undefined;
+  if (typeof error === "string") return error.length > 0 ? error : undefined;
+  if (typeof error !== "object") return undefined;
+  const record = error as Record<string, unknown>;
+  if (typeof record.message === "string" && record.message.length > 0) return record.message;
+  const content = record.content as Record<string, unknown> | undefined;
+  if (content && typeof content === "object") {
+    const found = walkErrorMessage(content.error, depth + 1);
+    if (found) return found;
+  }
+  for (const key of ERROR_WRAP_KEYS) {
+    const found = walkErrorMessage(record[key], depth + 1);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/** A last-resort, still-honest label for an error with no diagnosable message anywhere. */
+function errorShape(error: unknown): string {
+  if (error instanceof Error) return error.constructor.name || "Error";
+  if (error === null || error === undefined) return String(error);
+  return typeof error;
+}
+
+/**
+ * `GRAPH_AGENT_DEBUG=1` dumps the raw, un-walked error to stderr so a cause
+ * `walkErrorMessage` still can't reach is diagnosable without patching the
+ * bundle -- see issue #52.
+ */
+function debugLogError(label: string, error: unknown): void {
+  if (process.env.GRAPH_AGENT_DEBUG !== "1") return;
+  process.stderr.write(`graph-agent debug: ${label}\n${inspect(error, { depth: 10 })}\n`);
 }
 
 export async function runSession(options: RunSessionOptions): Promise<SessionOutcome> {
@@ -175,27 +228,53 @@ async function drive(
 
   store.update((meta) => {
     meta.status = "running";
+    // A pid this session's process can be checked against: `graph-agent
+    // ls`/`show` report "stale" instead of "running" once that process is
+    // gone, rather than leaving a phantom "running" session forever if this
+    // function throws, or the process is killed, before the write below that
+    // would otherwise correct it (issue #52).
+    meta.pid = process.pid;
+    meta.startedAt = Date.now();
   });
 
-  const result = await start({
-    harnesses,
-    name: store.id,
-    variables: { prompt: options.prompt ?? "", project: options.project },
-    onActivity: (activity) => {
-      options.onProgress?.(`${activity.activityId}  ${activity.harness}  ${activity.result.summary}`);
-    },
-    onTokens: (tokens, visited) => {
-      store.update((meta) => {
-        meta.tokens = tokens;
-        meta.visited = visited;
-      });
-    },
-    ...(options.onWait === undefined ? {} : { onWait: options.onWait }),
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-    onExpressionWarning: (warning) => {
-      options.onProgress?.(`  FEEL warning: ${warning.message} in ${warning.expression}`);
-    },
-  });
+  let result: RunResult;
+  try {
+    result = await start({
+      harnesses,
+      name: store.id,
+      variables: { prompt: options.prompt ?? "", project: options.project },
+      onActivity: (activity) => {
+        options.onProgress?.(`${activity.activityId}  ${activity.harness}  ${activity.result.summary}`);
+      },
+      onTokens: (tokens, visited) => {
+        store.update((meta) => {
+          meta.tokens = tokens;
+          meta.visited = visited;
+        });
+      },
+      ...(options.onWait === undefined ? {} : { onWait: options.onWait }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...(options.hangGuardMs === undefined ? {} : { hangGuardMs: options.hangGuardMs }),
+      onExpressionWarning: (warning) => {
+        options.onProgress?.(`  FEEL warning: ${warning.message} in ${warning.expression}`);
+      },
+    });
+  } catch (error) {
+    // Nothing between here and the ordinary return path below writes a
+    // terminal status -- so without this, any throw out of `start()` (engine.ts
+    // itself catches everything it recognizes, but this is the backstop for
+    // whatever it does not) leaves `meta.status: "running"` forever, exactly
+    // the phantom-running session issue #52 describes.
+    debugLogError("uncaught throw driving the session", error);
+    store.update((meta) => {
+      meta.status = "error";
+      meta.harnessError = meta.harnessError ?? walkErrorMessage(error) ?? `run failed: ${errorShape(error)}`;
+      delete meta.pid;
+    });
+    throw error;
+  }
+
+  if (result.note) options.onProgress?.(`  note: ${result.note}`);
 
   // bpmn-engine reports "completed" for any run that reaches an end event, even
   // pi-default-loop's own error path: end_error is a plain terminate end event,
@@ -210,14 +289,29 @@ async function drive(
   const lastTurn = meta.turns.at(-1);
   const trouble = result.outcome === "completed" && lastTurn?.stopReason === "error" ? lastTurn : undefined;
   const outcome = trouble ? "error" : result.outcome;
+  if (result.error) debugLogError("engine reported an error", result.error);
   // Prefer `result.error`'s own message, but a harness that gave up outside
   // the ordinary turn path (graph:lint's redraft-attempt cap, chiefly) may
-  // have already recorded a clearer one in meta.harnessError: bpmn-elements
-  // re-wraps a thrown error at every callActivity boundary it crosses, and by
-  // the time it reaches here `result.error.message` can be empty even though
-  // the original cause is well known.
+  // have already recorded a clearer one in meta.harnessError, and a message
+  // buried in `result.error`'s own wrapping is worth more than a fabricated
+  // one naming whichever activity happened to run the most recent turn --
+  // issue #52 found the latter reported a confident, wrong cause when
+  // `result.error.message` came back empty. Only when none of those turns up
+  // anything does this fall back to an honest "no message" rather than a
+  // guess.
+  const recovered = result.error ? walkErrorMessage(result.error) : undefined;
   const fallbackMessage =
-    meta.harnessError ?? trouble?.error ?? lastTurn?.error ?? `${lastTurn?.activityId ?? "run"} stopped: error`;
+    meta.harnessError ??
+    trouble?.error ??
+    lastTurn?.error ??
+    recovered ??
+    (trouble
+      ? // The engine itself reported nothing wrong -- it reached a plain
+        // terminate end event -- so the only real fact here is which turn's
+        // own stopReason was "error" with no message of its own attached.
+        `${trouble.activityId} reported stopReason "error" with no message`
+      : `run failed: the engine reported an error with no diagnosable message (${errorShape(result.error)}). ` +
+        `Set GRAPH_AGENT_DEBUG=1 and re-run to see the raw error.`);
   const error =
     outcome !== "error" ? undefined : result.error?.message ? result.error : new Error(fallbackMessage);
 
@@ -229,6 +323,9 @@ async function drive(
     // end event has no token anywhere; leaving the stale set behind would draw
     // one on the diagram forever.
     if (outcome === "completed") meta.tokens = [];
+    if (outcome === "error" && meta.harnessError === undefined) meta.harnessError = fallbackMessage;
+    if (result.note && meta.harnessError === undefined) meta.harnessError = result.note;
+    delete meta.pid;
   });
 
   return {

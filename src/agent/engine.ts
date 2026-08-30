@@ -69,6 +69,12 @@ export interface RunnerOptions {
    * someone looks at these.
    */
   onExpressionWarning?: (warning: { expression: string; message: string }) => void;
+  /**
+   * How long the hang guard waits with nothing dispatched before forcing a
+   * stop (see `drive()`). Defaults to 5000ms; overridable so a test can prove
+   * the guard fires without actually waiting out the production value.
+   */
+  hangGuardMs?: number;
 }
 
 export interface RunResult {
@@ -78,6 +84,13 @@ export interface RunResult {
   variables: Record<string, unknown>;
   activities: ActivityOutcome[];
   error?: Error;
+  /**
+   * Set when `outcome` was forced rather than genuinely reported by the
+   * engine -- currently only the hang guard below. `drive()` in runner.ts
+   * surfaces this on the session so a forced outcome is never silently
+   * indistinguishable from an ordinary one.
+   */
+  note?: string;
 }
 
 /**
@@ -334,6 +347,13 @@ async function drive(
   const waiting = new Set<string>();
   const currentTokens = (): string[] => [...new Set([...postponedIds(engine), ...waiting])];
 
+  // Set the moment bpmn-elements dispatches *anything*, well before any
+  // harness's own async work returns -- see the hang guard below.
+  let dispatchedAnything = false;
+  listener.on("activity.start", () => {
+    dispatchedAnything = true;
+  });
+
   listener.on("activity.end", (api: { id: string; content?: { output?: unknown } }) => {
     visited.add(api.id);
     waiting.delete(api.id);
@@ -371,7 +391,40 @@ async function drive(
   const ended = engine.waitFor("end").then(() => "completed" as const);
   const stopped = engine.waitFor("stop").then(() => "stopped" as const);
   const errored = engine.waitFor("error").then((error) => {
-    throw error instanceof Error ? error : new Error(String(error));
+    // A non-Error thrown value used to be flattened to `new Error(String(error))`,
+    // discarding everything but a lossy toString -- issue #52 found this is
+    // exactly what leaves a real cause unreachable by the time it gets to the
+    // CLI. Attaching it as `cause` keeps it reachable for walkErrorMessage
+    // (runner.ts) without changing what a plain `Error` already reported.
+    throw error instanceof Error ? error : new Error(String(error), { cause: error });
+  });
+
+  // Issue #52: a resumed run whose snapshot bpmn-elements cannot actually
+  // recover can leave engine.resume() dispatching nothing at all -- no
+  // activity, no wait, no end, no error -- so none of the three promises
+  // above ever settles and the whole CLI process hangs (Node exits 13 on an
+  // "unsettled top-level await", with the session stuck reporting
+  // status:"running" forever). `dispatchedAnything` is set the instant
+  // bpmn-elements dispatches *anything*, which happens near-instantly for any
+  // engine that is actually alive -- well before a harness's own async work
+  // (a model call, chiefly) returns -- so a generous grace period with no
+  // dispatch at all is a safe, specific signal that this run is never going
+  // to settle on its own, not a false positive against a slow first turn.
+  const hangGuardMs = options.hangGuardMs ?? 5000;
+  let hangGuardTimer: ReturnType<typeof setTimeout> | undefined;
+  const hangGuard = new Promise<"stopped">((resolve) => {
+    // Deliberately NOT `.unref()`'d: the hang this exists for is precisely a
+    // Node process whose event loop has otherwise gone idle with nothing left
+    // to fire ended/stopped/errored -- an unref'd timer does not count as
+    // outstanding work, so Node would drain the loop and force-exit (the
+    // "unsettled top-level await" warning, issue #52) *before* this timer
+    // ever got a chance to run, defeating the guard entirely. It must hold
+    // the process open until it fires or `clearTimeout` below cancels it.
+    hangGuardTimer = setTimeout(() => {
+      if (dispatchedAnything) return;
+      void engine.stop();
+      resolve("stopped");
+    }, hangGuardMs);
   });
 
   if (options.signal) {
@@ -380,14 +433,21 @@ async function drive(
 
   try {
     await start(listener);
-    const outcome = await Promise.race([ended, stopped, errored]);
+    const outcome = await Promise.race([ended, stopped, errored, hangGuard]);
+    clearTimeout(hangGuardTimer);
     return {
       outcome,
       state: await engine.getState(),
       variables: { ...engine.environment.variables, ...engine.environment.output, ...sharedOutput },
       activities,
+      ...(outcome === "stopped" && !dispatchedAnything
+        ? {
+            note: `the engine dispatched nothing at all within ${hangGuardMs}ms and was stopped rather than hung -- this usually means the resumed snapshot could not be recovered`,
+          }
+        : {}),
     };
   } catch (error) {
+    clearTimeout(hangGuardTimer);
     // `engine.waitFor("error")` resolves on the first error event and we return
     // right away, but nothing else here ever told the engine to stop -- so
     // whatever kept running (a nested process mid-callActivity, chiefly: see
