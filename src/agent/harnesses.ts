@@ -114,6 +114,67 @@ function jobTypesBlock(jobTypes: Iterable<string>): string {
   );
 }
 
+/**
+ * The I/O contract each job type actually honours: which `zeebe:input`
+ * `name`s it reads off `context.input`, which `zeebe:taskHeader` `key`s it
+ * reads off `context.properties`, and which extra fields (beyond
+ * `HARNESS_RESULT_BASE_FIELDS`) a `zeebe:output source` may name.
+ *
+ * This exists because nothing previously checked an element template's
+ * bindings against what its harness actually reads or publishes --
+ * `pi_agent_task.json` mapped `instructions` while `agent:turn` read
+ * `prompt`, and every turn built from that template started with nothing to
+ * say (issue #49). `element_templates/element-templates.test.ts` asserts
+ * every template in the repo against this map; keep it in sync with the
+ * harness bodies below (and with `docs/harnesses.md`'s table) when either
+ * changes.
+ */
+export const HARNESS_IO: Record<string, { inputs?: string[]; headers?: string[]; outputs?: string[] }> = {
+  "agent:turn": {
+    inputs: ["prompt", "lint_feedback"],
+    headers: ["agent_role"],
+    outputs: ["stop_reason", "tool_calls", "usage", "text"],
+  },
+  "agent:tool": {
+    inputs: ["tool_call"],
+    outputs: ["tool", "terminate", "isError"],
+  },
+  "agent:collect-tools": {
+    outputs: ["batch_terminate", "tool_results"],
+  },
+  "agent:fail-truncated-tools": {
+    outputs: ["batch_terminate", "tool_results"],
+  },
+  "agent:steer": {
+    outputs: ["injected"],
+  },
+  "agent:follow-up": {
+    outputs: ["has_followup"],
+  },
+  "agent:prepare-next-turn": {
+    // Reads `context.variables.stop_reason` -- an ordinary process variable a
+    // prior activity's zeebe:output already published, not a zeebe:input
+    // mapping of its own.
+    outputs: ["should_stop"],
+  },
+  "graph:layout": {
+    inputs: ["fragment"],
+    outputs: ["fragment"],
+  },
+  "graph:lint": {
+    inputs: ["fragment"],
+    outputs: ["added", "attempt"],
+  },
+  "graph:extend": {
+    inputs: ["fragment"],
+    outputs: ["added"],
+  },
+  shell: {
+    headers: ["command", "fail_on_error"],
+    outputs: ["exit_code", "stdout", "stderr"],
+  },
+};
+
 export interface HarnessDeps {
   pi: PiSession;
   tools: ToolExecutor;
