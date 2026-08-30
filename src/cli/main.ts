@@ -402,9 +402,21 @@ export function boundedOnWait(answers: ScopedAnswers): (activityId: string) => R
     const count = (seen.get(activityId) ?? 0) + 1;
     seen.set(activityId, count);
     if (count > MAX_AUTO_ANSWERS_PER_ACTIVITY) {
+      // A scoped answer (`activity:key=value`) was aimed at this exact gate
+      // deliberately -- the cap firing means the graph keeps revisiting it,
+      // not that the payload leaked in from elsewhere, so "scope it" is a
+      // no-op restating what the user already did (issue #62). Only an
+      // unscoped answer, which is meant to apply wherever its key is asked
+      // for, gets that advice; a scoped one gets told the graph itself is
+      // the thing not terminating.
+      const scoped = answers.has(activityId);
       process.stderr.write(
-        `graph-agent: ${activityId} was auto-answered ${count - 1} times with the same payload; ` +
-          `scope your answer with --answer ${activityId}:key=value if it should not be replayed here.\n`,
+        scoped
+          ? `graph-agent: ${activityId} was auto-answered ${count - 1} times with the same payload; ` +
+              `the graph keeps revisiting this gate -- answer whatever ends the loop ` +
+              `(e.g. a 'done' or 'approved' field), or raise the cap.\n`
+          : `graph-agent: ${activityId} was auto-answered ${count - 1} times with the same payload; ` +
+              `scope your answer with --answer ${activityId}:key=value if it should not be replayed here.\n`,
       );
       return undefined;
     }

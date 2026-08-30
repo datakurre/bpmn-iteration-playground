@@ -182,9 +182,7 @@ describe("--answer scoping (issue #44)", () => {
   });
 
   describe("boundedOnWait", () => {
-    it("answers the same activity up to the cap, then reports it and leaves the gate parked", () => {
-      const answers = parseAnswers(["x=1"]);
-      const onWait = boundedOnWait(answers);
+    function captureStderr(fn: () => void): string {
       const chunks: string[] = [];
       const original = process.stderr.write.bind(process.stderr);
       process.stderr.write = ((chunk: string) => {
@@ -192,14 +190,42 @@ describe("--answer scoping (issue #44)", () => {
         return true;
       }) as typeof process.stderr.write;
       try {
+        fn();
+      } finally {
+        process.stderr.write = original;
+      }
+      return chunks.join("");
+    }
+
+    it("an unscoped answer hits the cap, then reports it and leaves the gate parked (advises scoping)", () => {
+      const answers = parseAnswers(["x=1"]);
+      const onWait = boundedOnWait(answers);
+      const output = captureStderr(() => {
         for (let i = 0; i < 5; i++) {
           expect(onWait("gate")).toEqual({ x: 1 });
         }
         expect(onWait("gate")).toBeUndefined();
-      } finally {
-        process.stderr.write = original;
-      }
-      expect(chunks.join("")).toMatch(/gate was auto-answered 5 times/);
+      });
+      expect(output).toMatch(/gate was auto-answered 5 times/);
+      // The payload might have leaked in from a gate it was never meant for --
+      // scoping it is real, actionable advice here.
+      expect(output).toMatch(/scope your answer/);
+    });
+
+    it("a scoped answer hits the cap too, but is never told to scope advice it already followed (issue #62)", () => {
+      const answers = parseAnswers(["gate:x=1"]);
+      const onWait = boundedOnWait(answers);
+      const output = captureStderr(() => {
+        for (let i = 0; i < 5; i++) {
+          expect(onWait("gate")).toEqual({ x: 1 });
+        }
+        expect(onWait("gate")).toBeUndefined();
+      });
+      expect(output).toMatch(/gate was auto-answered 5 times/);
+      // The user already aimed this at "gate" deliberately -- the graph
+      // itself is what is not terminating, not a misdirected payload.
+      expect(output).not.toMatch(/scope your answer/);
+      expect(output).toMatch(/keeps revisiting/);
     });
 
     it("counts each activity id on its own budget", () => {
@@ -410,8 +436,26 @@ describe("--answer scoping (issue #44)", () => {
       const { stdout, stderr, code } = runCli(env, ["run", "--graph", "loop_gate", "--dry-run", "--answer", "key=hello"]);
       // Bounded and reported, not an infinite loop burning turns forever.
       expect(stderr).toMatch(/gate was auto-answered 5 times/);
+      expect(stderr).toMatch(/scope your answer/);
       expect(stdout).toContain("stopped");
       expect(stdout).toContain("waiting on gate");
+      expect(code).toBe(0);
+    });
+
+    it("caps a scoped answer too, without the (already-followed) advice to scope it (issue #62)", () => {
+      const { env } = project();
+      const { stdout, stderr, code } = runCli(env, [
+        "run",
+        "--graph",
+        "loop_gate",
+        "--dry-run",
+        "--answer",
+        "gate:key=hello",
+      ]);
+      expect(stderr).toMatch(/gate was auto-answered 5 times/);
+      expect(stderr).not.toMatch(/scope your answer/);
+      expect(stderr).toMatch(/keeps revisiting/);
+      expect(stdout).toContain("stopped");
       expect(code).toBe(0);
     });
   });
