@@ -339,8 +339,13 @@ export function listSessions(paths: Paths, project?: string): SessionStore[] {
     .sort((a, b) => b.readMeta().updatedAt - a.readMeta().updatedAt);
 }
 
-/** Whether `pid` still names a live process (issue #52). `EPERM` means alive, just owned by someone else. */
-function isProcessAlive(pid: number): boolean {
+/**
+ * Whether `pid` still names a live process (issue #52). `EPERM` means alive,
+ * just owned by someone else. Exported so a caller outside this module (the
+ * studio's session-graph PUT route, issue #76) can tell whether a session is
+ * genuinely being driven right now, the same way `effectiveStatus` does.
+ */
+export function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;

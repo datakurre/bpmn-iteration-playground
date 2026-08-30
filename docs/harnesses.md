@@ -37,6 +37,16 @@ id(s), the same as `graph:extend`'s stricter rule would reject any removal at
 all. It still applies `checkSplice`'s job-type contract to any genuinely new
 activity, and refuses a changed `<bpmn:definitions id>` outright (issue #46).
 
+`PUT` requires an `If-Match` header naming the revision the client loaded
+(the same value `GET` returns as `ETag`) and rejects a stale one with `409`
+and the revision actually on disk, so two editors who loaded the same
+revision cannot silently overwrite each other -- the second is told to
+reload rather than winning quietly (issue #76). The library's own `PUT
+/api/graphs/:id` gets the same treatment, keyed by a content hash rather
+than a revision count since a library file carries no revision history of
+its own; there, a missing `If-Match` is permitted, since a brand-new graph
+has nothing yet to conflict with.
+
 An edit accepted while `graph-agent run`/`resume` is actively driving that
 same session is not silently discarded (issue #75). `drive()` (`runner.ts`)
 never trusts an in-memory copy of the graph: `graph:lint`/`graph:extend`'s own

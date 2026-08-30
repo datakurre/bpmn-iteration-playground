@@ -238,7 +238,12 @@ state by id; deleting one the token has never reached is fine. Saving
 appends a new revision the same way `graph:extend` does, tagged `studio
 edit`, and a running session picks it up the next time it stops and resumes
 (see ["a spliced-in step" above](#extending-a-graph-from-inside-a-session)
-for what "the next time" means for a run already in flight).
+for what "the next time" means for a run already in flight). The editor
+saves against the revision it opened, so a second tab (or a second person)
+that loaded the same revision and saves first wins normally; whichever saves
+second is told to reopen the editor and reapply its change rather than
+silently overwriting the first, and entering "Edit" on a running session
+says so up front ([#76](https://github.com/datakurre/graph-agent/issues/76)).
 
 A parked human gate -- `session-skeleton`'s `await_intent`, `craft-graph`'s
 `review_fragment` approval -- shows up on the session page as a real form-js
