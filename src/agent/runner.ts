@@ -46,6 +46,9 @@ export interface RunSessionOptions {
   signal?: AbortSignal;
   /** See `RunnerOptions.hangGuardMs` (engine.ts) -- overridable so tests need not wait out the production value. */
   hangGuardMs?: number;
+  /** Queued before the run starts, for "queue it before we start" -- see also `graph-agent steer`/`follow-up` for queuing one into a run already in flight (issue #48). */
+  steering?: string[];
+  followUp?: string[];
 }
 
 export interface SessionOutcome {
@@ -208,9 +211,13 @@ async function drive(
 
   // Steering and follow-up arrive from outside the graph; the graph decides when
   // to drain them. The initial prompt is not one of these -- it enters as a
-  // process variable that the turn activity maps in.
-  const steering: string[] = [];
-  const followUp: string[] = [];
+  // process variable that the turn activity maps in. Two producers feed these:
+  // `options.steering`/`.followUp` queue a message before the run even starts,
+  // and `store.drainInbox` (issue #48) picks up whatever `graph-agent
+  // steer`/`follow-up` queued from another process while this one is already
+  // looping -- both are merged every time the graph actually asks.
+  const steering: string[] = [...(options.steering ?? [])];
+  const followUp: string[] = [...(options.followUp ?? [])];
 
   // Set whenever graph:extend lands a splice; checkStopAfterActivity below
   // reads it live, and it is reset before each re-entry so only a *new*
@@ -228,8 +235,8 @@ async function drive(
       store.appendGraph(xml, reason, added);
       splicedThisPass = true;
     },
-    takeSteering: () => steering.splice(0, steering.length),
-    takeFollowUp: () => followUp.splice(0, followUp.length),
+    takeSteering: () => [...steering.splice(0, steering.length), ...store.drainInbox("steer")],
+    takeFollowUp: () => [...followUp.splice(0, followUp.length), ...store.drainInbox("follow-up")],
   });
 
   store.update((meta) => {

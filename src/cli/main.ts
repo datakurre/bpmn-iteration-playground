@@ -31,6 +31,11 @@ Commands
                         that differs from your library copy, backed up first)
   run [prompt]         start a session in this project and drive it turn by turn
   resume <session>     recover engine + transcript state and continue
+  steer <session> <text>
+                       queue a steering message, injected before the next turn
+  follow-up <session> <text>
+                       queue a follow-up message, drained once the agent would
+                       otherwise stop
   ls                   list this project's sessions (--all for every project)
   show <session>       print a session's turns and current graph revision
   studio               serve the studio for this project
@@ -54,6 +59,11 @@ Options
                         activity with 'activity:key=value' so a payload
                         meant for one gate (e.g. an intent) is never replayed
                         at another (e.g. an unrelated approval)
+  --steer <text>       queue a steering message before the run starts, drained
+                        by the first agent:steer the graph reaches (repeatable)
+  --follow-up <text>   queue a follow-up message before the run starts, drained
+                        by the first agent:follow-up the graph reaches
+                        (repeatable)
   --port <n>           studio port (0 picks a free one)
   --host <addr>        studio bind address (default: loopback only; the
                         studio has no authentication, so a non-loopback
@@ -91,6 +101,10 @@ export async function main(argv: string[]): Promise<number> {
       return cmdRun(argv.slice(1));
     case "resume":
       return cmdResume(argv.slice(1));
+    case "steer":
+      return cmdQueue("steer", argv.slice(1));
+    case "follow-up":
+      return cmdQueue("follow-up", argv.slice(1));
     default:
       process.stderr.write(`graph-agent: unknown command '${command}'\n\n${USAGE}`);
       return 2;
@@ -257,6 +271,8 @@ interface RunFlags {
   dryRun: boolean;
   name?: string;
   answer?: ScopedAnswers;
+  steer: string[];
+  followUp: string[];
   positionals: string[];
 }
 
@@ -281,6 +297,8 @@ function runFlags(args: string[]): RunFlags {
       "dry-run": { type: "boolean", default: false },
       name: { type: "string" },
       answer: { type: "string", multiple: true },
+      steer: { type: "string", multiple: true },
+      "follow-up": { type: "string", multiple: true },
     },
     allowPositionals: true,
     strict: false,
@@ -291,6 +309,8 @@ function runFlags(args: string[]): RunFlags {
     dryRun: values["dry-run"] === true,
     ...(values.name === undefined ? {} : { name: String(values.name) }),
     ...(values.answer === undefined ? {} : { answer: parseAnswers(values.answer as string[]) }),
+    steer: (values.steer as string[] | undefined) ?? [],
+    followUp: (values["follow-up"] as string[] | undefined) ?? [],
     positionals: positionals.map(String),
   };
 }
@@ -439,6 +459,8 @@ async function cmdRun(args: string[]): Promise<number> {
       tools: createPiToolExecutor(project),
       onProgress: (line) => process.stdout.write(`  ${line}\n`),
       ...(flags.answer === undefined ? {} : { onWait: boundedOnWait(flags.answer) }),
+      ...(flags.steer.length === 0 ? {} : { steering: flags.steer }),
+      ...(flags.followUp.length === 0 ? {} : { followUp: flags.followUp }),
       signal,
     }),
   );
@@ -482,6 +504,8 @@ async function cmdResume(args: string[]): Promise<number> {
         tools: createPiToolExecutor(projectId()),
         onProgress: (line) => process.stdout.write(`  ${line}\n`),
         ...(flags.answer === undefined ? {} : { onWait: boundedOnWait(flags.answer) }),
+      ...(flags.steer.length === 0 ? {} : { steering: flags.steer }),
+      ...(flags.followUp.length === 0 ? {} : { followUp: flags.followUp }),
         signal,
       }),
     );
@@ -523,6 +547,34 @@ function cmdLs(all: boolean): number {
       `${s.id}  ${s.status.padEnd(9)}  ${String(s.turnCount).padStart(3)} turns${where}  ${s.name ?? ""}\n`,
     );
   }
+  return 0;
+}
+
+/**
+ * Queues a steering/follow-up message into a session's inbox from *outside*
+ * whatever process is (or next is) driving it -- see `SessionStore.queueInbox`
+ * and issue #48. Works whether or not a run is currently in flight: a queued
+ * message sits in `inbox.jsonl` until the graph's own `agent:steer`/
+ * `agent:follow-up` activity next drains it.
+ */
+function cmdQueue(kind: "steer" | "follow-up", args: string[]): number {
+  const p = requirePaths();
+  if (!p) return 1;
+  const [id, ...rest] = args;
+  const text = rest.join(" ");
+  if (!id || !text) {
+    process.stderr.write(`graph-agent: ${kind} requires a session id and a message\n`);
+    return 2;
+  }
+  const store = new SessionStore(p, id);
+  if (!store.exists()) {
+    process.stderr.write(`graph-agent: unknown session '${id}'\n`);
+    return 1;
+  }
+  store.queueInbox(kind, text);
+  process.stdout.write(
+    `queued ${kind} message for ${id}; it is drained the next time the graph reaches agent:${kind}\n`,
+  );
   return 0;
 }
 

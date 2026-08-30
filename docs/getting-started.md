@@ -258,6 +258,35 @@ hands the model real `read`/`write`/`edit`/`bash` rooted at the working
 directory, so run those checks somewhere disposable, never in your own
 checkout.
 
+## Steering and follow-up
+
+`pi-default-loop` draws two seams from Pi's own `runLoop()` that used to be
+permanently dead: `agent:steer` injects a message before the next turn,
+`agent:follow-up` decides whether the outer loop takes another lap once the
+agent would otherwise stop. Both are queued from outside the graph
+([#48](https://github.com/datakurre/graph-agent/issues/48)), two ways:
+
+- **Before the run starts:** `--steer <text>` / `--follow-up <text>` on
+  `run`/`resume` (repeatable).
+- **Into a run already in flight, from another terminal:**
+  `graph-agent steer <session> <text>` / `graph-agent follow-up <session>
+  <text>`. These append to the session's own `inbox.jsonl` -- the graph drains
+  it the next time it reaches `agent:steer`/`agent:follow-up`, so a message
+  queued this way has no effect on a session that has already completed.
+
+```
+$ graph-agent run "Say hello in one word." \
+    --follow-up "Now say goodbye in one word." --model anthropic/claude-haiku-4-5
+  inject_pending  agent:steer  nothing queued
+  llm_turn  agent:turn  Hello!
+  drain_followup  agent:follow-up  queued 1 follow-up(s)
+  inject_pending  agent:steer  nothing queued
+  llm_turn  agent:turn  Goodbye!
+  drain_followup  agent:follow-up  no follow-up
+
+session ce90951b  completed  2 turn(s)
+```
+
 ## The bundled graphs
 
 `make init` seeds five graphs. All five run:

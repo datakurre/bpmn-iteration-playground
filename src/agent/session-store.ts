@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { GraphRevision, SessionDetail, SessionSummary, TurnRecord } from "../studio/types.ts";
 import type { Paths } from "./paths.ts";
@@ -51,6 +51,13 @@ export interface SessionMeta {
   harnessError?: string;
 }
 
+/** One queued steering/follow-up message, as stored in `inbox.jsonl` (issue #48). */
+export interface InboxEntry {
+  kind: "steer" | "follow-up";
+  text: string;
+  at: number;
+}
+
 export class SessionStore {
   constructor(
     private readonly paths: Paths,
@@ -75,6 +82,36 @@ export class SessionStore {
 
   get transcriptPath(): string {
     return join(this.dir, "session.jsonl");
+  }
+
+  /**
+   * Steering/follow-up messages queued from *outside* the process driving
+   * this session -- `graph-agent steer`/`follow-up` append here from another
+   * terminal; `agent:steer`/`agent:follow-up` (harnesses.ts) drain it every
+   * time the graph reaches them, which is how a message posted while a run is
+   * already looping actually reaches it (issue #48).
+   */
+  get inboxPath(): string {
+    return join(this.dir, "inbox.jsonl");
+  }
+
+  /** Queue a steering/follow-up message for whichever process is (or next is) driving this session. */
+  queueInbox(kind: InboxEntry["kind"], text: string): void {
+    mkdirSync(this.dir, { recursive: true });
+    appendFileSync(this.inboxPath, `${JSON.stringify({ kind, text, at: Date.now() } satisfies InboxEntry)}\n`);
+  }
+
+  /** Every queued message of one kind, removing them from the inbox; messages of the other kind are left for their own drain. */
+  drainInbox(kind: InboxEntry["kind"]): string[] {
+    if (!existsSync(this.inboxPath)) return [];
+    const entries = readFileSync(this.inboxPath, "utf8")
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as InboxEntry);
+    const matching = entries.filter((entry) => entry.kind === kind).map((entry) => entry.text);
+    const remaining = entries.filter((entry) => entry.kind !== kind);
+    writeAtomic(this.inboxPath, remaining.map((entry) => JSON.stringify(entry)).join("\n") + (remaining.length > 0 ? "\n" : ""));
+    return matching;
   }
 
   exists(): boolean {

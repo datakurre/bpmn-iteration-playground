@@ -479,3 +479,64 @@ describe("hang guard and phantom-running status (issue #52)", () => {
     expect(meta.harnessError).toBeDefined();
   });
 });
+
+describe("steering and follow-up queues (issue #48)", () => {
+  it("a seeded follow-up drives a second outer iteration", async () => {
+    // With no tool calls the agent would stop here -- pi-default-loop's own
+    // drain_followup is exactly the seam that decides whether the outer loop
+    // takes another lap. Before this fix nothing ever filled the queue it
+    // drains, so gw_followup's has_followup branch was unreachable.
+    const faux = scripted([
+      fauxAssistantMessage([fauxText("first turn done")], { stopReason: "stop" }),
+      fauxAssistantMessage([fauxText("second turn done")], { stopReason: "stop" }),
+    ]);
+
+    const result = await runSession(options(faux, { prompt: "go", followUp: ["now write a test"] }));
+
+    expect(result.error).toBeUndefined();
+    expect(result.outcome).toBe("completed");
+    expect(result.turns).toBe(2);
+  });
+
+  it("a seeded steering message is injected before the next turn", async () => {
+    // agent:steer calls pi.steer() for each queued message; the only
+    // observable effect from outside PiSession is that the next turn's
+    // request transcript carries it as an extra user message.
+    const faux = scripted([fauxAssistantMessage([fauxText("ok")], { stopReason: "stop" })]);
+    let sawSteerMessage = false;
+    const streamFn = ((m: never, context: never, o: never) => {
+      const messages = (context as { messages: Array<{ role: string; content?: unknown }> }).messages;
+      sawSteerMessage ||= messages.some(
+        (message) => message.role === "user" && JSON.stringify(message.content).includes("focus on tests"),
+      );
+      return faux.provider.streamSimple(m, context, o);
+    }) as RunSessionOptions["streamFn"];
+
+    const result = await runSession(options(faux, { prompt: "go", steering: ["focus on tests"], streamFn }));
+
+    expect(result.error).toBeUndefined();
+    expect(sawSteerMessage).toBe(true);
+  });
+
+  it("graph-agent steer/follow-up queue into a session's inbox, drained by the running graph", async () => {
+    // The out-of-band seam: a message queued into inbox.jsonl from outside
+    // the process driving the session (SessionStore.queueInbox, what the CLI
+    // commands write to) reaches the graph the same way a seeded one does.
+    const faux = scripted([
+      fauxAssistantMessage([fauxText("first turn done")], { stopReason: "stop" }),
+      fauxAssistantMessage([fauxText("second turn done")], { stopReason: "stop" }),
+    ]);
+    const sessionId = "inbox-session";
+    const store = new SessionStore(paths, sessionId);
+    store.create(project);
+    store.queueInbox("follow-up", "queued from another terminal");
+
+    const result = await runSession({ ...options(faux, { prompt: "go" }), sessionId });
+
+    expect(result.error).toBeUndefined();
+    expect(result.outcome).toBe("completed");
+    expect(result.turns).toBe(2);
+    // Drained, not left behind for the next run to see again.
+    expect(store.drainInbox("follow-up")).toEqual([]);
+  });
+});
