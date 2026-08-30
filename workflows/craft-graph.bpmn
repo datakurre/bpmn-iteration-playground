@@ -46,8 +46,43 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
     <bpmn:startEvent id="craft_start" name="Intent">
       <bpmn:outgoing>to_draft</bpmn:outgoing>
     </bpmn:startEvent>
-    <bpmn:sequenceFlow id="to_draft" sourceRef="craft_start" targetRef="draft_fragment" />
+    <bpmn:sequenceFlow id="to_draft" sourceRef="craft_start" targetRef="gw_draft_entry" />
+    <bpmn:exclusiveGateway id="gw_draft_entry" name="Enter draft">
+      <bpmn:documentation>A plain merge, not a decision: whichever of a fresh start or a redraft
+loop-back arrives runs straight through to draft_fragment. Explicit rather
+than the two incoming flows bpmnlint's fake-join rule used to merely warn
+about (now an error) -- a real BPMN join needs a gateway; a plain activity
+with more than one incoming edge does not join at all, it just runs again
+per arrival, which is exactly the behaviour this gateway keeps.</bpmn:documentation>
+      <bpmn:incoming>to_draft</bpmn:incoming>
+      <bpmn:incoming>lint_retry</bpmn:incoming>
+      <bpmn:outgoing>into_draft_fragment</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="into_draft_fragment" sourceRef="gw_draft_entry" targetRef="draft_fragment" />
     <bpmn:serviceTask id="draft_fragment" name="Draft BPMN fragment">
+      <bpmn:documentation>Resets extend_status to null on every entry (a fresh craft_start, or a
+lint_retry redraft) -- apply_extension is the only activity that ever sets
+it, and only on a successful splice, so without this reset a caller that
+routes on extend_status (session-craft.bpmn's gw_crafted, chiefly) would see
+a stale "success" from an earlier lap's craft_graph invocation survive into
+a lap that rejected or gave up on this one.
+
+Also republishes agent:turn's own resolved "prompt" output back to the
+"prompt" variable: a callActivity does not process its own zeebe:ioMapping
+(only a harness-backed activity does, in this project's engine wrapper) and
+does not inherit the caller's variables either, so pi_default_loop's own
+llm_turn -- reached through session-craft.bpmn's run_default fallback, in a
+*different* linked process than this one -- would otherwise see "prompt" as
+never seeded at all on any lap after the first, calling Pi's continue()
+over a transcript that still ends on this activity's own unanswered
+assistant turn (real Haiku repro: "Cannot continue from message role:
+assistant"). The output source is "=prompt", not a re-derived
+intent-or-prompt expression, because resolveOutput's scope is only the
+harness's own returned result fields, never other process variables --
+agent:turn's harness now returns the input it actually resolved this turn
+as its own "prompt" result field for exactly this reason. Session-
+skeleton.bpmn never reads "prompt" again after its own first lap, so this
+republish is an inert overwrite there.</bpmn:documentation>
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="agent:turn" />
         <zeebe:taskHeaders>
@@ -57,10 +92,11 @@ be recovered. graph:extend rejects those before they are applied.</bpmn:document
           <zeebe:input source="=if intent = null then prompt else intent" target="prompt" />
           <zeebe:input source="=lint_feedback" target="lint_feedback" />
           <zeebe:output source="=text" target="fragment" />
+          <zeebe:output source="=null" target="extend_status" />
+          <zeebe:output source="=prompt" target="prompt" />
         </zeebe:ioMapping>
       </bpmn:extensionElements>
-      <bpmn:incoming>to_draft</bpmn:incoming>
-      <bpmn:incoming>lint_retry</bpmn:incoming>
+      <bpmn:incoming>into_draft_fragment</bpmn:incoming>
       <bpmn:outgoing>to_layout</bpmn:outgoing>
     </bpmn:serviceTask>
     <bpmn:sequenceFlow id="to_layout" sourceRef="draft_fragment" targetRef="layout_fragment" />
@@ -101,9 +137,18 @@ matched: valid first, then out of attempts, then redraft.</bpmn:documentation>
     <bpmn:sequenceFlow id="lint_ok" name="valid" sourceRef="gw_lint" targetRef="review_fragment">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=lint_status = "success"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
-    <bpmn:sequenceFlow id="lint_exhausted" name="give up" sourceRef="gw_lint" targetRef="craft_rejected">
+    <bpmn:sequenceFlow id="lint_exhausted" name="give up" sourceRef="gw_lint" targetRef="gw_rejected_entry">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=lint_attempts != null and lint_attempts &gt;= 3</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
+    <bpmn:exclusiveGateway id="gw_rejected_entry" name="Rejected">
+      <bpmn:documentation>A plain merge of the two ways a lap ends without a splice -- a human
+rejecting it, or the redraft cap giving up -- onto one end event, the same
+reasoning as gw_draft_entry above.</bpmn:documentation>
+      <bpmn:incoming>rejected</bpmn:incoming>
+      <bpmn:incoming>lint_exhausted</bpmn:incoming>
+      <bpmn:outgoing>into_craft_rejected</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="into_craft_rejected" sourceRef="gw_rejected_entry" targetRef="craft_rejected" />
     <bpmn:sequenceFlow id="lint_retry" name="redraft" sourceRef="gw_lint" targetRef="draft_fragment" />
     <bpmn:userTask id="review_fragment" name="Review extension">
       <bpmn:extensionElements>
@@ -125,7 +170,7 @@ matched: valid first, then out of attempts, then redraft.</bpmn:documentation>
     <bpmn:sequenceFlow id="approved" name="apply" sourceRef="gw_approve" targetRef="apply_extension">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=approval = "apply"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
-    <bpmn:sequenceFlow id="rejected" name="reject" sourceRef="gw_approve" targetRef="craft_rejected" />
+    <bpmn:sequenceFlow id="rejected" name="reject" sourceRef="gw_approve" targetRef="gw_rejected_entry" />
     <bpmn:serviceTask id="apply_extension" name="Splice into the session graph">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="graph:extend" />
@@ -142,8 +187,7 @@ matched: valid first, then out of attempts, then redraft.</bpmn:documentation>
       <bpmn:incoming>to_applied</bpmn:incoming>
     </bpmn:endEvent>
     <bpmn:endEvent id="craft_rejected" name="Extension rejected">
-      <bpmn:incoming>rejected</bpmn:incoming>
-      <bpmn:incoming>lint_exhausted</bpmn:incoming>
+      <bpmn:incoming>into_craft_rejected</bpmn:incoming>
     </bpmn:endEvent>
   </bpmn:process>
   <bpmndi:BPMNDiagram id="BPMNDiagram_craft_graph">
@@ -151,80 +195,96 @@ matched: valid first, then out of attempts, then redraft.</bpmn:documentation>
       <bpmndi:BPMNShape id="craft_start_di" bpmnElement="craft_start">
         <dc:Bounds x="57" y="52" width="36" height="36" />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="draft_fragment_di" bpmnElement="draft_fragment">
-        <dc:Bounds x="175" y="30" width="100" height="80" />
+      <bpmndi:BPMNShape id="gw_draft_entry_di" bpmnElement="gw_draft_entry" isMarkerVisible="true">
+        <dc:Bounds x="200" y="45" width="50" height="50" />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="layout_fragment_di" bpmnElement="layout_fragment">
+      <bpmndi:BPMNShape id="draft_fragment_di" bpmnElement="draft_fragment">
         <dc:Bounds x="325" y="30" width="100" height="80" />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="lint_fragment_di" bpmnElement="lint_fragment">
+      <bpmndi:BPMNShape id="layout_fragment_di" bpmnElement="layout_fragment">
         <dc:Bounds x="475" y="30" width="100" height="80" />
       </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="lint_fragment_di" bpmnElement="lint_fragment">
+        <dc:Bounds x="625" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_lint_di" bpmnElement="gw_lint" isMarkerVisible="true">
-        <dc:Bounds x="650" y="45" width="50" height="50" />
+        <dc:Bounds x="800" y="45" width="50" height="50" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="review_fragment_di" bpmnElement="review_fragment">
-        <dc:Bounds x="775" y="30" width="100" height="80" />
+        <dc:Bounds x="925" y="30" width="100" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_approve_di" bpmnElement="gw_approve" isMarkerVisible="true">
-        <dc:Bounds x="950" y="45" width="50" height="50" />
+        <dc:Bounds x="1100" y="45" width="50" height="50" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="apply_extension_di" bpmnElement="apply_extension">
-        <dc:Bounds x="1075" y="30" width="100" height="80" />
+        <dc:Bounds x="1225" y="30" width="100" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="craft_applied_di" bpmnElement="craft_applied">
-        <dc:Bounds x="1257" y="52" width="36" height="36" />
+        <dc:Bounds x="1407" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_rejected_entry_di" bpmnElement="gw_rejected_entry" isMarkerVisible="true">
+        <dc:Bounds x="1550" y="45" width="50" height="50" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="craft_rejected_di" bpmnElement="craft_rejected">
-        <dc:Bounds x="1107" y="192" width="36" height="36" />
+        <dc:Bounds x="1707" y="52" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNEdge id="to_draft_di" bpmnElement="to_draft">
         <di:waypoint x="93" y="70" />
-        <di:waypoint x="175" y="70" />
+        <di:waypoint x="200" y="70" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="to_layout_di" bpmnElement="to_layout">
-        <di:waypoint x="275" y="70" />
+      <bpmndi:BPMNEdge id="into_draft_fragment_di" bpmnElement="into_draft_fragment">
+        <di:waypoint x="250" y="70" />
         <di:waypoint x="325" y="70" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="to_lint_di" bpmnElement="to_lint">
+      <bpmndi:BPMNEdge id="to_layout_di" bpmnElement="to_layout">
         <di:waypoint x="425" y="70" />
         <di:waypoint x="475" y="70" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="to_gw_lint_di" bpmnElement="to_gw_lint">
+      <bpmndi:BPMNEdge id="to_lint_di" bpmnElement="to_lint">
         <di:waypoint x="575" y="70" />
-        <di:waypoint x="650" y="70" />
+        <di:waypoint x="625" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_gw_lint_di" bpmnElement="to_gw_lint">
+        <di:waypoint x="725" y="70" />
+        <di:waypoint x="800" y="70" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="lint_ok_di" bpmnElement="lint_ok">
-        <di:waypoint x="700" y="70" />
-        <di:waypoint x="775" y="70" />
+        <di:waypoint x="850" y="70" />
+        <di:waypoint x="925" y="70" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="lint_exhausted_di" bpmnElement="lint_exhausted">
-        <di:waypoint x="675" y="95" />
-        <di:waypoint x="675" y="210" />
-        <di:waypoint x="1107" y="210" />
+        <di:waypoint x="825" y="95" />
+        <di:waypoint x="825" y="140" />
+        <di:waypoint x="1575" y="140" />
+        <di:waypoint x="1575" y="95" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="lint_retry_di" bpmnElement="lint_retry">
-        <di:waypoint x="675" y="95" />
-        <di:waypoint x="675" y="140" />
-        <di:waypoint x="225" y="140" />
-        <di:waypoint x="225" y="110" />
+        <di:waypoint x="825" y="95" />
+        <di:waypoint x="825" y="140" />
+        <di:waypoint x="375" y="140" />
+        <di:waypoint x="375" y="110" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="to_gw_approve_di" bpmnElement="to_gw_approve">
-        <di:waypoint x="875" y="70" />
-        <di:waypoint x="950" y="70" />
+        <di:waypoint x="1025" y="70" />
+        <di:waypoint x="1100" y="70" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="approved_di" bpmnElement="approved">
-        <di:waypoint x="1000" y="70" />
-        <di:waypoint x="1075" y="70" />
+        <di:waypoint x="1150" y="70" />
+        <di:waypoint x="1225" y="70" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="rejected_di" bpmnElement="rejected">
-        <di:waypoint x="975" y="95" />
-        <di:waypoint x="975" y="210" />
-        <di:waypoint x="1107" y="210" />
+        <di:waypoint x="1125" y="95" />
+        <di:waypoint x="1125" y="140" />
+        <di:waypoint x="1575" y="140" />
+        <di:waypoint x="1575" y="95" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="to_applied_di" bpmnElement="to_applied">
-        <di:waypoint x="1175" y="70" />
-        <di:waypoint x="1257" y="70" />
+        <di:waypoint x="1325" y="70" />
+        <di:waypoint x="1407" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="into_craft_rejected_di" bpmnElement="into_craft_rejected">
+        <di:waypoint x="1600" y="70" />
+        <di:waypoint x="1707" y="70" />
       </bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>

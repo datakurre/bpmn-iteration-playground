@@ -22,7 +22,7 @@ harness returns: `status`, `summary`, `findings`, `artifacts`, `next_action`).
 | `agent:follow-up` | Drains follow-up messages queued from outside the graph. Queued via `--follow-up` or `graph-agent follow-up <session> <text>` (issue #48). | out: `has_followup` |
 | `agent:prepare-next-turn` | Pi's `prepareNextTurn` seam: decides whether the inner loop should stop. Deliberately does not touch the system prompt or tool list -- both sit in front of every message in the prompt cache, so changing them here discards it on every iteration (see `docs/research/05-pi-loops-and-token-cache.md`). | in: `stop_reason`; out: `should_stop` |
 | `graph:layout` | Runs `bpmn-auto-layout` over a fragment (or the current session graph). | in: `fragment` (optional); out: `fragment` (laid out) |
-| `graph:lint` | Checks that a proposed fragment is a valid, additive splice into the current session graph, and that every new activity's `zeebe:taskDefinition type` names a registered harness, before anything applies it. Does **not** check that the type is wired to the right inputs, outputs or headers ([#40](https://github.com/datakurre/graph-agent/issues/40); see AGENTS.md's "bundled graphs" section). | in: `fragment`; out: `added`, `attempt` |
+| `graph:lint` | Checks that a proposed fragment is a valid, additive splice into the current session graph, that every new activity's `zeebe:taskDefinition type` names a registered harness, and that its `zeebe:input`/`zeebe:taskHeaders`/`zeebe:output` bindings match what that harness actually reads and publishes -- before anything applies it ([#40](https://github.com/datakurre/graph-agent/issues/40), [#65](https://github.com/datakurre/graph-agent/issues/65); see AGENTS.md's "bundled graphs" section). | in: `fragment`; out: `added`, `attempt` |
 | `graph:extend` | The self-mutation primitive: replaces the session graph with the fragment spliced in. Runs the same additive-and-registered-job-type check as `graph:lint` (`checkSplice`), not just an id comparison -- stricter than a studio edit's `checkMigration` (see below), which only protects elements the token has actually reached. Stable ids only -- `bpmn-engine` replays recovered child state by element id, so a fragment that renames or removes a live element cannot be recovered. The running engine is stopped and resumed against the new graph immediately after (bounded to 5 re-entries per run), so an element the splice adds gets a chance to run in the same `run`/`resume` invocation rather than only the next one ([#45](https://github.com/datakurre/graph-agent/issues/45)). | in: `fragment`; out: `added` |
 | `shell` | A deterministic step: runs a command and reports its exit status. No model call. | headers: `command` (required), `fail_on_error` (default `true`); out: `exit_code`, `stdout`, `stderr` |
 
@@ -127,6 +127,53 @@ itself is never persisted (it is rebuilt from the union of every linked
 process's own `environment.output` on `resumeGraph`, via
 `collectSharedOutput()` in `engine.ts`), so this only ever needs to be
 correct within one run.
+
+One more consequence worth knowing: `sharedOutput` only ever gets a variable
+from a harness's or user task's own *output* mapping -- a plain seed
+variable (`runSession`'s own `prompt`, chiefly) is never in it, since nothing
+ever "outputs" it. `engine.ts` also never processes a `callActivity`'s own
+`zeebe:input` at all (only a harness-backed activity's does, via
+`makeExtension`'s `HarnessService` wrapper), so a `callActivity` cannot
+bridge a seed variable back into scope that way either.
+`session-craft.bpmn`'s `run_default` fallback found this the hard way
+([#66](https://github.com/datakurre/graph-agent/issues/66)): `pi_default_loop`,
+called through `run_default` after `craft_graph` had already run a turn, saw
+`prompt` as never seeded at all -- it is a seed variable, invisible outside
+the top-level process it was seeded into -- so its own `llm_turn` called
+Pi's `continue()` instead of a real prompt, against a transcript that still
+ended on `craft_graph`'s own unanswered assistant turn. `Cannot continue
+from message role: assistant` was the result. `craft-graph.bpmn`'s
+`draft_fragment` now republishes its own resolved intent-or-prompt back to
+`"prompt"` on every entry for exactly this reason -- a seed variable that
+might be read again downstream, across a `callActivity` boundary, needs a
+harness to re-publish it as an output first.
+
+A `callActivity`'s own `zeebe:output`, unlike its `zeebe:input`, *is*
+processed (the same generic, no-harness path a user task's answered form
+uses), which is how a value a called process's own harness published can
+reach a gateway condition back in the calling process -- gateway conditions
+are evaluated natively by bpmn-elements against the calling process's own
+scope only, never against `sharedOutput`. `session-craft.bpmn`'s `craft`
+needs exactly this: `gw_crafted` routes on `extend_status`, set deep inside
+`craft_graph` by `apply_extension`, so `craft` carries its own
+`zeebe:output source="=extend_status"`. Getting the FEEL expression right
+took a second real-Haiku repro of its own ([#66](https://github.com/datakurre/graph-agent/issues/66)
+again): a `callActivity`'s own signaled output arrives one layer deeper than
+a user task's flat answered form does -- bpmn-elements relays a called
+process's completion through the same delegate-signal machinery a message
+end event uses, wrapped as `{ executionId, output: {...} }` -- so the bare
+`extend_status` only becomes visible once `engine.ts`'s
+`applyUnharnessedOutput` unwraps that one extra layer for a `bpmn:CallActivity`
+specifically; `=output.extend_status` does not work either, since `output`
+is itself a reserved root in `feelContext` (`src/agent/expressions.ts`)
+pointing at the *caller's own* (empty, at that point) `environment.output`,
+not at the called process's. Left unfixed, `gw_crafted`'s condition always
+warned "Variable 'extend_status' not found" and silently took its own
+default branch (`fallback_default`, into `run_default`) even right after a
+successful apply -- and a *second* `graph:extend`-triggered stop/resume
+cycle landing on top of that stray, already-running `pi_default_loop`
+instance is what actually threw "cannot resume running process
+pi_default_loop".
 
 ## Retries
 

@@ -15,7 +15,7 @@ import { bundledWorkflowsDir, listBpmnFiles } from "./paths.ts";
 import { runGraph, resumeGraph, type ActivityOutcome, type RunResult } from "./engine.ts";
 import { createHarnesses } from "./harnesses.ts";
 import { PiSession } from "./pi-session.ts";
-import { SessionStore } from "./session-store.ts";
+import { mergeVisited, SessionStore } from "./session-store.ts";
 import type { ToolExecutor } from "./tool-executor.ts";
 import type { EngineState } from "./graph.ts";
 import type { Paths } from "./paths.ts";
@@ -179,6 +179,18 @@ export interface ResumeSessionOptions extends Omit<RunSessionOptions, "graphPath
 export async function resumeSession(options: ResumeSessionOptions): Promise<SessionOutcome> {
   const store = new SessionStore(options.paths, options.sessionId);
   if (!store.exists()) throw new Error(`unknown session '${options.sessionId}'`);
+  // A completed process has no token to dispatch and nowhere left to go --
+  // knowable up front from meta.status, without ever handing the snapshot to
+  // the engine. Without this check, resumeGraph would park on the #52 hang
+  // guard (5000ms of "nothing dispatched"), report a diagnostic that reads
+  // like snapshot corruption when the snapshot is fine, and -- worst -- the
+  // drive() below would downgrade the session's own recorded outcome from
+  // "completed" to "wait" (issue #63).
+  if (store.readMeta().status === "completed") {
+    throw new Error(
+      `session '${options.sessionId}' has already completed; start a new one, or \`graph-agent promote\` its graph`,
+    );
+  }
   const state = store.readEngineState() as EngineState | null;
   if (!state) throw new Error(`session '${options.sessionId}' has no saved engine state to resume`);
   const graph = store.currentGraph();
@@ -274,7 +286,11 @@ async function drive(
     onTokens: (tokens: string[], visited: string[]) => {
       store.update((meta) => {
         meta.tokens = tokens;
-        meta.visited = visited;
+        // `visited` is this call's own, per-pass set -- merged, never
+        // replacing meta.visited outright (see `mergeVisited`/`markVisited`
+        // in session-store.ts). Issue #59 found the studio's migration guard
+        // silently un-protecting an earlier pass's activities without this.
+        meta.visited = mergeVisited(meta.visited, visited);
       });
     },
     // A queued studio answer (issue #51) always takes precedence over --answer:
@@ -377,7 +393,18 @@ async function drive(
     outcome !== "error" ? undefined : result.error?.message ? result.error : new Error(fallbackMessage);
 
   store.writeEngineState(result.state);
+  // A terminal "completed" status is never written backwards. resumeSession
+  // already refuses to even start against a completed session, but this is
+  // the general invariant issue #63 asks for rather than a fix scoped to one
+  // call site: a pass that dispatched nothing at all has no business
+  // overwriting whatever the session's last real outcome was.
+  const alreadyCompleted = meta.status === "completed";
+  const dispatchedNothing = result.activities.length === 0;
   store.update((meta) => {
+    if (alreadyCompleted && dispatchedNothing && outcome !== "completed") {
+      delete meta.pid;
+      return;
+    }
     meta.status = outcome === "completed" ? "completed" : outcome === "error" ? "error" : "wait";
     // The token reports come from getPostponed() as the run proceeds, so the
     // last one seen is whatever was in flight at the time. A run that reached an

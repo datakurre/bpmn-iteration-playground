@@ -65,6 +65,11 @@ export interface AnswerEntry {
   at: number;
 }
 
+/** The one place `meta.visited`'s union-not-replace semantics live -- see `SessionStore.markVisited`. */
+export function mergeVisited(existing: readonly string[], incoming: readonly string[]): string[] {
+  return [...new Set([...existing, ...incoming])];
+}
+
 export class SessionStore {
   constructor(
     private readonly paths: Paths,
@@ -206,6 +211,22 @@ export class SessionStore {
     mutate(meta);
     this.writeMeta(meta);
     return meta;
+  }
+
+  /**
+   * Merges `ids` into `meta.visited` rather than replacing it. `visited` is
+   * the studio's migration guard's only record of which elements have live
+   * state and must not be removed or renamed -- but the engine's own
+   * `visited` set (`src/agent/engine.ts`) is fresh per `runGraph`/`resumeGraph`
+   * call, so every automatic splice re-entry (issue #45) starts a new one.
+   * Overwriting `meta.visited` with that per-pass set on every token move
+   * silently un-protects everything a session did before the most recent
+   * resume (issue #59) -- this is the one place that is allowed to write it.
+   */
+  markVisited(ids: readonly string[]): SessionMeta {
+    return this.update((meta) => {
+      meta.visited = mergeVisited(meta.visited, ids);
+    });
   }
 
   /** Revision file names, oldest first. */

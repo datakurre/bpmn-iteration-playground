@@ -30,7 +30,14 @@ const CONFIG = {
     "start-event-required": "error",
     "end-event-required": "error",
     "conditional-flows": "error",
-    "fake-join": "info",
+    // An implicit merge -- more than one incoming flow into a plain activity
+    // or event -- looks like a join but isn't one: bpmn-elements re-triggers
+    // the activity once per arriving token instead of waiting for all of
+    // them, which is a real behavioural trap for anyone reading the diagram
+    // as a BPMN join. Model the merge with an exclusive gateway instead (see
+    // any workflows/*.bpmn's gw_*_entry gateways for the pattern) -- forbidden
+    // outright, not just flagged, now that every bundled graph does.
+    "fake-join": "error",
     "no-inclusive-gateway": "warn",
     "superfluous-gateway": "warn",
   },

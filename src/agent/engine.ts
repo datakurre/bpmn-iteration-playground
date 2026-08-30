@@ -291,6 +291,23 @@ function signalPostponed(engine: EngineInstance, activityId: string, message: un
  * otherwise never become a named process variable: `session-skeleton.bpmn`'s
  * `await_intent` publishes `session_done` this way, and without it `gw_more`
  * never sees a true `session_done` and loops forever.
+ *
+ * A `bpmn:CallActivity`'s own signaled output has one extra layer a user
+ * task's does not: bpmn-elements relays a called process's completion back
+ * through its own delegate-signal machinery, which wraps it as
+ * `{ executionId, output: {...theCalledProcess'sOwnEnvironmentOutput} }`
+ * rather than handing the plain fields directly the way an answered form
+ * does. Unwrapped, a `zeebe:output source="=x"` on the callActivity would
+ * only ever see `executionId` and a nested `output` object, never `x` itself
+ * -- and `=output.x` does not work either, since `output` is itself a
+ * reserved root in `feelContext` (`src/agent/expressions.ts`) pointing at
+ * `environment.output`, not at this payload's own nested key. Unwrapping
+ * here, before handing the scope to `resolveOutput`, is what lets a
+ * callActivity's `zeebe:output` read the called process's published
+ * variables by their bare names, symmetrically with every other unharnessed
+ * activity (issue #66: `session-craft.bpmn`'s `gw_crafted` routes on
+ * `extend_status`, set deep inside `craft_graph`, only once `craft`'s own
+ * `zeebe:output source="=extend_status"` can see it).
  */
 function applyUnharnessedOutput(
   activity: RegisteredActivity | undefined,
@@ -300,7 +317,12 @@ function applyUnharnessedOutput(
   if (!activity || harnessOf(activity)) return;
   const outputs = ioMapping(activity).output;
   if (outputs.length === 0) return;
-  const scope = signaled && typeof signaled === "object" ? signaled : {};
+  const isCallActivity = (activity as unknown as { type?: string }).type === "bpmn:CallActivity";
+  const nested =
+    isCallActivity && signaled && typeof signaled === "object" && typeof (signaled as { output?: unknown }).output === "object"
+      ? (signaled as { output: unknown }).output
+      : signaled;
+  const scope = nested && typeof nested === "object" ? nested : {};
   const environment = (activity as unknown as { environment: { output: Record<string, unknown> } }).environment;
   for (const [key, value] of Object.entries(resolveOutput(activity, scope, feelIn))) {
     if (value !== undefined) {

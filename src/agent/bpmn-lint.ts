@@ -25,7 +25,13 @@ const CONFIG = {
     "start-event-required": "error",
     "end-event-required": "error",
     "conditional-flows": "error",
-    "fake-join": "info",
+    // An implicit merge (more than one incoming flow into a plain activity
+    // or event) is forbidden, not just flagged: bpmn-elements re-triggers
+    // such an activity once per arriving token rather than joining, a real
+    // behavioural trap. A drafted fragment that does this is rejected and
+    // redrafted, the same as any other structural defect graph:lint catches
+    // -- model the merge with an exclusive gateway instead.
+    "fake-join": "error",
     "no-inclusive-gateway": "warn",
     "superfluous-gateway": "warn",
   },

@@ -16,7 +16,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { pendingGates } from "../agent/graph.ts";
 import type { Paths } from "../agent/paths.ts";
 import type { PiSession } from "../agent/pi-session.ts";
-import { runSession, type RunSessionOptions, type SessionOutcome } from "../agent/runner.ts";
+import { resumeSession, runSession, type RunSessionOptions, type SessionOutcome } from "../agent/runner.ts";
 import { SessionStore } from "../agent/session-store.ts";
 import type { ToolExecutor } from "../agent/tool-executor.ts";
 import { formFields } from "./form-fields.ts";
@@ -32,14 +32,29 @@ import {
   type ToolTranscriptEntry,
 } from "./pi-bridge.ts";
 
+/**
+ * What the TUI attaches to: a fresh session from a graph, or an existing one
+ * to reattach to -- the only two entry points `runSession`/`resumeSession`
+ * themselves offer. Everything downstream of the run (the transcript, the
+ * trail, the status strip, the gate wizard) is driven by callbacks both
+ * already provide identically, so this discriminant is the only place the
+ * two paths actually diverge (issue #67).
+ */
+export type TuiStart =
+  | {
+      kind: "run";
+      graphPath: string;
+      /** For the status strip -- the `--graph` name, not the resolved file path. */
+      graphLabel: string;
+      prompt?: string;
+      name?: string;
+    }
+  | { kind: "resume"; sessionId: string };
+
 export interface TuiAppOptions {
   paths: Paths;
   project: string;
-  graphPath: string;
-  /** For the status strip -- the `--graph` name, not the resolved file path. */
-  graphLabel: string;
-  prompt?: string;
-  name?: string;
+  start: TuiStart;
   model: RunSessionOptions["model"];
   modelLabel: string;
   systemPrompt: string;
@@ -47,8 +62,6 @@ export interface TuiAppOptions {
   tools: ToolExecutor;
   /** Injectable so a test can drive the whole app against a fake, without a real pty. */
   terminal: Terminal;
-  /** Fixed up front (rather than left to `runSession` to generate) so the status strip can report it from the first frame. */
-  sessionId?: string;
   signal?: AbortSignal;
   /** Coerces a wizard-typed string the way `--answer key=value` always has. Defaults to identity. */
   coerceValue?: (raw: string) => unknown;
@@ -83,10 +96,11 @@ const RULE = "─".repeat(60);
 
 /** Runs `graph-agent tui` end to end and resolves once the session settles (an end event, or a genuine stop). */
 export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> {
-  const sessionId = options.sessionId ?? randomUUID().slice(0, 8);
+  const sessionId = options.start.kind === "resume" ? options.start.sessionId : randomUUID().slice(0, 8);
   const store = new SessionStore(options.paths, sessionId);
   const coerce = options.coerceValue ?? ((raw: string) => raw);
   const trailSize = options.trailSize ?? 5;
+  const graphLabel = options.start.kind === "run" ? options.start.graphLabel : "(resumed)";
 
   const tui = new TuiMainScreen(options.terminal);
   const transcript = new Container();
@@ -120,7 +134,7 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
 
   function refreshStatus(): void {
     if (!store.exists()) {
-      statusText.setText(`graph ${options.graphLabel} · model ${options.modelLabel} · session ${sessionId} · starting…`);
+      statusText.setText(`graph ${graphLabel} · model ${options.modelLabel} · session ${sessionId} · starting…`);
       tui.requestRender();
       return;
     }
@@ -134,7 +148,7 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
     );
     const at = meta.tokens.length > 0 ? meta.tokens.join(", ") : "-";
     statusText.setText(
-      `graph ${options.graphLabel} · ${meta.turns.length} turn(s) · cache ${usage.cacheRead}/${usage.input} · ` +
+      `graph ${graphLabel} · ${meta.turns.length} turn(s) · cache ${usage.cacheRead}/${usage.input} · ` +
         `revision ${Math.max(meta.revisions.length - 1, 0)} · at ${at} · session ${sessionId}`,
     );
     tui.requestRender();
@@ -219,35 +233,58 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
     tui.requestRender();
   };
 
+  // A resumed session's own transcript is not something Pi restores across a
+  // fresh process -- only the graph's own state (meta.turns, the activity
+  // trail) survives a process restart at all -- so this is a summary of what
+  // already happened, built from the same `TurnRecord`s the status strip's
+  // usage totals come from, not a replay of the original rich messages
+  // (issue #67). Seeded before `onReady`/`tui.start()` so a headless test can
+  // see it in the very first frame, the same as a real reattach would.
+  if (options.start.kind === "resume" && store.exists()) {
+    for (const turn of store.readMeta().turns) {
+      const line = `${turn.activityId}  ${turn.harness ?? ""}  ${turn.summary ?? ""}`.trim();
+      transcript.addChild(new Text(line));
+      pushTrail(line);
+    }
+    refreshStatus();
+  }
+
   options.onReady?.({ editor, root });
 
   tui.start();
   try {
-    // `runSession` calls `store.create()` synchronously before its first
-    // `await`, so by the time this returns a pending promise the session
-    // directory already exists -- the editor's `store.exists()` guard above
-    // only ever matters for a keystroke that arrives before `runSession` is
-    // even called, which cannot happen since `tui.start()` runs first.
-    return await runSession({
+    // `runSession`/`resumeSession` call `store.create()`/require the store to
+    // already exist synchronously before their first `await`, so by the time
+    // either returns a pending promise the session directory is settled --
+    // the editor's `store.exists()` guard above only ever matters for a
+    // keystroke that arrives before that call is even made, which cannot
+    // happen since `tui.start()` runs first.
+    const shared = {
       paths: options.paths,
       project: options.project,
-      graphPath: options.graphPath,
-      prompt: options.prompt,
-      name: options.name,
       model: options.model,
       systemPrompt: options.systemPrompt,
       streamFn: options.streamFn,
       tools: options.tools,
-      sessionId,
       signal: options.signal,
       onSessionReady: wireTranscript,
-      onActivity: (activity) => pushTrail(`${activity.activityId}  ${activity.harness}  ${activity.result.summary}`),
-      onProgress: (line) => {
+      onActivity: (activity: Parameters<NonNullable<RunSessionOptions["onActivity"]>>[0]) =>
+        pushTrail(`${activity.activityId}  ${activity.harness}  ${activity.result.summary}`),
+      onProgress: (line: string) => {
         if (line.trim().startsWith("note:")) pushTrail(line.trim());
         refreshStatus();
       },
       onWait,
-    });
+    };
+    return options.start.kind === "resume"
+      ? await resumeSession({ ...shared, sessionId })
+      : await runSession({
+          ...shared,
+          graphPath: options.start.graphPath,
+          prompt: options.start.prompt,
+          name: options.start.name,
+          sessionId,
+        });
   } finally {
     // `requestRender()` debounces: a run that settles inside that window (a
     // single fast real-model turn easily does) can leave its last frame --

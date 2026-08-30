@@ -7,8 +7,8 @@
  */
 import { spawn } from "node:child_process";
 import { layoutProcess } from "bpmn-auto-layout";
-import { checkSplice } from "./graph.ts";
-import { failed, ok, type Harness, type HarnessRegistry, type HarnessResult } from "./harness.ts";
+import { checkSplice, type HarnessIOContract } from "./graph.ts";
+import { failed, HARNESS_RESULT_BASE_FIELDS, ok, type Harness, type HarnessRegistry, type HarnessResult } from "./harness.ts";
 import type { PiSession, ToolCallRequest } from "./pi-session.ts";
 import type { ToolExecutor } from "./tool-executor.ts";
 import type { SessionStore } from "./session-store.ts";
@@ -30,6 +30,10 @@ const MAX_LINT_ATTEMPTS = 3;
 const AGENT_ROLES: Record<string, string> = {
   graph_architect:
     "You are drafting a replacement for the session graph below. " +
+    "Do not call any tool for this response, even if one is offered to you -- " +
+    "nothing in this drafting step can run a tool call, and one left " +
+    "unanswered wedges the rest of this session. Read the current graph from " +
+    "the block below; there is nothing to inspect on disk. " +
     "Respond with ONLY a complete, valid <bpmn:definitions> XML document -- " +
     "no markdown code fences, no prose before or after, nothing but the XML. " +
     "Define exactly one <bpmn:process> in it. What you return REPLACES the " +
@@ -41,7 +45,13 @@ const AGENT_ROLES: Record<string, string> = {
     "its exact id and its <bpmn:definitions id>; give every new element a " +
     "brand-new id -- nothing existing may be renamed or removed. Auto-layout " +
     "adds visual positioning afterward, so omit the <bpmndi:BPMNDiagram> " +
-    "section entirely; do not invent one.\n\n" +
+    "section entirely; do not invent one. Never give a plain activity or " +
+    "event more than one incoming <bpmn:sequenceFlow> -- that looks like a " +
+    "join but is not one, and bpmnlint's fake-join rule (an error) rejects a " +
+    "graph promoted to the shared library with one still in it. Where two " +
+    "paths need to reconverge (a loop-back alongside a fresh entry, say), " +
+    "route both into an <bpmn:exclusiveGateway> with a single outgoing flow " +
+    "to the shared target instead.\n\n" +
     "The <bpmn:definitions> root must declare exactly these namespaces, " +
     "copied verbatim -- inventing a different BPMN namespace URI is the most " +
     "common way this fails:\n" +
@@ -69,9 +79,21 @@ function stripCodeFence(text: string): string {
  * context window: the graph a splice targets is a single session graph, not
  * the whole shared library, so this is a safety margin against a pathological
  * one, not an expected truncation.
+ *
+ * 20,000 was that margin until session-craft.bpmn (issue #66): a session
+ * graph that links two called graphs at once -- craft_graph and
+ * pi_default_loop, rather than session-skeleton's one -- runs to over 41,000
+ * characters even before anything is spliced in. A real Haiku run against
+ * that truncated document reliably "reproduced" only the visible half,
+ * dropping pi_default_loop's own later activities wholesale and getting
+ * rejected as "removed or renamed" everything checkSplice never actually
+ * saw removed -- the redraft loop then burns its whole attempt budget
+ * against a fragment it was never physically shown enough of to preserve.
+ * Raised well past what composing two of today's bundled graphs needs, with
+ * headroom for a third, and still small next to Haiku's own context window.
  */
 const ROLES_NEEDING_CURRENT_GRAPH = new Set(["graph_architect"]);
-const MAX_CURRENT_GRAPH_CHARS = 20_000;
+const MAX_CURRENT_GRAPH_CHARS = 100_000;
 
 function currentGraphBlock(xml: string): string {
   const truncated = xml.length > MAX_CURRENT_GRAPH_CHARS;
@@ -133,7 +155,7 @@ export const HARNESS_IO: Record<string, { inputs?: string[]; headers?: string[];
   "agent:turn": {
     inputs: ["prompt", "lint_feedback"],
     headers: ["agent_role"],
-    outputs: ["stop_reason", "tool_calls", "usage", "text"],
+    outputs: ["stop_reason", "tool_calls", "usage", "text", "prompt"],
   },
   "agent:tool": {
     inputs: ["tool_call"],
@@ -174,6 +196,25 @@ export const HARNESS_IO: Record<string, { inputs?: string[]; headers?: string[];
     outputs: ["exit_code", "stdout", "stderr"],
   },
 };
+
+/**
+ * `HARNESS_IO` with `HARNESS_RESULT_BASE_FIELDS` folded into every type's
+ * `outputs` -- every `HarnessResult` carries those five fields regardless of
+ * which harness produced it (see `harness.ts`), so a `zeebe:output` naming
+ * one of them is always valid no matter what job type the activity names.
+ * `checkSplice`/`checkMigration` (`graph.ts`) validate a new activity's I/O
+ * bindings against exactly this (issue #65) -- computed here, once, rather
+ * than in `graph.ts` itself, since `graph.ts` has no dependency on the
+ * harness registry and importing `HARNESS_RESULT_BASE_FIELDS` there would
+ * still need this same union logic duplicated.
+ */
+export function harnessIOContract(): Record<string, HarnessIOContract> {
+  const contract: Record<string, HarnessIOContract> = {};
+  for (const [type, io] of Object.entries(HARNESS_IO)) {
+    contract[type] = { ...io, outputs: [...HARNESS_RESULT_BASE_FIELDS, ...(io.outputs ?? [])] };
+  }
+  return contract;
+}
 
 export interface HarnessDeps {
   pi: PiSession;
@@ -279,6 +320,15 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
       // model's full response as data (craft-graph.bpmn's drafted fragment,
       // say) reads this instead.
       text: outcome.text,
+      // The resolved input this turn actually used (before the role/graph/job
+      // blocks were layered on), or null when this turn continued an existing
+      // transcript instead of starting one. `resolveOutput` only ever sees a
+      // harness's own result fields, never other process variables directly
+      // (issue #66) -- so a graph that needs its *input* prompt visible again
+      // downstream, across a callActivity boundary sharedOutput does bridge,
+      // has to read it back from here rather than re-deriving it in a
+      // zeebe:output expression.
+      prompt: raw ?? null,
     });
   };
 
@@ -407,7 +457,7 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
         return failed("nothing to lint", { attempt });
       }
       try {
-        const splice = await checkSplice(deps.getGraph(), fragment, new Set(Object.keys(registry)));
+        const splice = await checkSplice(deps.getGraph(), fragment, new Set(Object.keys(registry)), harnessIOContract());
         if (splice.ok) {
           settle(true);
           return ok(`adds ${splice.added.length} element(s)`, { added: splice.added, attempt });
@@ -433,8 +483,17 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
       const fragment = String(context.input.fragment ?? "");
       if (!fragment) return failed("no fragment to apply");
       try {
-        const splice = await checkSplice(deps.getGraph(), fragment, new Set(Object.keys(registry)));
+        const splice = await checkSplice(deps.getGraph(), fragment, new Set(Object.keys(registry)), harnessIOContract());
         if (!splice.ok) return failed(splice.reason ?? "the fragment is not an additive splice");
+        // An empty splice.added is a valid additive splice (the model
+        // returned the graph it was shown, unchanged) -- but setGraph writes
+        // a new revision and forces a stop/resume re-entry regardless of
+        // whether anything actually changed (issue #45's mechanism). Applying
+        // that for a no-op churns the engine and inflates the revision
+        // history without ever giving the redraft loop anything new to run
+        // (issue #60), so this is the one case setGraph is deliberately not
+        // called for.
+        if (splice.added.length === 0) return ok("no new elements; graph unchanged", { added: [] });
         deps.setGraph(fragment, "graph:extend", splice.added);
         return ok(`spliced in ${splice.added.length} element(s)`, { added: splice.added });
       } catch (error) {

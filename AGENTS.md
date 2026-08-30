@@ -49,6 +49,14 @@ gets those checks for free. Author semantics by hand and regenerate the
 `<bpmndi:>` layout with `make layout` (`scripts/bpmn-tools.mjs`) rather than
 hand-writing coordinates.
 
+`make lint`'s bpmnlint pass forbids an implicit merge (bpmnlint's `fake-join`
+rule, an error): a plain activity or event with more than one incoming
+`<bpmn:sequenceFlow>` looks like a BPMN join but is not one -- this engine
+re-triggers it once per arriving token instead of waiting for all of them.
+Route two converging paths into an `<bpmn:exclusiveGateway>` with a single
+outgoing flow to the shared target instead; every `gw_*_entry` gateway in
+`workflows/*.bpmn` is that pattern.
+
 `docs/` is a small Jekyll site (`.github/workflows/docs.yml` builds and
 deploys it to GitHub Pages on push to `main`). Its screenshots
 (`docs/screenshots/*.png`) come from `scripts/screenshot-docs.mjs`, which
@@ -167,16 +175,18 @@ the same vocabulary up front (`jobTypesBlock`). Haiku used to write
 splice is now rejected and feeds back into the redraft loop instead of
 shipping silently.
 
-**What survives is a real type wired wrong.** `checkSplice` only checks that
-the type names a harness, not that the fragment's `ioMapping`/`taskHeaders`
-match what that harness reads. #40's own repro also passed `command` through
-`zeebe:ioMapping` (the `shell` harness reads `zeebe:taskHeaders`) and read
-back `exitCode` (it publishes `exit_code`) -- a fragment shaped exactly like
-that, but with the registered `shell` type, still lints clean today and still
-does nothing useful at runtime. So a `graph:lint` pass is evidence a
-fragment's job type is real, not evidence it is wired correctly -- check the
-fragment's inputs, outputs and headers against `docs/harnesses.md` before
-approving one.
+**#65 is fixed: a real type wired wrong is also rejected.** `checkSplice`
+now also validates a new activity's `zeebe:input`/`zeebe:taskHeaders`/
+`zeebe:output` bindings against `HARNESS_IO` (`harnessIOContract()` in
+`harnesses.ts`, threaded through as an optional parameter so `graph.ts`
+itself never depends on the harness registry). #40's own repro -- `command`
+passed through `zeebe:ioMapping` when the `shell` harness reads
+`zeebe:taskHeaders`, and `exitCode` read back instead of `exit_code` -- is
+rejected outright now, naming the wrong spelling so the redraft loop's
+`lint_feedback` has something concrete to fix. A `graph:lint` pass is now
+evidence a fragment is wired correctly, not just that its job type is real --
+what review at the approval gate is still for is whether the splice does the
+right thing, not whether it is plumbed correctly.
 
 ### Re-verifying a closed issue
 

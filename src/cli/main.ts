@@ -6,8 +6,9 @@ import { spawn } from "node:child_process";
 import { graphPath, startStudio } from "../studio/server.ts";
 import { resumeSession, runSession } from "../agent/runner.ts";
 import { ProcessTerminal } from "../tui/pi-bridge.ts";
-import { startTui } from "../tui/app.ts";
-import { firstActivity, withDefinitionsId } from "../agent/graph.ts";
+import { startTui, type TuiStart } from "../tui/app.ts";
+import { firstActivity, pendingGates, processId, withDefinitionsId, withProcessId } from "../agent/graph.ts";
+import { formFields } from "../tui/form-fields.ts";
 import { unlinkGraph } from "../agent/link.ts";
 import { lintBpmn } from "../agent/bpmn-lint.ts";
 import { createPiToolExecutor } from "../agent/tool-executor.ts";
@@ -291,6 +292,8 @@ interface RunFlags {
   steer: string[];
   followUp: string[];
   positionals: string[];
+  /** `tui --resume <id>` reattaches instead of starting a new session (issue #67). */
+  resume?: string;
 }
 
 /**
@@ -316,6 +319,7 @@ function runFlags(args: string[]): RunFlags {
       answer: { type: "string", multiple: true },
       steer: { type: "string", multiple: true },
       "follow-up": { type: "string", multiple: true },
+      resume: { type: "string" },
     },
     allowPositionals: true,
     strict: false,
@@ -329,6 +333,7 @@ function runFlags(args: string[]): RunFlags {
     steer: (values.steer as string[] | undefined) ?? [],
     followUp: (values["follow-up"] as string[] | undefined) ?? [],
     positionals: positionals.map(String),
+    ...(values.resume === undefined ? {} : { resume: String(values.resume) }),
   };
 }
 
@@ -401,9 +406,21 @@ export function boundedOnWait(answers: ScopedAnswers): (activityId: string) => R
     const count = (seen.get(activityId) ?? 0) + 1;
     seen.set(activityId, count);
     if (count > MAX_AUTO_ANSWERS_PER_ACTIVITY) {
+      // A scoped answer (`activity:key=value`) was aimed at this exact gate
+      // deliberately -- the cap firing means the graph keeps revisiting it,
+      // not that the payload leaked in from elsewhere, so "scope it" is a
+      // no-op restating what the user already did (issue #62). Only an
+      // unscoped answer, which is meant to apply wherever its key is asked
+      // for, gets that advice; a scoped one gets told the graph itself is
+      // the thing not terminating.
+      const scoped = answers.has(activityId);
       process.stderr.write(
-        `graph-agent: ${activityId} was auto-answered ${count - 1} times with the same payload; ` +
-          `scope your answer with --answer ${activityId}:key=value if it should not be replayed here.\n`,
+        scoped
+          ? `graph-agent: ${activityId} was auto-answered ${count - 1} times with the same payload; ` +
+              `the graph keeps revisiting this gate -- answer whatever ends the loop ` +
+              `(e.g. a 'done' or 'approved' field), or raise the cap.\n`
+          : `graph-agent: ${activityId} was auto-answered ${count - 1} times with the same payload; ` +
+              `scope your answer with --answer ${activityId}:key=value if it should not be replayed here.\n`,
       );
       return undefined;
     }
@@ -492,7 +509,7 @@ async function cmdRun(args: string[]): Promise<number> {
   );
 
   process.stdout.write(`\nsession ${result.sessionId}  ${result.outcome}  ${result.turns} turn(s)\n`);
-  reportWait(p, result.sessionId, result.outcome);
+  await reportWait(p, result.sessionId, result.outcome);
   if (result.error) {
     process.stderr.write(`error: ${result.error.message}\n`);
     return 1;
@@ -506,21 +523,37 @@ async function cmdTui(args: string[]): Promise<number> {
   const flags = runFlags(args);
   const project = projectId();
 
-  const graphFile = graphPath(p, flags.graph);
-  if (!graphFile) {
-    process.stderr.write(`graph-agent: no graph named '${flags.graph}' in ${p.workflowsDir}\n`);
-    return 1;
-  }
-
-  const prompt = flags.positionals.join(" ");
-  if (prompt) {
-    const first = await firstActivity(readFileSync(graphFile, "utf8"));
-    if (first?.type === "bpmn:UserTask") {
-      process.stderr.write(
-        `graph-agent: '${flags.graph}' starts on '${first.id}', a human gate that reads its own form, ` +
-          `not the initial prompt -- the tui will prompt for it interactively instead.\n`,
-      );
+  let start: TuiStart;
+  if (flags.resume !== undefined) {
+    // A resumed session already carries its own graph, model choice and
+    // prompt history -- `--graph`/a positional prompt would be meaningless
+    // here, unlike `graph-agent resume`, which never took a graph flag
+    // either (issue #67).
+    start = { kind: "resume", sessionId: flags.resume };
+  } else {
+    const graphFile = graphPath(p, flags.graph);
+    if (!graphFile) {
+      process.stderr.write(`graph-agent: no graph named '${flags.graph}' in ${p.workflowsDir}\n`);
+      return 1;
     }
+
+    const prompt = flags.positionals.join(" ");
+    if (prompt) {
+      const first = await firstActivity(readFileSync(graphFile, "utf8"));
+      if (first?.type === "bpmn:UserTask") {
+        process.stderr.write(
+          `graph-agent: '${flags.graph}' starts on '${first.id}', a human gate that reads its own form, ` +
+            `not the initial prompt -- the tui will prompt for it interactively instead.\n`,
+        );
+      }
+    }
+    start = {
+      kind: "run",
+      graphPath: graphFile,
+      graphLabel: flags.graph,
+      prompt,
+      ...(flags.name === undefined ? {} : { name: flags.name }),
+    };
   }
 
   let chosen;
@@ -531,24 +564,27 @@ async function cmdTui(args: string[]): Promise<number> {
     return 1;
   }
 
-  const result = await withInterrupt((signal) =>
-    startTui({
-      paths: p,
-      project,
-      graphPath: graphFile,
-      graphLabel: flags.graph,
-      prompt,
-      ...(flags.name === undefined ? {} : { name: flags.name }),
-      model: chosen.model,
-      modelLabel: chosen.label,
-      systemPrompt: "",
-      streamFn: chosen.streamFn,
-      tools: createPiToolExecutor(project),
-      terminal: new ProcessTerminal(),
-      coerceValue: coerceAnswerValue,
-      signal,
-    }),
-  );
+  let result;
+  try {
+    result = await withInterrupt((signal) =>
+      startTui({
+        paths: p,
+        project,
+        start,
+        model: chosen.model,
+        modelLabel: chosen.label,
+        systemPrompt: "",
+        streamFn: chosen.streamFn,
+        tools: createPiToolExecutor(project),
+        terminal: new ProcessTerminal(),
+        coerceValue: coerceAnswerValue,
+        signal,
+      }),
+    );
+  } catch (error) {
+    process.stderr.write(`graph-agent: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
 
   process.stdout.write(`\nsession ${result.sessionId}  ${result.outcome}  ${result.turns} turn(s)\n`);
   if (result.error) {
@@ -594,7 +630,7 @@ async function cmdResume(args: string[]): Promise<number> {
       }),
     );
     process.stdout.write(`\nsession ${result.sessionId}  ${result.outcome}  ${result.turns} turn(s)\n`);
-    reportWait(p, result.sessionId, result.outcome);
+    await reportWait(p, result.sessionId, result.outcome);
     if (result.error) {
       process.stderr.write(`error: ${result.error.message}\n`);
     }
@@ -605,15 +641,35 @@ async function cmdResume(args: string[]): Promise<number> {
   }
 }
 
-/** Names what a stopped run is parked on, so `resume` isn't a guessing game. */
-function reportWait(p: Paths, sessionId: string, outcome: string): void {
+/**
+ * Names what a stopped run is parked on, so `resume` isn't a guessing game --
+ * and, critically, only ever suggests `--answer` for a token that is actually
+ * a human gate. `meta.tokens` is every activity the token rests on (service
+ * tasks and callActivities mid-flight included, not just `bpmn:UserTask`s),
+ * and the naive `tokens[0]` used to suggest answering whichever of those
+ * happened to come first -- a `shell` step, a `callActivity`, anything --
+ * which `--answer` can never actually satisfy (issue #61). `pendingGates`
+ * (already used by the studio) does the real filtering, and its form schema
+ * (when the gate has one) names the actual field to answer rather than the
+ * literal placeholder `key`.
+ */
+export async function reportWait(p: Paths, sessionId: string, outcome: string): Promise<void> {
   if (outcome !== "stopped") return;
-  const tokens = new SessionStore(p, sessionId).readMeta().tokens;
-  if (tokens.length === 0) return;
-  process.stdout.write(
-    `waiting on ${tokens.join(", ")}\n` +
-      `resume with: graph-agent resume ${sessionId} --answer ${tokens[0]}:key=value\n`,
-  );
+  const store = new SessionStore(p, sessionId);
+  const meta = store.readMeta();
+  if (meta.tokens.length === 0) return;
+  process.stdout.write(`waiting on ${meta.tokens.join(", ")}\n`);
+
+  const xml = store.currentGraph();
+  const gates = xml ? await pendingGates(xml, meta.tokens) : [];
+  if (gates.length === 0) {
+    process.stdout.write(`nothing here is a human gate; resume with: graph-agent resume ${sessionId}\n`);
+    return;
+  }
+  for (const gate of gates) {
+    const key = gate.form ? (formFields(gate.form.schema, gate.name ?? gate.id)[0]?.key ?? "key") : "key";
+    process.stdout.write(`answer with: graph-agent resume ${sessionId} --answer ${gate.id}:${key}=value\n`);
+  }
 }
 
 function cmdLs(all: boolean): number {
@@ -724,7 +780,11 @@ async function cmdPromote(args: string[]): Promise<number> {
   const revisionXml = readFileSync(join(store.graphDir, revisionFiles[revisionIndex]!), "utf8");
 
   const { xml: unlinkedXml, unlinked } = await unlinkGraph(revisionXml);
-  const promotedXml = await withDefinitionsId(unlinkedXml, `Defs_${sanitizeId(name)}`);
+  const newProcessId = sanitizeId(name);
+  const promotedXml = await withProcessId(
+    await withDefinitionsId(unlinkedXml, `Defs_${newProcessId}`),
+    newProcessId,
+  );
 
   const lint = await lintBpmn(promotedXml);
   if (lint.errors > 0) {
@@ -742,11 +802,27 @@ async function cmdPromote(args: string[]): Promise<number> {
     );
     return 1;
   }
+  // calledElement names a *process*, not a file -- indexLibrary resolves a
+  // shared process id with last-write-wins, so two library files defining
+  // the same process silently make which one a callActivity actually
+  // reaches a function of directory order (issue #64).
+  if (!values.force) {
+    for (const { path: otherPath } of listBpmnFiles(p.workflowsDir)) {
+      if (otherPath === target) continue;
+      if ((await processId(readFileSync(otherPath, "utf8"))) === newProcessId) {
+        process.stderr.write(
+          `graph-agent: process id '${newProcessId}' is already used by ${otherPath}; ` +
+            `pass --force to promote anyway, or choose a different --as\n`,
+        );
+        return 1;
+      }
+    }
+  }
   if (existsSync(target)) copyFileSync(target, `${target}.bak`);
   writeFileSync(target, promotedXml);
 
   process.stdout.write(
-    `promoted revision ${revisionIndex} of ${sessionId} to ${target}\n` +
+    `promoted revision ${revisionIndex} of ${sessionId} to ${target}, callable as calledElement="${newProcessId}"\n` +
       (unlinked.length > 0 ? `unlinked (still callable via calledElement): ${unlinked.join(", ")}\n` : ""),
   );
   return 0;

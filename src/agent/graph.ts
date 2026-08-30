@@ -9,7 +9,7 @@ import { BpmnModdle } from "bpmn-moddle";
 import * as elements from "bpmn-elements";
 import { Serializer, TypeResolver } from "moddle-context-serializer";
 import zeebeDescriptor from "zeebe-bpmn-moddle/resources/zeebe.json" with { type: "json" };
-import { harnessOf, type ActivityLike } from "./zeebe.ts";
+import { activityProperties, harnessOf, ioMapping, type ActivityLike } from "./zeebe.ts";
 
 export const MODDLE_OPTIONS = { zeebe: zeebeDescriptor };
 
@@ -97,9 +97,16 @@ export async function firstActivity(xml: string): Promise<{ id: string; type: st
   for (const process of processes) {
     const all = flattenFlowElements(process.flowElements);
     const start = all.find((node) => node.$type === "bpmn:StartEvent");
-    const outgoing = (start as unknown as { outgoing?: Array<{ targetRef?: { id: string; $type: string } }> })
-      ?.outgoing;
-    const target = outgoing?.[0]?.targetRef;
+    const outgoing = (start as unknown as { outgoing?: Array<{ targetRef?: ModdleFlowElement }> })?.outgoing;
+    let target = outgoing?.[0]?.targetRef;
+    // A plain merge gateway (fake-join's replacement -- see scripts/bpmn-tools.mjs)
+    // is not a real "first stop": it exists only to make an implicit
+    // multi-incoming merge explicit, and unconditionally forwards to whatever
+    // is really first. Follow it (and any chain of them) rather than reporting
+    // the gateway itself, the same way a human reading the diagram would.
+    while (target?.$type === "bpmn:ExclusiveGateway" && (target.outgoing as unknown[] | undefined)?.length === 1) {
+      target = (target.outgoing as Array<{ targetRef?: ModdleFlowElement }>)[0]?.targetRef;
+    }
     if (target) return { id: target.id, type: target.$type };
   }
   return undefined;
@@ -115,6 +122,59 @@ export async function withDefinitionsId(xml: string, id: string): Promise<string
   const moddle = new BpmnModdle(MODDLE_OPTIONS);
   const { rootElement } = await moddle.fromXML(xml.trim());
   (rootElement as unknown as { id: string }).id = id;
+  const { xml: serialized } = await moddle.toXML(rootElement, { format: true });
+  return serialized;
+}
+
+/** The process a session actually runs, and the one `calledElement` should name -- `isExecutable="true"`. */
+function executableProcess(
+  rootElement: unknown,
+): { $type: string; id: string; flowElements?: unknown[]; [key: string]: unknown } | undefined {
+  const processes = (
+    (rootElement as { rootElements?: Array<{ $type: string; [key: string]: unknown }> }).rootElements ?? []
+  ).filter((el) => el.$type === "bpmn:Process") as Array<{ $type: string; id: string; [key: string]: unknown }>;
+  return processes.find((el) => el.isExecutable !== false) ?? processes[0];
+}
+
+/**
+ * Reads `<bpmn:process id>` for the executable process -- the id a
+ * `calledElement` names to reach it, as distinct from `<bpmn:definitions id>`
+ * (which recovery matches a session's snapshot on, not what `calledElement`
+ * ever refers to).
+ */
+export async function processId(xml: string): Promise<string | undefined> {
+  const moddle = new BpmnModdle(MODDLE_OPTIONS);
+  const { rootElement } = await moddle.fromXML(xml.trim());
+  return executableProcess(rootElement)?.id;
+}
+
+/**
+ * Rewrites `<bpmn:process id>` for the executable process, and every
+ * self-referential `calledElement` naming it. `calledElement` is a plain
+ * string attribute, not a reference moddle resolves by object identity the
+ * way `bpmndi:BPMNPlane`'s `bpmnElement` is -- serializing the diagram back
+ * out already picks up a changed process id there for free, but a
+ * self-recursive `callActivity` needs updating by hand.
+ *
+ * A graph promoted out of a session (`graph-agent promote`, issue #55) kept
+ * the session's own process id, so promoting two sessions produced two
+ * library files both defining the same process -- `calledElement` names a
+ * *process*, not a file, and `indexLibrary` resolves it with last-write-wins,
+ * so which of them a `callActivity` actually reaches became a function of
+ * directory order rather than of what the user asked for (issue #64).
+ */
+export async function withProcessId(xml: string, id: string): Promise<string> {
+  const moddle = new BpmnModdle(MODDLE_OPTIONS);
+  const { rootElement } = await moddle.fromXML(xml.trim());
+  const process = executableProcess(rootElement);
+  if (!process) throw new Error("no executable <bpmn:process> to rename");
+  const oldId = process.id;
+  process.id = id;
+  for (const element of flattenFlowElements((process.flowElements ?? []) as ModdleFlowElement[])) {
+    if (element.$type === "bpmn:CallActivity" && element.calledElement === oldId) {
+      element.calledElement = id;
+    }
+  }
   const { xml: serialized } = await moddle.toXML(rootElement, { format: true });
   return serialized;
 }
@@ -173,28 +233,99 @@ async function serviceTasks(xml: string): Promise<ActivityLike[]> {
  * it here would reject a splice for a job type problem that predates it.
  */
 /**
+ * A job type's I/O contract, in the same shape `HARNESS_IO`
+ * (`src/agent/harnesses.ts`) declares it: which `zeebe:input` `target`s the
+ * harness reads, which `zeebe:taskHeader`/`zeebe:properties` keys it reads,
+ * and which `zeebe:output` `source`s it may name. Passed in by the caller
+ * (`harnesses.ts`'s `graph:lint`/`graph:extend`, the studio's migration
+ * guard) rather than imported directly, the same way `knownJobTypes` already
+ * is -- `graph.ts` has no dependency on the harness registry, and importing
+ * `HARNESS_IO` from `harnesses.ts` (which itself imports `checkSplice` from
+ * here) would be circular. A caller that wants base result fields
+ * (`status`, `summary`, ...) accepted as valid outputs folds them into
+ * `outputs` itself before passing this in.
+ */
+export interface HarnessIOContract {
+  inputs?: string[];
+  headers?: string[];
+  outputs?: string[];
+}
+
+/**
  * Rejects a *new* service task (one in `addedIds`) whose `zeebe:taskDefinition
- * type` names no harness in `knownJobTypes`. Shared by `checkSplice` and
- * `checkMigration` -- both apply the same job-type contract, just to a
- * different notion of "new".
+ * type` names no harness in `knownJobTypes` -- or, when `harnessIO` names a
+ * contract for that type, whose `zeebe:input`/`zeebe:taskHeaders`/
+ * `zeebe:output` bindings do not match what the harness actually reads or
+ * publishes. Shared by `checkSplice` and `checkMigration` -- both apply the
+ * same contract, just to a different notion of "new".
+ *
+ * A registered-but-mis-wired type used to pass `checkSplice` outright: it
+ * names a real harness, so the job-type check alone had nothing to object
+ * to, and the mistake (`command` mapped through `zeebe:input` when `shell`
+ * reads it from `zeebe:taskHeaders`, say) surfaced only the next time the
+ * graph actually reached that activity -- by which point the session that
+ * spliced it in could be long closed (issue #65; issue #40 closed the same
+ * gap for the job type name itself).
  */
 async function checkJobTypes(
   nextXml: string,
   addedIds: ReadonlySet<string>,
   knownJobTypes: ReadonlySet<string>,
+  harnessIO?: Record<string, HarnessIOContract>,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   for (const task of await serviceTasks(nextXml)) {
     if (!addedIds.has(task.id)) continue;
     const jobType = harnessOf(task);
-    if (jobType !== undefined && knownJobTypes.has(jobType)) continue;
-    const valid = [...knownJobTypes].sort().join(", ");
-    return {
-      ok: false,
-      reason:
-        jobType === undefined
-          ? `${task.id} has no zeebe:taskDefinition type; valid job types are: ${valid}`
-          : `${task.id} names job type '${jobType}', which no harness handles; valid job types are: ${valid}`,
-    };
+    if (jobType === undefined || !knownJobTypes.has(jobType)) {
+      const valid = [...knownJobTypes].sort().join(", ");
+      return {
+        ok: false,
+        reason:
+          jobType === undefined
+            ? `${task.id} has no zeebe:taskDefinition type; valid job types are: ${valid}`
+            : `${task.id} names job type '${jobType}', which no harness handles; valid job types are: ${valid}`,
+      };
+    }
+
+    const contract = harnessIO?.[jobType];
+    if (!contract) continue;
+
+    const mapping = ioMapping(task);
+    for (const { target } of mapping.input) {
+      if (target === undefined || (contract.inputs ?? []).includes(target)) continue;
+      const valid = contract.inputs?.length ? contract.inputs.join(", ") : "no zeebe:input";
+      return {
+        ok: false,
+        reason: `${task.id} maps input '${target}', which '${jobType}' never reads -- valid zeebe:input targets: ${valid}`,
+      };
+    }
+
+    for (const key of Object.keys(activityProperties(task))) {
+      if ((contract.headers ?? []).includes(key)) continue;
+      const valid = contract.headers?.length ? contract.headers.join(", ") : "no zeebe:taskHeaders";
+      return {
+        ok: false,
+        reason: `${task.id} sets header '${key}', which '${jobType}' never reads -- valid zeebe:taskHeaders: ${valid}`,
+      };
+    }
+
+    for (const { source } of mapping.output) {
+      // `source` is a FEEL expression -- normally a bare field reference
+      // (`=exit_code`), but a graph is free to write a literal or a more
+      // complex one (pi-default-loop.bpmn's `llm_turn` resets `prompt` to
+      // `=null` once the seeded first turn has consumed it, deliberately not
+      // reading anything off the harness result at all). Only a bare
+      // identifier names a result field this check can actually verify;
+      // anything else is a FEEL expression this has no business evaluating.
+      const match = /^=(?!null$|true$|false$)([A-Za-z_][A-Za-z0-9_]*)$/.exec(source ?? "");
+      const field = match?.[1];
+      if (field === undefined || (contract.outputs ?? []).includes(field)) continue;
+      const valid = contract.outputs?.length ? contract.outputs.join(", ") : "none";
+      return {
+        ok: false,
+        reason: `${task.id} reads output '${field}', which '${jobType}' never publishes; valid outputs are: ${valid}`,
+      };
+    }
   }
   return { ok: true };
 }
@@ -203,6 +334,7 @@ export async function checkSplice(
   previousXml: string,
   nextXml: string,
   knownJobTypes?: ReadonlySet<string>,
+  harnessIO?: Record<string, HarnessIOContract>,
 ): Promise<SpliceCheck> {
   const before = await elementIds(previousXml);
   const after = await elementIds(nextXml);
@@ -217,7 +349,7 @@ export async function checkSplice(
     };
   }
   if (knownJobTypes) {
-    const jobTypes = await checkJobTypes(nextXml, new Set(added), knownJobTypes);
+    const jobTypes = await checkJobTypes(nextXml, new Set(added), knownJobTypes, harnessIO);
     if (!jobTypes.ok) return { ok: false, added, removed, reason: jobTypes.reason };
   }
   return { ok: true, added, removed };
@@ -257,6 +389,7 @@ export async function checkMigration(
   nextXml: string,
   live: ReadonlySet<string>,
   knownJobTypes?: ReadonlySet<string>,
+  harnessIO?: Record<string, HarnessIOContract>,
 ): Promise<MigrationCheck> {
   if ((await definitionsId(previousXml)) !== (await definitionsId(nextXml))) {
     return {
@@ -281,7 +414,7 @@ export async function checkMigration(
 
   if (knownJobTypes) {
     const added = new Set([...after].filter((id) => !before.has(id)));
-    const jobTypes = await checkJobTypes(nextXml, added, knownJobTypes);
+    const jobTypes = await checkJobTypes(nextXml, added, knownJobTypes, harnessIO);
     if (!jobTypes.ok) return { ok: false, removed: [], reason: jobTypes.reason };
   }
 

@@ -26,7 +26,7 @@ import {
   type Paths,
 } from "../agent/paths.ts";
 import { checkMigration, pendingGates } from "../agent/graph.ts";
-import { createHarnesses, type HarnessDeps } from "../agent/harnesses.ts";
+import { createHarnesses, harnessIOContract, type HarnessDeps } from "../agent/harnesses.ts";
 import type { GraphSummary, ProjectInfo, StudioEvent } from "./types.ts";
 
 /** The harness registry's own keys, for checkMigration's job-type contract -- no live deps are ever invoked here, only Object.keys(). */
@@ -43,6 +43,9 @@ const KNOWN_JOB_TYPES = new Set(
     }),
   ),
 );
+
+/** Same I/O contract `graph:lint`/`graph:extend` validate a splice against (issue #65) -- a human edit gets the same scrutiny. */
+const KNOWN_HARNESS_IO = harnessIOContract();
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -193,7 +196,7 @@ async function handle(
       const live = new Set([...meta.visited, ...meta.tokens]);
       let check;
       try {
-        check = await checkMigration(current, body.xml, live, KNOWN_JOB_TYPES);
+        check = await checkMigration(current, body.xml, live, KNOWN_JOB_TYPES, KNOWN_HARNESS_IO);
       } catch (error) {
         return sendJson(res, 400, { error: `not valid BPMN: ${error instanceof Error ? error.message : String(error)}` });
       }

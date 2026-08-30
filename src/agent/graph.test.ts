@@ -7,6 +7,7 @@ import {
   checkSplice,
   definitionsId,
   elementIds,
+  firstActivity,
   pendingGates,
   recoverWithGraph,
   stripEmbeddedSource,
@@ -182,6 +183,136 @@ describe("checkSplice with a known job-type set (issue #40)", () => {
   });
 });
 
+describe("checkSplice validates a new activity's I/O against a harness contract (issue #65)", () => {
+  const base = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="start" />
+  </bpmn:process>
+</bpmn:definitions>`;
+  const known = new Set(["shell"]);
+  // The exact contract shape harnesses.ts's harnessIOContract() would build for
+  // 'shell', minus the base result fields (irrelevant to this shell-shaped
+  // fixture, which only maps 'exit_code'/'command').
+  const shellIO = { shell: { headers: ["command", "fail_on_error"], outputs: ["exit_code", "stdout", "stderr"] } };
+
+  function withTask(ioMapping: string, headers = ""): string {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="start" />
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="t" />
+    <bpmn:serviceTask id="t">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="shell" />
+        ${headers}
+        ${ioMapping}
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="t" targetRef="end" />
+    <bpmn:endEvent id="end" />
+  </bpmn:process>
+</bpmn:definitions>`;
+  }
+
+  // issue #65's own repro: a registered job type ('shell'), wired the wrong
+  // way -- the command mapped through zeebe:input (shell reads it from
+  // zeebe:taskHeaders instead) and the exit status read back under the
+  // wrong name ('exitCode' rather than 'exit_code').
+  const miswired = withTask(
+    `<zeebe:ioMapping>
+      <zeebe:input source='="npm test"' target="command" />
+      <zeebe:output source="=exitCode" target="rc" />
+    </zeebe:ioMapping>`,
+  );
+
+  it("accepts a correctly wired activity", async () => {
+    const wired = withTask(
+      `<zeebe:ioMapping><zeebe:output source="=exit_code" target="rc" /></zeebe:ioMapping>`,
+      `<zeebe:taskHeaders><zeebe:header key="command" value="npm test" /></zeebe:taskHeaders>`,
+    );
+    const result = await checkSplice(base, wired, known, shellIO);
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects a zeebe:input mapped to a name the harness never reads", async () => {
+    const result = await checkSplice(base, miswired, known, shellIO);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/t maps input 'command'/);
+    expect(result.reason).toMatch(/'shell' never reads/);
+  });
+
+  it("rejects a zeebe:output reading a field the harness never publishes", async () => {
+    // The input mistake is fixed (moved to a header, where 'shell' actually
+    // reads it) so this isolates the *other* mistake -- the wrong output name.
+    const wrongOutputOnly = withTask(
+      `<zeebe:ioMapping><zeebe:output source="=exitCode" target="rc" /></zeebe:ioMapping>`,
+      `<zeebe:taskHeaders><zeebe:header key="command" value="npm test" /></zeebe:taskHeaders>`,
+    );
+    const result = await checkSplice(base, wrongOutputOnly, known, shellIO);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/t reads output 'exitCode'/);
+    expect(result.reason).toMatch(/valid outputs are: exit_code, stdout, stderr/);
+  });
+
+  it("rejects a zeebe:taskHeaders key the harness never reads", async () => {
+    const wrongHeader = withTask(
+      `<zeebe:ioMapping><zeebe:output source="=exit_code" target="rc" /></zeebe:ioMapping>`,
+      `<zeebe:taskHeaders><zeebe:header key="cmd" value="npm test" /></zeebe:taskHeaders>`,
+    );
+    const result = await checkSplice(base, wrongHeader, known, shellIO);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/t sets header 'cmd'/);
+  });
+
+  it("does not check I/O when no contract is given -- existing callers are unaffected", async () => {
+    const result = await checkSplice(base, miswired, known);
+    expect(result.ok).toBe(true);
+  });
+
+  it("does not re-validate an existing activity's I/O -- only newly added ones", async () => {
+    const result = await checkSplice(miswired, miswired, known, shellIO);
+    expect(result.ok).toBe(true);
+  });
+
+  it("skips a zeebe:output that is a FEEL literal or expression, not a bare field reference", async () => {
+    // pi-default-loop.bpmn's own llm_turn resets 'prompt' to '=null' once
+    // consumed -- a legitimate output binding this check has no business
+    // second-guessing, since it names no result field at all.
+    const literalOutput = withTask(
+      `<zeebe:ioMapping><zeebe:output source="=null" target="rc" /></zeebe:ioMapping>`,
+      `<zeebe:taskHeaders><zeebe:header key="command" value="npm test" /></zeebe:taskHeaders>`,
+    );
+    const result = await checkSplice(base, literalOutput, known, shellIO);
+    expect(result.ok).toBe(true);
+  });
+
+  it("the redraft loop can recover one mistake at a time, via lint_feedback's own shape", async () => {
+    // Round 1: both mistakes present -- rejected on the first one checked (input).
+    const round1 = await checkSplice(base, miswired, known, shellIO);
+    expect(round1.ok).toBe(false);
+    expect(round1.reason).toMatch(/'command'/);
+
+    // Round 2: the model "redrafts" from that feedback, fixing only the input
+    // mistake (moving 'command' to a header) -- the output mistake remains.
+    const round2Fragment = withTask(
+      `<zeebe:ioMapping><zeebe:output source="=exitCode" target="rc" /></zeebe:ioMapping>`,
+      `<zeebe:taskHeaders><zeebe:header key="command" value="npm test" /></zeebe:taskHeaders>`,
+    );
+    const round2 = await checkSplice(base, round2Fragment, known, shellIO);
+    expect(round2.ok).toBe(false);
+    expect(round2.reason).toMatch(/'exitCode'/);
+
+    // Round 3: both fixed -- accepted.
+    const round3Fragment = withTask(
+      `<zeebe:ioMapping><zeebe:output source="=exit_code" target="rc" /></zeebe:ioMapping>`,
+      `<zeebe:taskHeaders><zeebe:header key="command" value="npm test" /></zeebe:taskHeaders>`,
+    );
+    const round3 = await checkSplice(base, round3Fragment, known, shellIO);
+    expect(round3.ok).toBe(true);
+  });
+});
+
 describe("checkMigration (issue #46)", () => {
   it("accepts deleting an element the token has never reached, unlike checkSplice", async () => {
     const withoutGate = v1.replace('<userTask id="gate" name="await turn" />', "");
@@ -313,5 +444,97 @@ describe("elementIds", () => {
 describe("toSourceContext", () => {
   it("keys the context on the definitions id, which recovery matches on", async () => {
     expect((await toSourceContext(v1)).id).toBe("Defs_session");
+  });
+});
+
+describe("firstActivity sees through a plain merge gateway (issue: forbid implicit merges)", () => {
+  const DEFS =
+    'xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"';
+
+  it("reports the real first stop, not the merge gateway placed in front of it", async () => {
+    // The merging-exclusive-gateway pattern this project now requires instead
+    // of an implicit multi-incoming merge (bpmnlint's fake-join, an error):
+    // start and a loop-back both feed the gateway, which forwards
+    // unconditionally to the human gate. A caller asking "does this graph's
+    // first stop need an interactive answer" should see the gate, not the
+    // gateway in front of it.
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions id="Defs_1" ${DEFS}>
+  <process id="p" isExecutable="true">
+    <startEvent id="start">
+      <outgoing>f1</outgoing>
+    </startEvent>
+    <sequenceFlow id="f1" sourceRef="start" targetRef="gw_entry" />
+    <exclusiveGateway id="gw_entry">
+      <incoming>f1</incoming>
+      <incoming>loop_back</incoming>
+      <outgoing>f2</outgoing>
+    </exclusiveGateway>
+    <sequenceFlow id="f2" sourceRef="gw_entry" targetRef="gate" />
+    <userTask id="gate">
+      <incoming>f2</incoming>
+      <outgoing>f3</outgoing>
+    </userTask>
+    <sequenceFlow id="f3" sourceRef="gate" targetRef="end" />
+    <sequenceFlow id="loop_back" sourceRef="gate" targetRef="gw_entry" />
+    <endEvent id="end" />
+  </process>
+</definitions>`;
+
+    expect(await firstActivity(xml)).toEqual({ id: "gate", type: "bpmn:UserTask" });
+  });
+
+  it("follows a chain of more than one merge gateway", async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions id="Defs_1" ${DEFS}>
+  <process id="p" isExecutable="true">
+    <startEvent id="start">
+      <outgoing>f1</outgoing>
+    </startEvent>
+    <sequenceFlow id="f1" sourceRef="start" targetRef="gw_a" />
+    <exclusiveGateway id="gw_a">
+      <incoming>f1</incoming>
+      <outgoing>f2</outgoing>
+    </exclusiveGateway>
+    <sequenceFlow id="f2" sourceRef="gw_a" targetRef="gw_b" />
+    <exclusiveGateway id="gw_b">
+      <incoming>f2</incoming>
+      <outgoing>f3</outgoing>
+    </exclusiveGateway>
+    <sequenceFlow id="f3" sourceRef="gw_b" targetRef="gate" />
+    <userTask id="gate">
+      <incoming>f3</incoming>
+    </userTask>
+  </process>
+</definitions>`;
+
+    expect(await firstActivity(xml)).toEqual({ id: "gate", type: "bpmn:UserTask" });
+  });
+
+  it("does not follow a genuine decision gateway (more than one outgoing)", async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions id="Defs_1" ${DEFS}>
+  <process id="p" isExecutable="true">
+    <startEvent id="start">
+      <outgoing>f1</outgoing>
+    </startEvent>
+    <sequenceFlow id="f1" sourceRef="start" targetRef="gw_decide" />
+    <exclusiveGateway id="gw_decide">
+      <incoming>f1</incoming>
+      <outgoing>f2</outgoing>
+      <outgoing>f3</outgoing>
+    </exclusiveGateway>
+    <sequenceFlow id="f2" sourceRef="gw_decide" targetRef="a" />
+    <sequenceFlow id="f3" sourceRef="gw_decide" targetRef="b" />
+    <userTask id="a">
+      <incoming>f2</incoming>
+    </userTask>
+    <userTask id="b">
+      <incoming>f3</incoming>
+    </userTask>
+  </process>
+</definitions>`;
+
+    expect(await firstActivity(xml)).toEqual({ id: "gw_decide", type: "bpmn:ExclusiveGateway" });
   });
 });

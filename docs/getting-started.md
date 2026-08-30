@@ -342,9 +342,27 @@ would from another terminal, since it goes through the same
 `graph-agent run` is unchanged: non-interactive, scriptable, what CI uses.
 The TUI is a new command, not a flag on `run`.
 
+A session the TUI (or anything else) left parked reattaches with
+`--resume <session-id>` instead of `--graph`/a prompt -- a resumed session
+already has both ([#67](https://github.com/datakurre/graph-agent/issues/67)):
+
+```
+graph-agent tui --resume 61801712 --model anthropic/claude-haiku-4-5
+```
+
+This is `resumeSession`, the same as `graph-agent resume 61801712`, just
+driven from the terminal instead of `--answer`. The screen opens already
+showing what happened before -- the prior activity trail, seeded from
+`meta.turns` rather than replayed live (Pi's own transcript is scoped to one
+process's lifetime, not persisted across a restart, so this is a summary of
+what ran, not the original messages) -- and whatever the session is still
+parked on gets prompted for immediately, the same `onWait` seam a fresh run
+uses, since a resumed engine re-announces its own postponed activity as soon
+as it resumes.
+
 ## The bundled graphs
 
-`make init` seeds five graphs. All five run:
+`make init` seeds six graphs. All six run:
 
 | Graph | What it is |
 |---|---|
@@ -353,6 +371,7 @@ The TUI is a new command, not a flag on `run`.
 | `shell-demo` | one Pi turn paired with a deterministic `shell` step |
 | `craft-graph` | drafts a BPMN fragment and splices it into the running session |
 | `session-skeleton` | asks for an intent, then calls `craft-graph` |
+| `session-craft` | the vision's own sentence as one graph: a prompt goes straight into `craft-graph`, which builds the steps that follow and runs them in the same invocation, falling back to `pi-default-loop` when nothing was crafted ([#66](https://github.com/datakurre/graph-agent/issues/66)) -- opt-in via `--graph session-craft`, not (yet) the default |
 
 ### Extending a graph from inside a session
 
@@ -415,7 +434,74 @@ parks, which is how an unrelated payload (say, the intent that started the
 session) used to get fed to an approval gate it was never meant to answer
 ([#44](https://github.com/datakurre/graph-agent/issues/44)).
 
-### Review an approved fragment yourself
+`session-craft` runs the same loop as `session-skeleton`, but crafts first
+and only falls back to a plain Pi turn when nothing was crafted -- so a
+prompt goes straight into `craft-graph` with no gate in front of it at all:
+
+```
+$ graph-agent run "Add a shell task that echoes hello after the start event" \
+    --graph session-craft --model anthropic/claude-haiku-4-5
+  draft_fragment  agent:turn  ```xml <?xml version="1.0" ...
+  layout_fragment  graph:layout  laid out
+  lint_fragment  graph:lint  adds 2 element(s)
+
+session 31b2d5d0  stopped  1 turn(s)
+waiting on craft, lint_fragment, gw_lint, review_fragment
+answer with: graph-agent resume 31b2d5d0 --answer review_fragment:approval=value
+```
+
+Approving it routes straight past the fallback -- `gw_crafted` sees
+`extend_status` and takes `crafted_ok`, not `run_default` -- and parks on
+the next lap's own intent gate:
+
+```
+$ graph-agent resume 31b2d5d0 --answer review_fragment:approval=apply \
+    --model anthropic/claude-haiku-4-5
+  apply_extension  graph:extend  spliced in 2 element(s)
+    note: graph revision 1 applied, resuming
+
+session 31b2d5d0  stopped  1 turn(s)
+waiting on await_intent
+answer with: graph-agent resume 31b2d5d0 --answer await_intent:intent=value
+```
+
+*Rejecting* a lap is what exercises the fallback: with nothing crafted,
+`gw_crafted` takes `run_default` into `pi-default-loop` instead, which picks
+up that lap's own prompt as a normal Pi turn -- tool calls and all -- rather
+than the plain end-to-end draft/lint/review loop above:
+
+```
+$ graph-agent resume 31b2d5d0 \
+    --answer await_intent:intent="Add a service task that logs a message" \
+    --answer await_intent:session_done=false --model anthropic/claude-haiku-4-5
+  draft_fragment  agent:turn  ```xml <?xml version="1.0" ...
+  ...
+session 31b2d5d0  stopped  2 turn(s)
+waiting on craft, back_to_craft, lint_fragment, gw_lint, review_fragment
+
+$ graph-agent resume 31b2d5d0 --answer review_fragment:approval=reject \
+    --model anthropic/claude-haiku-4-5
+  inject_pending  agent:steer  nothing queued
+  llm_turn  agent:turn  I'd be happy to help you add a service task...
+  drain_followup  agent:follow-up  no follow-up
+
+session 31b2d5d0  stopped  3 turn(s)
+waiting on run_default, gw_craft_done, gw_more, await_intent
+```
+
+Getting this far took two real-model-shaped bugs, both fixed and covered by
+`workflows/workflows.test.ts` and `src/agent/engine.test.ts`: a seed
+variable like the session's own `prompt` is invisible once a fallback
+`callActivity` reaches a *different* linked process (`craft-graph`'s
+`draft_fragment` now republishes its own resolved prompt as an output for
+exactly this reason), and a gateway back in the calling process cannot see
+a value a called process's own harness set unless the calling
+`callActivity` carries its own `zeebe:output` naming it (`session-craft.bpmn`'s
+`craft` does, for `extend_status`) -- see
+[Variables across a callActivity](harnesses.html#variables-across-a-callactivity)
+for why both are true.
+
+### What lint checks, and what review is still for
 
 `graph:lint` verifies that a fragment is valid BPMN, an *additive* splice, and
 that every new activity's `zeebe:taskDefinition type` names a harness that
@@ -424,8 +510,9 @@ front, so a run like the one above no longer invents a plausible-looking type
 such as `shell:exec` -- lint rejects it and the redraft loop gets a chance to
 correct it ([#40](https://github.com/datakurre/graph-agent/issues/40)).
 
-What lint does **not** check is a *real* job type wired to the wrong
-inputs, outputs or headers. A model could just as easily write:
+Lint now also checks a *real* job type wired to the wrong inputs, outputs or
+headers ([#65](https://github.com/datakurre/graph-agent/issues/65)). A model
+that writes
 
 ```xml
 <zeebe:taskDefinition type="shell" />
@@ -433,15 +520,18 @@ inputs, outputs or headers. A model could just as easily write:
 <zeebe:output source="=exitCode" target="test_exit_code" />
 ```
 
-`shell` is a real, registered job type, so lint reports `adds 2 element(s)`
-and the splice is applied. But `shell` takes its command from
-`zeebe:taskHeaders`, not `ioMapping`, and its output is `exit_code`, not
-`exitCode` -- so the command header is empty and `test_exit_code` never gets
-set. This only surfaces when something actually runs the extended graph. Read
-[the harness reference](harnesses.html) for each job type's real inputs,
-outputs and headers, and check the fragment against it at the
-`review_fragment` gate before approving -- lint checking "additive, and a
-registered job type" is not the same as lint checking "will run correctly".
+is rejected before it ever applies: `shell` is a real, registered job type,
+but it takes its command from `zeebe:taskHeaders`, not `ioMapping`, and its
+output is `exit_code`, not `exitCode` -- lint's rejection names both mistakes,
+by the exact wrong spelling used, so the redraft loop's `lint_feedback` has
+something concrete to fix. Read [the harness reference](harnesses.html) for
+each job type's real inputs, outputs and headers.
+
+What lint still cannot check -- and what review at the `review_fragment` gate
+is for -- is whether the splice does the *right thing*: a correctly wired
+`shell` step running the wrong command is plumbed perfectly and still wrong.
+"Additive, a registered job type, and correctly wired" is not the same as
+"does what was asked".
 
 ## Promoting a session's graph back to the library
 
@@ -456,13 +546,13 @@ its own, callable graph instead
 
 ```
 $ graph-agent promote <session> --as my-graph
-promoted revision 3 of <session> to /.../graph-agent/workflows/my-graph.bpmn
+promoted revision 3 of <session> to /.../graph-agent/workflows/my-graph.bpmn, callable as calledElement="my_graph"
 unlinked (still callable via calledElement): craft_graph
 ```
 
 `--as <name>` is required -- there is no good default name for what is, after
 all, a naming decision. `--revision <n>` picks a revision other than the
-latest. Two things happen before the file is written:
+latest. Three things happen before the file is written:
 
 - **Unlinking.** Every process `linkGraph` inlined at session start (the
   non-executable ones) is dropped; a `callActivity` pointing at one, like
@@ -472,6 +562,16 @@ latest. Two things happen before the file is written:
   called.
 - **A fresh `<bpmn:definitions id>`.** A session pins its id for recovery, so
   reusing it verbatim risks a future session colliding with this one's.
+- **A fresh `<bpmn:process id>`, normalised from `--as`.** `calledElement`
+  names a *process*, not a file, and the library resolves a shared process id
+  with last-write-wins -- so a graph promoted under its source session's own
+  (unchanged) process id used to collide with every other graph promoted from
+  a session with the same shape, silently deciding which one a `callActivity`
+  actually reached by directory order rather than by name
+  ([#64](https://github.com/datakurre/graph-agent/issues/64)). The line above
+  reports the id to write into a `calledElement`; promoting into one already
+  used by a *different* library file is refused the same way an existing
+  filename is, with the same `--force`-and-back-up affordance.
 
 The result is validated with the same bpmnlint check `make lint-bpmn` runs;
 a graph that would fail it is not written, and the error names why.

@@ -5,7 +5,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { installEpipeGuard, parseAnswers, answersFor, boundedOnWait } from "./main.ts";
+import { installEpipeGuard, parseAnswers, answersFor, boundedOnWait, reportWait } from "./main.ts";
 import { ensurePaths, paths as resolvePaths } from "../agent/paths.ts";
 import { SessionStore } from "../agent/session-store.ts";
 
@@ -182,9 +182,7 @@ describe("--answer scoping (issue #44)", () => {
   });
 
   describe("boundedOnWait", () => {
-    it("answers the same activity up to the cap, then reports it and leaves the gate parked", () => {
-      const answers = parseAnswers(["x=1"]);
-      const onWait = boundedOnWait(answers);
+    function captureStderr(fn: () => void): string {
       const chunks: string[] = [];
       const original = process.stderr.write.bind(process.stderr);
       process.stderr.write = ((chunk: string) => {
@@ -192,14 +190,42 @@ describe("--answer scoping (issue #44)", () => {
         return true;
       }) as typeof process.stderr.write;
       try {
+        fn();
+      } finally {
+        process.stderr.write = original;
+      }
+      return chunks.join("");
+    }
+
+    it("an unscoped answer hits the cap, then reports it and leaves the gate parked (advises scoping)", () => {
+      const answers = parseAnswers(["x=1"]);
+      const onWait = boundedOnWait(answers);
+      const output = captureStderr(() => {
         for (let i = 0; i < 5; i++) {
           expect(onWait("gate")).toEqual({ x: 1 });
         }
         expect(onWait("gate")).toBeUndefined();
-      } finally {
-        process.stderr.write = original;
-      }
-      expect(chunks.join("")).toMatch(/gate was auto-answered 5 times/);
+      });
+      expect(output).toMatch(/gate was auto-answered 5 times/);
+      // The payload might have leaked in from a gate it was never meant for --
+      // scoping it is real, actionable advice here.
+      expect(output).toMatch(/scope your answer/);
+    });
+
+    it("a scoped answer hits the cap too, but is never told to scope advice it already followed (issue #62)", () => {
+      const answers = parseAnswers(["gate:x=1"]);
+      const onWait = boundedOnWait(answers);
+      const output = captureStderr(() => {
+        for (let i = 0; i < 5; i++) {
+          expect(onWait("gate")).toEqual({ x: 1 });
+        }
+        expect(onWait("gate")).toBeUndefined();
+      });
+      expect(output).toMatch(/gate was auto-answered 5 times/);
+      // The user already aimed this at "gate" deliberately -- the graph
+      // itself is what is not terminating, not a misdirected payload.
+      expect(output).not.toMatch(/scope your answer/);
+      expect(output).toMatch(/keeps revisiting/);
     });
 
     it("counts each activity id on its own budget", () => {
@@ -207,6 +233,90 @@ describe("--answer scoping (issue #44)", () => {
       const onWait = boundedOnWait(answers);
       for (let i = 0; i < 5; i++) onWait("a");
       expect(onWait("b")).toEqual({ x: 1 });
+    });
+  });
+
+  describe("reportWait suggests only real human gates (issue #61)", () => {
+    const NS =
+      'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"';
+
+    // A shell service task (never answerable by --answer) and a callActivity
+    // (also never answerable) alongside the one real human gate -- the same
+    // mix issue #61's own repro saw: `waiting on shell_ls, gw_more,
+    // await_intent`, with the naive `tokens[0]` naming the unanswerable one.
+    const graph = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_wait_test" ${NS}>
+  <bpmn:process id="wait_test" isExecutable="true">
+    <bpmn:extensionElements>
+      <zeebe:userTaskForm id="gate_form">{"components":[{"label":"Reason","type":"textfield","key":"reason","id":"reason"}]}</zeebe:userTaskForm>
+    </bpmn:extensionElements>
+    <bpmn:startEvent id="start" />
+    <bpmn:serviceTask id="shell_ls" name="List">
+      <bpmn:extensionElements><zeebe:taskDefinition type="shell" /></bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:callActivity id="craft" name="Craft" calledElement="other" />
+    <bpmn:userTask id="gate" name="Approve?">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:formDefinition formId="gate_form" />
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:endEvent id="end" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+    function sessionParkedOn(tokens: string[]): { paths: ReturnType<typeof ensurePaths>; sessionId: string } {
+      const home = mkdtempSync(join(tmpdir(), "graph-agent-reportwait-"));
+      const paths = ensurePaths(
+        resolvePaths({ XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") } as NodeJS.ProcessEnv),
+      );
+      const store = new SessionStore(paths, "s1");
+      store.create("/tmp/some-project");
+      store.appendGraph(graph, "started", []);
+      store.update((meta) => {
+        meta.tokens = tokens;
+      });
+      return { paths, sessionId: store.id };
+    }
+
+    async function capturedStdout(fn: () => Promise<void>): Promise<string> {
+      const chunks: string[] = [];
+      const original = process.stdout.write.bind(process.stdout);
+      process.stdout.write = ((chunk: string) => {
+        chunks.push(String(chunk));
+        return true;
+      }) as typeof process.stdout.write;
+      try {
+        await fn();
+      } finally {
+        process.stdout.write = original;
+      }
+      return chunks.join("");
+    }
+
+    it("names the human gate, not the service task or callActivity that happen to come first", async () => {
+      const { paths, sessionId } = sessionParkedOn(["shell_ls", "craft", "gate"]);
+      const output = await capturedStdout(() => reportWait(paths, sessionId, "stopped"));
+
+      expect(output).toContain("waiting on shell_ls, craft, gate");
+      expect(output).toContain(`answer with: graph-agent resume ${sessionId} --answer gate:reason=value`);
+      expect(output).not.toContain("--answer shell_ls");
+      expect(output).not.toContain("--answer craft");
+    });
+
+    it("suggests no --answer at all when nothing waiting is a human gate", async () => {
+      const { paths, sessionId } = sessionParkedOn(["shell_ls", "craft"]);
+      const output = await capturedStdout(() => reportWait(paths, sessionId, "stopped"));
+
+      expect(output).toContain("waiting on shell_ls, craft");
+      expect(output).not.toContain("--answer");
+      expect(output).toContain(`graph-agent resume ${sessionId}`);
+    });
+
+    it("says nothing at all for an outcome other than 'stopped'", async () => {
+      const { paths, sessionId } = sessionParkedOn(["gate"]);
+      const output = await capturedStdout(() => reportWait(paths, sessionId, "completed"));
+      expect(output).toBe("");
     });
   });
 
@@ -326,8 +436,26 @@ describe("--answer scoping (issue #44)", () => {
       const { stdout, stderr, code } = runCli(env, ["run", "--graph", "loop_gate", "--dry-run", "--answer", "key=hello"]);
       // Bounded and reported, not an infinite loop burning turns forever.
       expect(stderr).toMatch(/gate was auto-answered 5 times/);
+      expect(stderr).toMatch(/scope your answer/);
       expect(stdout).toContain("stopped");
       expect(stdout).toContain("waiting on gate");
+      expect(code).toBe(0);
+    });
+
+    it("caps a scoped answer too, without the (already-followed) advice to scope it (issue #62)", () => {
+      const { env } = project();
+      const { stdout, stderr, code } = runCli(env, [
+        "run",
+        "--graph",
+        "loop_gate",
+        "--dry-run",
+        "--answer",
+        "gate:key=hello",
+      ]);
+      expect(stderr).toMatch(/gate was auto-answered 5 times/);
+      expect(stderr).not.toMatch(/scope your answer/);
+      expect(stderr).toMatch(/keeps revisiting/);
+      expect(stdout).toContain("stopped");
       expect(code).toBe(0);
     });
   });
@@ -472,10 +600,67 @@ describe("graph-agent promote (issue #55)", () => {
     expect(xml).toContain('calledElement="promote_callee"');
     expect(xml).not.toContain("Defs_promote_caller\"");
     expect(xml).toContain('id="Defs_promoted_caller"');
+    // Issue #64: the process id itself is rewritten too, not just the
+    // definitions id -- otherwise this and the source graph both define a
+    // process called "promote_caller", and calledElement (which names a
+    // process, not a file) resolves to whichever the library indexes last.
+    expect(xml).toContain('<bpmn:process id="promoted_caller"');
+    expect(promoted.stdout).toContain('calledElement="promoted_caller"');
 
     // Runs as a fresh session, re-linking promote_callee on its own.
     const rerun = runCli(env, ["run", "--graph", "promoted_caller", "--dry-run"]);
     expect(rerun.stdout).toContain("completed");
+  }, 20000);
+
+  it("promotes the same session twice under two names without a process id collision (issue #64)", () => {
+    const { env, workflowsDir } = project();
+    const first = runCli(env, ["run", "--graph", "promote_caller", "--dry-run"]);
+    const sessionId = sessionIdOf(first.stdout);
+
+    const p1 = runCli(env, ["promote", sessionId, "--as", "converged"]);
+    expect(p1.code).toBe(0);
+    const p2 = runCli(env, ["promote", sessionId, "--as", "converged2"]);
+    expect(p2.code).toBe(0);
+
+    const xml1 = readFileSync(join(workflowsDir, "converged.bpmn"), "utf8");
+    const xml2 = readFileSync(join(workflowsDir, "converged2.bpmn"), "utf8");
+    expect(xml1).toContain('<bpmn:process id="converged"');
+    expect(xml2).toContain('<bpmn:process id="converged2"');
+
+    // A third graph calling "converged2" by process id reaches that one
+    // specifically -- not whichever the library happens to index last.
+    const thirdGraph = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_third" ${NS}>
+  <bpmn:process id="third" isExecutable="true">
+    <bpmn:startEvent id="t_start"><bpmn:outgoing>tf1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="tf1" sourceRef="t_start" targetRef="call2" />
+    <bpmn:callActivity id="call2" calledElement="converged2">
+      <bpmn:incoming>tf1</bpmn:incoming><bpmn:outgoing>tf2</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:sequenceFlow id="tf2" sourceRef="call2" targetRef="t_end" />
+    <bpmn:endEvent id="t_end"><bpmn:incoming>tf2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+    writeFileSync(join(workflowsDir, "third.bpmn"), thirdGraph);
+    const rerun = runCli(env, ["run", "--graph", "third", "--dry-run"]);
+    expect(rerun.stdout).toContain("completed");
+  }, 20000);
+
+  it("refuses a process id already used by a different library file, without --force (issue #64)", () => {
+    const { env } = project();
+    const first = runCli(env, ["run", "--graph", "promote_caller", "--dry-run"]);
+    const sessionId = sessionIdOf(first.stdout);
+
+    // "promote-callee" is a different *file* from the existing
+    // "promote_callee.bpmn" (so the file-existence check does not fire
+    // first), but --as normalises '-' to '_' the same way `graph-agent
+    // promote`'s own process id does -- both name the same process.
+    const collision = runCli(env, ["promote", sessionId, "--as", "promote-callee"]);
+    expect(collision.code).not.toBe(0);
+    expect(collision.stderr).toMatch(/process id 'promote_callee' is already used/);
+
+    const withForce = runCli(env, ["promote", sessionId, "--as", "promote-callee", "--force"]);
+    expect(withForce.code).toBe(0);
   }, 20000);
 
   it("requires --as", () => {

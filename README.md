@@ -70,16 +70,20 @@ graphs, and `shell-demo`, drive tool calls, parallel ones included.
 verified end to end against real Haiku, approval gate and all -- so the agent
 really does rewrite its own control flow mid-session.
 
-Two things to know. `graph:lint` checks that a fragment is valid, additive,
-and that every new activity's `zeebe:taskDefinition type` names a harness that
-exists -- but not that a *real* job type is wired to the right inputs, outputs
-and headers, so an approved splice can still be inert until something runs it
-([#40](https://github.com/datakurre/graph-agent/issues/40)) -- review the
-fragment at the approval gate. And `init` never overwrites your graph library
-without `--refresh`, so a stale library copy can predate a fix upstream
+One thing to know: `init` never overwrites your graph library without
+`--refresh`, so a stale library copy can predate a fix upstream
 ([#35](https://github.com/datakurre/graph-agent/issues/35)) -- run
 `graph-agent init --refresh`, or diff `workflows/` against `graph-agent
 where`'s graphs directory, before concluding a graph is still broken.
+
+`graph:lint` checks that a fragment is valid and additive, that every new
+activity's `zeebe:taskDefinition type` names a real harness, *and* that its
+`zeebe:input`/`zeebe:taskHeaders`/`zeebe:output` bindings match what that
+harness actually reads and publishes
+([#65](https://github.com/datakurre/graph-agent/issues/65)) -- an approved
+splice is wired correctly or it is rejected with a redraftable reason before
+it ever applies. What review at the approval gate is still for: whether the
+splice does the *right thing*, not whether it is plumbed correctly.
 
 (Under Nix: `nix develop --command make <target>`.)
 
@@ -99,6 +103,11 @@ this way; type an answer per form field and press enter. Bare text queues as
 a steering message once a turn is under way; `/follow <text>` queues a
 follow-up instead. `run` stays exactly as it is -- non-interactive, scriptable,
 what CI uses.
+
+A session that parked -- on a gate it declined, on a Ctrl-C, on anything else
+that stopped it -- reattaches with `graph-agent tui --resume <session-id>`,
+no `--graph`/prompt needed: it opens straight onto the prior transcript and
+whatever it is still waiting on ([#67](https://github.com/datakurre/graph-agent/issues/67)).
 
 ## Studio
 
