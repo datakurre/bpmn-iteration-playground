@@ -426,6 +426,17 @@ $ graph-agent run --graph session-skeleton \
 session 1a9e3cfc  completed  1 turn(s)
 ```
 
+The same stop/resume mechanism also fires for a revision this run did *not*
+cause itself -- a studio edit saved to the same session's graph while
+`run`/`resume` is still driving it ([#75](https://github.com/datakurre/graph-agent/issues/75)).
+It is picked up at the next activity boundary, reported as `note: graph
+revision N applied externally, resuming` rather than the plain `applied,
+resuming` a self-caused splice gets, and the edit is never silently
+overwritten by a `graph:extend` that was drafted against the graph as it
+stood before the edit landed: `checkSplice` always validates against what is
+actually on disk, so a fragment missing something the edit added is rejected
+as a removal instead of committed over it.
+
 `--answer` accepts a bare `key=value` too, which answers *any* gate that asks
 for that key -- convenient for a graph with one gate, like `craft-graph`
 above, but scope it to one activity (`activity:key=value`, as above) once a

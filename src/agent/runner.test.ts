@@ -458,6 +458,139 @@ describe("a splice executes in the same run that drafted it (issue #45)", () => 
   });
 });
 
+describe("a studio edit landing mid-run is not silently discarded (issue #75)", () => {
+  const NS =
+    'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"';
+
+  // Same shape as the #45 splice test: draft (agent:turn) drafts a whole
+  // replacement definition, extend (graph:extend) splices it in.
+  const original = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_studio_edit_test" ${NS}>
+  <bpmn:process id="studio_edit_test" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="draft" />
+    <bpmn:serviceTask id="draft" name="Draft">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="agent:turn" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=prompt" target="prompt" />
+          <zeebe:output source="=text" target="fragment" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="draft" targetRef="extend" />
+    <bpmn:serviceTask id="extend" name="Extend">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="graph:extend" />
+        <zeebe:ioMapping><zeebe:input source="=fragment" target="fragment" /></zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming><bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="extend" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f3</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+
+  // What the model "drafts" from `original` -- it has no way to know about a
+  // studio edit that lands while it is thinking, so this is additive relative
+  // to `original` alone, not relative to whatever is on disk by the time it
+  // resolves.
+  const spliced = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_studio_edit_test" ${NS}>
+  <bpmn:process id="studio_edit_test" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="draft" />
+    <bpmn:serviceTask id="draft" name="Draft">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="agent:turn" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=prompt" target="prompt" />
+          <zeebe:output source="=text" target="fragment" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="draft" targetRef="extend" />
+    <bpmn:serviceTask id="extend" name="Extend">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="graph:extend" />
+        <zeebe:ioMapping><zeebe:input source="=fragment" target="fragment" /></zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming><bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="extend" targetRef="marker" />
+    <bpmn:serviceTask id="marker" name="Marker">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="shell" />
+        <zeebe:taskHeaders>
+          <zeebe:header key="command" value="echo spliced" />
+        </zeebe:taskHeaders>
+        <zeebe:ioMapping><zeebe:output source="=stdout" target="marker_output" /></zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f3</bpmn:incoming><bpmn:outgoing>f4</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f4" sourceRef="marker" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f4</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+
+  it("picks up a revision another process appended while `draft` was still in flight, and never overwrites it", async () => {
+    const graphPath = join(home, "studio_edit_test.bpmn");
+    writeFileSync(graphPath, original);
+    const sessionId = "studio-edit-1";
+
+    const faux = scripted([fauxAssistantMessage([fauxText(spliced)], { stopReason: "stop" })]);
+    let edited = false;
+    // Simulate a studio `PUT /api/sessions/:id/graph` landing while `draft`
+    // is still running: a *second* SessionStore instance (a separate
+    // process, in reality) appends a revision this run's own drive() never
+    // called setGraph for.
+    const streamFn = ((m: never, context: never, o: never) => {
+      if (!edited) {
+        edited = true;
+        const studioStore = new SessionStore(paths, sessionId);
+        const current = studioStore.currentGraph() ?? "";
+        const withStudioEdit = current.replace(
+          "</bpmn:process>",
+          '<bpmn:task id="studio_added" name="Studio added" /></bpmn:process>',
+        );
+        studioStore.appendGraph(withStudioEdit, "studio edit", ["studio_added"]);
+      }
+      return faux.provider.streamSimple(m, context, o);
+    }) as RunSessionOptions["streamFn"];
+
+    const progress: string[] = [];
+    const result = await runSession(
+      options(faux, {
+        graphPath,
+        project: home,
+        sessionId,
+        streamFn,
+        prompt: "splice in a marker step",
+        onProgress: (line: string) => progress.push(line),
+      }),
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.outcome).toBe("completed");
+
+    // The mid-run pickup is reported on a progress line (issue #75's own
+    // acceptance criterion), naming it as an external revision rather than
+    // this run's own splice.
+    expect(progress.some((line) => /revision \d+ applied externally, resuming/.test(line))).toBe(true);
+
+    const detail = new SessionStore(paths, sessionId).detail();
+    // The studio edit survives as the final graph -- not overwritten by
+    // `extend` committing a fragment drafted from the pre-edit graph, which
+    // is exactly what issue #75 reports: checkSplice must compare against
+    // what is actually on disk, not a cached copy, so it catches "draft"'s
+    // fragment silently dropping `studio_added` and refuses to commit it.
+    expect(detail.graph).toContain("studio_added");
+    expect(detail.revisions).toHaveLength(2);
+  });
+});
+
 describe("hang guard and phantom-running status (issue #52)", () => {
   it('never leaves status:"running" when resuming throws before the engine settles', async () => {
     // runSession's own linkGraph/appendGraph setup runs before drive() is ever

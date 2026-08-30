@@ -256,15 +256,28 @@ async function drive(
   // splice during that pass triggers another one (issue #45).
   let splicedThisPass = false;
 
+  // The revision count this pass started from. checkStopAfterActivity below
+  // compares the live count against this on every activity.end, which is how
+  // a revision appended by someone *other* than this process's own setGraph
+  // -- a studio edit landing mid-run -- is noticed at all: `splicedThisPass`
+  // alone only catches a splice this process caused itself (issue #75).
+  let revisionsAtPassStart = store.readMeta().revisions.length;
+
   const harnesses = createHarnesses({
     pi,
     tools: options.tools,
     store,
     cwd: options.project,
-    getGraph: () => graph,
-    setGraph: (xml, reason, added) => {
+    // Re-read from disk on every call rather than trusting the local
+    // `graph` -- otherwise a studio edit that lands mid-run is invisible to
+    // `graph:lint`/`graph:extend`'s own `checkSplice` (issue #75): the
+    // additive-only guard would compare a fragment against a baseline that
+    // no longer matches what is actually on disk. `graph` remains only as
+    // the fallback for the window before the first revision exists.
+    getGraph: () => store.currentGraph() ?? graph,
+    setGraph: (xml, reason, added, expectedIndex) => {
+      store.appendGraph(xml, reason, added, expectedIndex);
       graph = xml;
-      store.appendGraph(xml, reason, added);
       splicedThisPass = true;
     },
     takeSteering: () => [...steering.splice(0, steering.length), ...store.drainInbox("steer")],
@@ -315,7 +328,8 @@ async function drive(
     onExpressionWarning: (warning: { expression: string; message: string }) => {
       options.onProgress?.(`  FEEL warning: ${warning.message} in ${warning.expression}`);
     },
-    checkStopAfterActivity: () => splicedThisPass,
+    checkStopAfterActivity: () =>
+      splicedThisPass || store.readMeta().revisions.length > revisionsAtPassStart,
   };
 
   // `graph:extend` replaces the definition a live engine holds in memory,
@@ -334,8 +348,19 @@ async function drive(
     result = await start(harnessOptions);
     while (result.outcome === "stopped" && result.splicePending && spliceReentries < MAX_SPLICE_REENTRIES) {
       spliceReentries++;
+      // This process's own setGraph already advanced `graph` and set
+      // splicedThisPass; an external revision bump did neither, so re-sync
+      // both from disk before resuming (issue #75).
+      const external = !splicedThisPass;
+      graph = store.currentGraph() ?? graph;
       splicedThisPass = false;
-      options.onProgress?.(`  note: graph revision ${store.readMeta().revisions.length - 1} applied, resuming`);
+      revisionsAtPassStart = store.readMeta().revisions.length;
+      const revisionIndex = revisionsAtPassStart - 1;
+      options.onProgress?.(
+        external
+          ? `  note: graph revision ${revisionIndex} applied externally, resuming`
+          : `  note: graph revision ${revisionIndex} applied, resuming`,
+      );
       result = await resumeGraph(result.state, graph, harnessOptions);
     }
     if (result.outcome === "stopped" && result.splicePending) {

@@ -79,6 +79,21 @@ export function mergeVisited(existing: readonly string[], incoming: readonly str
   return [...new Set([...existing, ...incoming])];
 }
 
+/**
+ * Thrown by `SessionStore.appendGraph` when the caller's `expectedIndex` no
+ * longer matches the revision count on disk -- another writer (a studio edit
+ * landing mid-run, or a second concurrent studio PUT, see issues #75/#76)
+ * appended a revision between when the caller read the graph it validated a
+ * change against and when it tried to write the result. `currentIndex` is
+ * the revision index actually on disk, so a caller can re-read and retry
+ * rather than silently overwrite it.
+ */
+export class GraphRevisionConflictError extends Error {
+  constructor(readonly currentIndex: number) {
+    super(`graph has moved to revision ${currentIndex} since this write was validated`);
+  }
+}
+
 export class SessionStore {
   constructor(
     private readonly paths: Paths,
@@ -246,10 +261,19 @@ export class SessionStore {
       .sort();
   }
 
-  /** Append a new graph revision and record it in meta. */
-  appendGraph(xml: string, reason: string, addedElementIds: string[] = []): GraphRevision {
+  /**
+   * Append a new graph revision and record it in meta. `expectedIndex`, when
+   * given, is the revision index the caller believed it was extending (e.g.
+   * the count read alongside the graph a splice was validated against) --
+   * a mismatch means someone else's write landed first, and this throws
+   * `GraphRevisionConflictError` instead of silently overwriting it.
+   */
+  appendGraph(xml: string, reason: string, addedElementIds: string[] = [], expectedIndex?: number): GraphRevision {
     mkdirSync(this.graphDir, { recursive: true });
     const index = this.graphRevisionFiles().length;
+    if (expectedIndex !== undefined && expectedIndex !== index) {
+      throw new GraphRevisionConflictError(index);
+    }
     writeAtomic(join(this.graphDir, `${String(index).padStart(3, "0")}.bpmn`), xml);
     const revision: GraphRevision = { index, at: Date.now(), reason, addedElementIds };
     this.update((meta) => {
