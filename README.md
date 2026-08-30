@@ -62,13 +62,17 @@ walkthrough and its troubleshooting notes, and
 [`docs/harnesses.md`](docs/harnesses.md) for every job type a graph can
 dispatch to.
 
-All five bundled graphs run. `session-default` -- the one `run` uses when
+All six bundled graphs run. `session-default` -- the one `run` uses when
 `--graph` is not given -- is a callActivity into `pi-default-loop`, so
 out-of-the-box behaviour matches plain Pi while still being a diagram. Both
 graphs, and `shell-demo`, drive tool calls, parallel ones included.
 `craft-graph` drafts a BPMN fragment and splices it into the running session --
 verified end to end against real Haiku, approval gate and all -- so the agent
-really does rewrite its own control flow mid-session.
+really does rewrite its own control flow mid-session. `session-skeleton` asks
+for an intent before handing it to `craft-graph`, and `session-craft` (opt-in
+via `--graph session-craft`) goes straight from a prompt into `craft-graph`
+and runs whatever it builds in the same invocation -- see [the bundled
+graphs](docs/getting-started.md#the-bundled-graphs) for what each one is.
 
 One thing to know: `init` never overwrites your graph library without
 `--refresh`, so a stale library copy can predate a fix upstream
