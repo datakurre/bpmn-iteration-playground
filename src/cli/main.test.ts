@@ -5,7 +5,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { installEpipeGuard, parseAnswers, answersFor, boundedOnWait } from "./main.ts";
+import { installEpipeGuard, parseAnswers, answersFor, boundedOnWait, reportWait } from "./main.ts";
 import { ensurePaths, paths as resolvePaths } from "../agent/paths.ts";
 import { SessionStore } from "../agent/session-store.ts";
 
@@ -207,6 +207,90 @@ describe("--answer scoping (issue #44)", () => {
       const onWait = boundedOnWait(answers);
       for (let i = 0; i < 5; i++) onWait("a");
       expect(onWait("b")).toEqual({ x: 1 });
+    });
+  });
+
+  describe("reportWait suggests only real human gates (issue #61)", () => {
+    const NS =
+      'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"';
+
+    // A shell service task (never answerable by --answer) and a callActivity
+    // (also never answerable) alongside the one real human gate -- the same
+    // mix issue #61's own repro saw: `waiting on shell_ls, gw_more,
+    // await_intent`, with the naive `tokens[0]` naming the unanswerable one.
+    const graph = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_wait_test" ${NS}>
+  <bpmn:process id="wait_test" isExecutable="true">
+    <bpmn:extensionElements>
+      <zeebe:userTaskForm id="gate_form">{"components":[{"label":"Reason","type":"textfield","key":"reason","id":"reason"}]}</zeebe:userTaskForm>
+    </bpmn:extensionElements>
+    <bpmn:startEvent id="start" />
+    <bpmn:serviceTask id="shell_ls" name="List">
+      <bpmn:extensionElements><zeebe:taskDefinition type="shell" /></bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:callActivity id="craft" name="Craft" calledElement="other" />
+    <bpmn:userTask id="gate" name="Approve?">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:formDefinition formId="gate_form" />
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:endEvent id="end" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+    function sessionParkedOn(tokens: string[]): { paths: ReturnType<typeof ensurePaths>; sessionId: string } {
+      const home = mkdtempSync(join(tmpdir(), "graph-agent-reportwait-"));
+      const paths = ensurePaths(
+        resolvePaths({ XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") } as NodeJS.ProcessEnv),
+      );
+      const store = new SessionStore(paths, "s1");
+      store.create("/tmp/some-project");
+      store.appendGraph(graph, "started", []);
+      store.update((meta) => {
+        meta.tokens = tokens;
+      });
+      return { paths, sessionId: store.id };
+    }
+
+    async function capturedStdout(fn: () => Promise<void>): Promise<string> {
+      const chunks: string[] = [];
+      const original = process.stdout.write.bind(process.stdout);
+      process.stdout.write = ((chunk: string) => {
+        chunks.push(String(chunk));
+        return true;
+      }) as typeof process.stdout.write;
+      try {
+        await fn();
+      } finally {
+        process.stdout.write = original;
+      }
+      return chunks.join("");
+    }
+
+    it("names the human gate, not the service task or callActivity that happen to come first", async () => {
+      const { paths, sessionId } = sessionParkedOn(["shell_ls", "craft", "gate"]);
+      const output = await capturedStdout(() => reportWait(paths, sessionId, "stopped"));
+
+      expect(output).toContain("waiting on shell_ls, craft, gate");
+      expect(output).toContain(`answer with: graph-agent resume ${sessionId} --answer gate:reason=value`);
+      expect(output).not.toContain("--answer shell_ls");
+      expect(output).not.toContain("--answer craft");
+    });
+
+    it("suggests no --answer at all when nothing waiting is a human gate", async () => {
+      const { paths, sessionId } = sessionParkedOn(["shell_ls", "craft"]);
+      const output = await capturedStdout(() => reportWait(paths, sessionId, "stopped"));
+
+      expect(output).toContain("waiting on shell_ls, craft");
+      expect(output).not.toContain("--answer");
+      expect(output).toContain(`graph-agent resume ${sessionId}`);
+    });
+
+    it("says nothing at all for an outcome other than 'stopped'", async () => {
+      const { paths, sessionId } = sessionParkedOn(["gate"]);
+      const output = await capturedStdout(() => reportWait(paths, sessionId, "completed"));
+      expect(output).toBe("");
     });
   });
 

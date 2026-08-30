@@ -7,7 +7,8 @@ import { graphPath, startStudio } from "../studio/server.ts";
 import { resumeSession, runSession } from "../agent/runner.ts";
 import { ProcessTerminal } from "../tui/pi-bridge.ts";
 import { startTui } from "../tui/app.ts";
-import { firstActivity, withDefinitionsId } from "../agent/graph.ts";
+import { firstActivity, pendingGates, withDefinitionsId } from "../agent/graph.ts";
+import { formFields } from "../tui/form-fields.ts";
 import { unlinkGraph } from "../agent/link.ts";
 import { lintBpmn } from "../agent/bpmn-lint.ts";
 import { createPiToolExecutor } from "../agent/tool-executor.ts";
@@ -492,7 +493,7 @@ async function cmdRun(args: string[]): Promise<number> {
   );
 
   process.stdout.write(`\nsession ${result.sessionId}  ${result.outcome}  ${result.turns} turn(s)\n`);
-  reportWait(p, result.sessionId, result.outcome);
+  await reportWait(p, result.sessionId, result.outcome);
   if (result.error) {
     process.stderr.write(`error: ${result.error.message}\n`);
     return 1;
@@ -594,7 +595,7 @@ async function cmdResume(args: string[]): Promise<number> {
       }),
     );
     process.stdout.write(`\nsession ${result.sessionId}  ${result.outcome}  ${result.turns} turn(s)\n`);
-    reportWait(p, result.sessionId, result.outcome);
+    await reportWait(p, result.sessionId, result.outcome);
     if (result.error) {
       process.stderr.write(`error: ${result.error.message}\n`);
     }
@@ -605,15 +606,35 @@ async function cmdResume(args: string[]): Promise<number> {
   }
 }
 
-/** Names what a stopped run is parked on, so `resume` isn't a guessing game. */
-function reportWait(p: Paths, sessionId: string, outcome: string): void {
+/**
+ * Names what a stopped run is parked on, so `resume` isn't a guessing game --
+ * and, critically, only ever suggests `--answer` for a token that is actually
+ * a human gate. `meta.tokens` is every activity the token rests on (service
+ * tasks and callActivities mid-flight included, not just `bpmn:UserTask`s),
+ * and the naive `tokens[0]` used to suggest answering whichever of those
+ * happened to come first -- a `shell` step, a `callActivity`, anything --
+ * which `--answer` can never actually satisfy (issue #61). `pendingGates`
+ * (already used by the studio) does the real filtering, and its form schema
+ * (when the gate has one) names the actual field to answer rather than the
+ * literal placeholder `key`.
+ */
+export async function reportWait(p: Paths, sessionId: string, outcome: string): Promise<void> {
   if (outcome !== "stopped") return;
-  const tokens = new SessionStore(p, sessionId).readMeta().tokens;
-  if (tokens.length === 0) return;
-  process.stdout.write(
-    `waiting on ${tokens.join(", ")}\n` +
-      `resume with: graph-agent resume ${sessionId} --answer ${tokens[0]}:key=value\n`,
-  );
+  const store = new SessionStore(p, sessionId);
+  const meta = store.readMeta();
+  if (meta.tokens.length === 0) return;
+  process.stdout.write(`waiting on ${meta.tokens.join(", ")}\n`);
+
+  const xml = store.currentGraph();
+  const gates = xml ? await pendingGates(xml, meta.tokens) : [];
+  if (gates.length === 0) {
+    process.stdout.write(`nothing here is a human gate; resume with: graph-agent resume ${sessionId}\n`);
+    return;
+  }
+  for (const gate of gates) {
+    const key = gate.form ? (formFields(gate.form.schema, gate.name ?? gate.id)[0]?.key ?? "key") : "key";
+    process.stdout.write(`answer with: graph-agent resume ${sessionId} --answer ${gate.id}:${key}=value\n`);
+  }
 }
 
 function cmdLs(all: boolean): number {
