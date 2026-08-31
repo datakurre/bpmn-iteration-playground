@@ -48,6 +48,7 @@ Commands
                        queue a follow-up message, drained once the agent would
                        otherwise stop
   ls                   list this project's sessions (--all for every project)
+  rm <session>         delete a session
   show <session>       print a session's turns and current graph revision
   report <session>     generate a markdown, html or json execution report
                         (--format <markdown|html|json>, --out <file>, --embed-svg,
@@ -113,6 +114,8 @@ const KNOWN_COMMANDS = new Set([
   "where",
   "studio",
   "ls",
+  "rm",
+  "delete",
   "show",
   "report",
   "export",
@@ -154,6 +157,9 @@ export async function main(argv: string[]): Promise<number> {
       return cmdStudio(argv.slice(1));
     case "ls":
       return cmdLs(argv.includes("--all"));
+    case "rm":
+    case "delete":
+      return cmdRm(argv[1]);
     case "show":
       return cmdShow(argv[1]);
     case "report": {
@@ -737,7 +743,7 @@ async function cmdTui(args: string[]): Promise<number> {
       return 1;
     }
 
-    const prompt = flags.positionals.join(" ");
+    const prompt = flags.positionals.join(" ").trim();
     if (prompt) {
       const first = await firstActivity(readFileSync(graphFile, "utf8"));
       if (first?.type === "bpmn:UserTask") {
@@ -751,7 +757,7 @@ async function cmdTui(args: string[]): Promise<number> {
       kind: "run",
       graphPath: graphFile,
       graphLabel: flags.graph,
-      prompt,
+      ...(prompt ? { prompt } : {}),
       ...(flags.name === undefined ? {} : { name: flags.name }),
     };
   }
@@ -1044,6 +1050,23 @@ async function cmdPromote(args: string[]): Promise<number> {
     `promoted revision ${revisionIndex} of ${sessionId} to ${target}, callable as calledElement="${newProcessId}"\n` +
       (unlinked.length > 0 ? `unlinked (still callable via calledElement): ${unlinked.join(", ")}\n` : ""),
   );
+  return 0;
+}
+
+function cmdRm(id: string | undefined): number {
+  const p = requirePaths();
+  if (!p) return 1;
+  if (!id) {
+    process.stderr.write("graph-agent: rm requires a session id\n");
+    return 2;
+  }
+  const store = new SessionStore(p, id);
+  if (!store.exists()) {
+    process.stderr.write(`graph-agent: unknown session '${id}'\n`);
+    return 1;
+  }
+  store.delete();
+  process.stdout.write(`removed session ${id}\n`);
   return 0;
 }
 

@@ -865,5 +865,24 @@ describe("graph-agent model and headless flags", () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("session");
   });
+
+  it("removes a session with `graph-agent rm <id>`", () => {
+    const { env } = project();
+    // Run a dry session first to create one
+    const runRes = runCli(env, ["run", "--dry-run", "test prompt"]);
+    expect(runRes.code).toBe(0);
+
+    const lsRes = runCli(env, ["ls"]);
+    expect(lsRes.code).toBe(0);
+    const sessionId = lsRes.stdout.trim().split(/\s+/)[0];
+    expect(sessionId).toBeDefined();
+
+    const rmRes = runCli(env, ["rm", sessionId!]);
+    expect(rmRes.code).toBe(0);
+    expect(rmRes.stdout).toContain(`removed session ${sessionId}`);
+
+    const afterLs = runCli(env, ["ls"]);
+    expect(afterLs.stdout).toContain("no sessions in this project yet");
+  });
 });
 

@@ -120,3 +120,28 @@ describe("computeSessionStats", () => {
     expect(stats.cacheHitRatio).toBe(0.4);
   });
 });
+
+describe("SessionStore.delete", () => {
+  let paths: Paths;
+
+  beforeEach(() => {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-store-"));
+    paths = ensurePaths(
+      resolvePaths({ XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") } as NodeJS.ProcessEnv),
+    );
+  });
+
+  it("deletes the session directory from disk", () => {
+    const store = new SessionStore(paths, "s-to-delete");
+    store.create("/tmp/project");
+    expect(store.exists()).toBe(true);
+    store.delete();
+    expect(store.exists()).toBe(false);
+  });
+
+  it("is a no-op on a non-existent session", () => {
+    const store = new SessionStore(paths, "s-nonexistent");
+    expect(store.exists()).toBe(false);
+    expect(() => store.delete()).not.toThrow();
+  });
+});

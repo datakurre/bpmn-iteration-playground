@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { GraphRevision, SessionDetail, SessionStats, SessionSummary, TurnRecord } from "../studio/types.ts";
 import type { Paths } from "./paths.ts";
@@ -208,6 +208,12 @@ export class SessionStore {
 
   exists(): boolean {
     return existsSync(this.metaPath);
+  }
+
+  delete(): void {
+    if (existsSync(this.dir)) {
+      rmSync(this.dir, { recursive: true, force: true });
+    }
   }
 
   create(project: string, name?: string): SessionMeta {

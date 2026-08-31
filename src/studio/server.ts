@@ -181,6 +181,11 @@ async function handle(
   if (sessionMatch) {
     const store = new SessionStore(paths, decodeURIComponent(sessionMatch[1] as string));
     if (!store.exists()) return sendJson(res, 404, { error: "unknown session" });
+    if (req.method === "DELETE") {
+      store.delete();
+      broadcast({ type: "sessions_changed" });
+      return sendJson(res, 200, { deleted: true, id: store.id });
+    }
     return sendJson(res, 200, store.detail());
   }
 

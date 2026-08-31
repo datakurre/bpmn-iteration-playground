@@ -115,6 +115,25 @@ describe("GET /api/sessions", () => {
   });
 });
 
+describe("DELETE /api/sessions/:id", () => {
+  it("deletes an existing session and returns 200", async () => {
+    const store = createSession("s-del");
+    expect(store.exists()).toBe(true);
+
+    const res = await fetch(`${studio.url}/api/sessions/s-del`, { method: "DELETE" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { deleted: boolean; id: string };
+    expect(body.deleted).toBe(true);
+    expect(body.id).toBe("s-del");
+    expect(store.exists()).toBe(false);
+  });
+
+  it("404s for an unknown session", async () => {
+    const res = await fetch(`${studio.url}/api/sessions/nonexistent`, { method: "DELETE" });
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("GET /api/sessions/:id/graph", () => {
   it("returns the session's current graph XML", async () => {
     createSession("s1");
