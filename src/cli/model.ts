@@ -8,7 +8,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { Agent } from "@earendil-works/pi-agent-core";
 
 export interface ResolvedModel {
@@ -86,6 +86,65 @@ function describeAvailable(available: readonly Model<Api>[], spec: string): stri
   return `available in '${provider}': ${capList(inProvider.map((m) => `${m.provider}/${m.id}`))}.`;
 }
 
+/** Descriptions and attribution headers for known providers. */
+function matchesHost(baseUrl: string | undefined, expectedHost: string): boolean {
+  if (!baseUrl) return false;
+  try {
+    return new URL(baseUrl).hostname === expectedHost;
+  } catch {
+    return baseUrl.includes(expectedHost);
+  }
+}
+
+export function isOpenCodeModel(model: { provider: string; baseUrl?: string }): boolean {
+  return (
+    model.provider === "opencode" ||
+    model.provider === "opencode-go" ||
+    matchesHost(model.baseUrl, "opencode.ai")
+  );
+}
+
+export function isOpenRouterModel(model: { provider: string; baseUrl?: string }): boolean {
+  return model.provider === "openrouter" || (model.baseUrl !== undefined && model.baseUrl.includes("openrouter.ai"));
+}
+
+export function isNvidiaNimModel(model: { provider: string; baseUrl?: string }): boolean {
+  return model.provider === "nvidia" || matchesHost(model.baseUrl, "integrate.api.nvidia.com");
+}
+
+export function isCloudflareModel(model: { provider: string; baseUrl?: string }): boolean {
+  return (
+    model.provider === "cloudflare-workers-ai" ||
+    model.provider === "cloudflare-ai-gateway" ||
+    matchesHost(model.baseUrl, "api.cloudflare.com") ||
+    matchesHost(model.baseUrl, "gateway.ai.cloudflare.com")
+  );
+}
+
+export function getProviderAttributionHeaders(
+  model: { provider: string; baseUrl?: string },
+  sessionId?: string,
+): Record<string, string> | undefined {
+  const headers: Record<string, string> = {};
+
+  if (sessionId && isOpenCodeModel(model)) {
+    headers["x-opencode-session"] = sessionId;
+    headers["x-opencode-client"] = "graph-agent";
+  }
+
+  if (isOpenRouterModel(model)) {
+    headers["HTTP-Referer"] = "https://github.com/datakurre/graph-agent";
+    headers["X-OpenRouter-Title"] = "graph-agent";
+    headers["X-OpenRouter-Categories"] = "cli-agent";
+  } else if (isNvidiaNimModel(model)) {
+    headers["X-BILLING-INVOKE-ORIGIN"] = "graph-agent";
+  } else if (isCloudflareModel(model)) {
+    headers["User-Agent"] = "graph-agent";
+  }
+
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
 /**
  * `spec` is `provider/model`, or just a provider, or omitted to fall back to
  * `configuredModel` (typically `[agent] model` from config.toml), or omitted
@@ -123,7 +182,23 @@ export async function resolveModel(spec?: string, configuredModel?: string): Pro
   const chosen = model;
   return {
     model: chosen,
-    streamFn: (m, context, options) => runtime.streamSimple(m, context, options as never),
+    streamFn: (m, context, options) =>
+      runtime.streamSimple(m, context, {
+        ...options,
+        transformHeaders: async (requestHeaders: ProviderHeaders) => {
+          const attribution = getProviderAttributionHeaders(m, options?.sessionId);
+          const customTransform = (
+            options as
+              | { transformHeaders?: (headers: ProviderHeaders) => Promise<ProviderHeaders> | ProviderHeaders }
+              | undefined
+          )?.transformHeaders;
+          const transformed = customTransform ? await customTransform(requestHeaders) : requestHeaders;
+          return {
+            ...(attribution ?? {}),
+            ...(transformed ?? {}),
+          };
+        },
+      } as never),
     label: `${chosen.provider}/${chosen.id}`,
   };
 }

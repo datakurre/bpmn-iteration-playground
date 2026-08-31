@@ -3,7 +3,14 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readConfiguredModel } from "./model.ts";
+import {
+  getProviderAttributionHeaders,
+  isCloudflareModel,
+  isNvidiaNimModel,
+  isOpenCodeModel,
+  isOpenRouterModel,
+  readConfiguredModel,
+} from "./model.ts";
 
 function configWith(contents: string): string {
   const dir = mkdtempSync(join(tmpdir(), "graph-agent-config-"));
@@ -46,3 +53,63 @@ describe("readConfiguredModel", () => {
     expect(readConfiguredModel(file)).toBeUndefined();
   });
 });
+
+describe("getProviderAttributionHeaders", () => {
+  it("detects opencode and opencode-go models", () => {
+    expect(isOpenCodeModel({ provider: "opencode" })).toBe(true);
+    expect(isOpenCodeModel({ provider: "opencode-go" })).toBe(true);
+    expect(isOpenCodeModel({ provider: "custom", baseUrl: "https://opencode.ai/zen/go/v1" })).toBe(true);
+    expect(isOpenCodeModel({ provider: "anthropic" })).toBe(false);
+  });
+
+  it("sets x-opencode-session and x-opencode-client when sessionId is provided for OpenCode models", () => {
+    const headers = getProviderAttributionHeaders({ provider: "opencode-go" }, "sess-1234");
+    expect(headers).toEqual({
+      "x-opencode-session": "sess-1234",
+      "x-opencode-client": "graph-agent",
+    });
+  });
+
+  it("sets x-opencode-session and x-opencode-client for opencode.ai host with custom provider", () => {
+    const headers = getProviderAttributionHeaders({ provider: "custom", baseUrl: "https://opencode.ai/zen/go" }, "sess-5678");
+    expect(headers).toEqual({
+      "x-opencode-session": "sess-5678",
+      "x-opencode-client": "graph-agent",
+    });
+  });
+
+  it("does not set opencode headers when sessionId is omitted", () => {
+    expect(getProviderAttributionHeaders({ provider: "opencode-go" })).toBeUndefined();
+  });
+
+  it("sets attribution headers for OpenRouter models", () => {
+    expect(isOpenRouterModel({ provider: "openrouter" })).toBe(true);
+    expect(isOpenRouterModel({ provider: "custom", baseUrl: "https://openrouter.ai/api/v1" })).toBe(true);
+    expect(getProviderAttributionHeaders({ provider: "openrouter" })).toEqual({
+      "HTTP-Referer": "https://github.com/datakurre/graph-agent",
+      "X-OpenRouter-Title": "graph-agent",
+      "X-OpenRouter-Categories": "cli-agent",
+    });
+  });
+
+  it("sets billing invoke origin header for Nvidia NIM models", () => {
+    expect(isNvidiaNimModel({ provider: "nvidia" })).toBe(true);
+    expect(getProviderAttributionHeaders({ provider: "nvidia" })).toEqual({
+      "X-BILLING-INVOKE-ORIGIN": "graph-agent",
+    });
+  });
+
+  it("sets User-Agent header for Cloudflare models", () => {
+    expect(isCloudflareModel({ provider: "cloudflare-workers-ai" })).toBe(true);
+    expect(isCloudflareModel({ provider: "cloudflare-ai-gateway" })).toBe(true);
+    expect(getProviderAttributionHeaders({ provider: "cloudflare-ai-gateway" })).toEqual({
+      "User-Agent": "graph-agent",
+    });
+  });
+
+  it("returns undefined for providers without special attribution requirements", () => {
+    expect(getProviderAttributionHeaders({ provider: "anthropic" }, "sess-1234")).toBeUndefined();
+    expect(getProviderAttributionHeaders({ provider: "openai" })).toBeUndefined();
+  });
+});
+
