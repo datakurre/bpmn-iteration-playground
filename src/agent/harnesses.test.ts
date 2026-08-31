@@ -4,7 +4,7 @@ import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxProvider, fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
-import { createHarnesses, type HarnessDeps } from "./harnesses.ts";
+import { createHarnesses, stripCodeFence, type HarnessDeps } from "./harnesses.ts";
 import type { HarnessContext } from "./harness.ts";
 import { GraphRevisionConflictError, SessionStore } from "./session-store.ts";
 import { ensurePaths, paths as resolvePaths } from "./paths.ts";
@@ -599,5 +599,27 @@ describe("agent:turn consumes agent_role and lint_feedback (issue #37)", () => {
 
     expect(sentUserText).not.toContain("craft_start");
     expect(sentUserText).not.toContain("current graph you are splicing into");
+  });
+});
+
+describe("stripCodeFence", () => {
+  it("strips standard 3-backtick fences with or without language tags", () => {
+    expect(stripCodeFence("```json\n[{\"op\":\"appendShape\"}]\n```")).toBe("[{\"op\":\"appendShape\"}]");
+    expect(stripCodeFence("```\n[{\"op\":\"appendShape\"}]\n```")).toBe("[{\"op\":\"appendShape\"}]");
+  });
+
+  it("strips fences with 4 or more backticks or tildes", () => {
+    expect(stripCodeFence("````json\n[{\"op\":\"appendShape\"}]\n````")).toBe("[{\"op\":\"appendShape\"}]");
+    expect(stripCodeFence("~~~xml\n<bpmn:definitions />\n~~~")).toBe("<bpmn:definitions />");
+  });
+
+  it("extracts embedded fenced block when surrounded by prose", () => {
+    const text = "Here is the JSON:\n```json\n[{\"op\":\"appendShape\"}]\n```\nHope that helps!";
+    expect(stripCodeFence(text)).toBe("[{\"op\":\"appendShape\"}]");
+  });
+
+  it("returns raw text when no fences are present", () => {
+    expect(stripCodeFence("[{\"op\":\"appendShape\"}]")).toBe("[{\"op\":\"appendShape\"}]");
+    expect(stripCodeFence("")).toBe("");
   });
 });

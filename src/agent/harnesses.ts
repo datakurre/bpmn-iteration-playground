@@ -110,15 +110,15 @@ const AGENT_ROLES: Record<string, string> = {
     "join, not the fake-join mistake above.",
 };
 
-/**
- * Strips a single wrapping markdown code fence, if there is one -- models
- * fence XML or JSON by default even when told not to, and neither
- * `JSON.parse`, bpmn-auto-layout, nor the BPMN parser tolerates the fence
- * markers.
- */
-function stripCodeFence(text: string): string {
-  const match = /^```[a-zA-Z0-9_-]*\r?\n([\s\S]*?)\r?\n?```\s*$/.exec(text.trim());
-  return match ? (match[1] ?? "") : text;
+export function stripCodeFence(text: string): string {
+  const trimmed = text.trim();
+  const exact = /^(`{3,}|~{3,})[a-zA-Z0-9_-]*\r?\n([\s\S]*?)\r?\n?\1\s*$/.exec(trimmed);
+  if (exact) return (exact[2] ?? "").trim();
+
+  const embedded = /(`{3,}|~{3,})[a-zA-Z0-9_-]*\r?\n([\s\S]*?)\r?\n?\1/.exec(trimmed);
+  if (embedded) return (embedded[2] ?? "").trim();
+
+  return trimmed;
 }
 
 /**
