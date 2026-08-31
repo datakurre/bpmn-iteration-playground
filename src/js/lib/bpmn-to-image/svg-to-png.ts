@@ -60,7 +60,32 @@ function getSystemFontDirs(): string[] {
   // Platform defaults
   switch (process.platform) {
     case 'linux':
-      dirs.push('/usr/share/fonts', '/usr/local/share/fonts', path.join(os.homedir(), '.fonts'));
+      dirs.push(
+        '/usr/share/fonts',
+        '/usr/local/share/fonts',
+        path.join(os.homedir(), '.fonts'),
+        path.join(os.homedir(), '.local/share/fonts'),
+        path.join(os.homedir(), '.nix-profile/share/fonts'),
+        '/run/current-system/sw/share/fonts',
+        '/nix/var/nix/profiles/default/share/fonts'
+      );
+      // Also discover fonts directly from nix store paths if present
+      try {
+        if (fs.existsSync('/nix/store')) {
+          const entries = fs.readdirSync('/nix/store');
+          for (const name of entries) {
+            if (
+              name.includes('font') ||
+              name.includes('dejavu') ||
+              name.includes('liberation') ||
+              name.includes('agent-sandbox-root')
+            ) {
+              const shareFonts = path.join('/nix/store', name, 'share/fonts');
+              if (fs.existsSync(shareFonts)) dirs.push(shareFonts);
+            }
+          }
+        }
+      } catch {}
       break;
     case 'darwin':
       dirs.push(
@@ -82,25 +107,30 @@ const SYSTEM_FONT_DIRS: string[] = getSystemFontDirs();
 const FONT_EXTENSIONS = new Set(['.ttf', '.otf', '.woff', '.woff2']);
 
 /**
- * Recursively collect font files from a directory.
+ * Recursively collect font files from a directory up to a limit.
  * Silently skips directories that don't exist or can't be read.
  */
-function collectFontFiles(dir: string): string[] {
+function collectFontFiles(dir: string, maxFiles: number = 20): string[] {
   const files: string[] = [];
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return files; // directory doesn't exist or permission denied
-  }
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...collectFontFiles(fullPath));
-    } else if (entry.isFile() && FONT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
-      files.push(fullPath);
+  function walk(currentDir: string): void {
+    if (files.length >= maxFiles) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (files.length >= maxFiles) break;
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        walk(fullPath);
+      } else if (entry.isFile() && FONT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+        files.push(fullPath);
+      }
     }
   }
+  walk(dir);
   return files;
 }
 
@@ -133,14 +163,15 @@ export function getSystemFontFiles(): string[] {
   if (_cachedFontFiles !== null) return _cachedFontFiles;
   const files: string[] = [];
   for (const dir of SYSTEM_FONT_DIRS) {
-    files.push(...collectFontFiles(dir));
+    if (files.length >= 20) break;
+    files.push(...collectFontFiles(dir, 20 - files.length));
   }
 
   // Fallback: include bundled Liberation Sans fonts so that text labels
   // render even when no system fonts are installed.
   const bundledDir = getBundledFontDir();
-  if (bundledDir) {
-    files.push(...collectFontFiles(bundledDir));
+  if (bundledDir && files.length < 20) {
+    files.push(...collectFontFiles(bundledDir, 20 - files.length));
   }
 
   _cachedFontFiles = files;

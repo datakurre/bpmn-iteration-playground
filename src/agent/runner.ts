@@ -146,6 +146,10 @@ export async function runSession(options: RunSessionOptions): Promise<SessionOut
     const graphId = basename(options.graphPath, extname(options.graphPath));
     store.update((meta) => {
       meta.graph = graphId;
+      if (options.prompt) meta.prompt = options.prompt;
+      if (options.model) {
+        meta.model = options.model.provider ? `${options.model.provider}/${options.model.id}` : options.model.id;
+      }
     });
   }
 

@@ -81,6 +81,10 @@ export interface SessionSummary {
   /** Absolute path of the project directory the session ran against. */
   project: string;
   name?: string;
+  /** Initial task prompt passed to the session. */
+  prompt?: string;
+  /** Model spec string (provider/model) used for the run. */
+  model?: string;
   /**
    * `stale` is never written directly -- it is `SessionStore.summary()`
    * reporting a `"running"` session whose recorded pid is no longer alive,

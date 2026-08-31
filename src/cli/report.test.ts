@@ -90,21 +90,36 @@ describe("CLI reporting and exporting", () => {
   });
 
   it("generateMarkdownReport produces clean GFM report with activity breakdown and cost", async () => {
-    const md = await generateMarkdownReport(sampleDetail);
+    const md = await generateMarkdownReport({
+      ...sampleDetail,
+      prompt: "Package the outline editor with Nix",
+      model: "opencode-go/gpt-5.6-luna",
+    });
     expect(md).toContain("# Session Report: Dogfood Flake Session");
     expect(md).toContain("**Total Cost**: **$0.0073**");
+    expect(md).toContain("Package the outline editor with Nix");
+    expect(md).toContain("`opencode-go/gpt-5.6-luna`");
     expect(md).toContain("| `implement_flake` | `agent:turn` | 1 |");
     expect(md).toContain("| `verify_flake` | `shell` | 1 |");
+    expect(md).toContain("Turn 1: Implement Flake");
     expect(md).toContain("$0.0041");
     expect(md).toContain("spliced flake builder");
   });
 
-  it("generateHtmlReport produces valid HTML document with embedded PNG data URI", async () => {
-    const html = await generateHtmlReport(sampleDetail, { imageFormat: "png" });
+  it("generateHtmlReport produces valid HTML document with embedded PNG data URI, prompt, and turn log", async () => {
+    const html = await generateHtmlReport({
+      ...sampleDetail,
+      prompt: "Package the outline editor with Nix",
+      model: "opencode-go/gpt-5.6-luna",
+    }, { imageFormat: "png" });
     expect(html).toContain("<!doctype html>");
     expect(html).toContain('src="data:image/png;base64,');
     expect(html).toContain("Total Cost");
     expect(html).toContain("$0.0073");
+    expect(html).toContain("Package the outline editor with Nix");
+    expect(html).toContain("opencode-go/gpt-5.6-luna");
+    expect(html).toContain("Turn 1");
+    expect(html).toContain("Implement Flake");
     expect(html).toContain("implement_flake");
   });
 

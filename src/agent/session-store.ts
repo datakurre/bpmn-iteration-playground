@@ -23,6 +23,10 @@ export interface SessionMeta {
   name?: string;
   /** Absolute path of the project directory this session ran against. */
   project: string;
+  /** Initial task prompt passed to the session. */
+  prompt?: string;
+  /** Model spec string (provider/model) used for the run. */
+  model?: string;
   /**
    * The `--graph <id>` this session was started from (the graph file's own
    * basename, without its `.bpmn` extension) -- set once, at `runSession`
@@ -89,16 +93,20 @@ export function mergeVisited(existing: readonly string[], incoming: readonly str
  * rather than silently overwrite it.
  */
 export class GraphRevisionConflictError extends Error {
-  constructor(readonly currentIndex: number) {
+  readonly currentIndex: number;
+  constructor(currentIndex: number) {
     super(`graph has moved to revision ${currentIndex} since this write was validated`);
+    this.currentIndex = currentIndex;
   }
 }
 
 export class SessionStore {
-  constructor(
-    private readonly paths: Paths,
-    readonly id: string,
-  ) {}
+  private readonly paths: Paths;
+  readonly id: string;
+  constructor(paths: Paths, id: string) {
+    this.paths = paths;
+    this.id = id;
+  }
 
   get dir(): string {
     return join(this.paths.sessionsDir, this.id);
@@ -301,10 +309,19 @@ export class SessionStore {
 
   summary(): SessionSummary {
     const meta = this.readMeta();
+    let prompt = meta.prompt;
+    if (!prompt) {
+      const engine = this.readEngineState() as any;
+      if (engine?.environment?.variables?.prompt && typeof engine.environment.variables.prompt === "string") {
+        prompt = engine.environment.variables.prompt;
+      }
+    }
     return {
       id: meta.id,
       project: meta.project,
       ...(meta.name === undefined ? {} : { name: meta.name }),
+      ...(prompt === undefined ? {} : { prompt }),
+      ...(meta.model === undefined ? {} : { model: meta.model }),
       status: effectiveStatus(meta),
       updatedAt: meta.updatedAt,
       turnCount: meta.turns.length,

@@ -31,6 +31,156 @@ export async function renderToSvg(xml: string, options: RenderOptions = {}): Pro
   return tightenSvgViewBox(svg || '', elementRegistry.getAll(), undefined, options.background);
 }
 
+export interface RenderedSessionDiagram {
+  id?: string;
+  processId: string;
+  name: string;
+  isRoot: boolean;
+  svg: string;
+  pngDataUri?: string;
+  turnCount: number;
+  totalCostUSD: number;
+}
+
+/**
+ * Render all diagrams defined in a session's BPMN definitions (both root workflow and
+ * called subprocesses like pi_default_loop) with visited markers and cost badges.
+ */
+export async function renderSessionDiagrams(
+  detail: SessionDetail,
+  options: RenderToPngOptions & { showCostBadges?: boolean; includePngDataUri?: boolean } = {}
+): Promise<RenderedSessionDiagram[]> {
+  const modeler = await createModelerFromXml(detail.graph, options);
+  const defs = modeler.getDefinitions();
+  const diagrams = defs?.diagrams || [];
+
+  const activityCosts = new Map<string, { cost: number; turns: number; durationMs: number }>();
+  let totalSessionTurns = 0;
+  let totalSessionCost = 0;
+  if (detail.turns?.length) {
+    for (const turn of detail.turns) {
+      const prev = activityCosts.get(turn.activityId) || { cost: 0, turns: 0, durationMs: 0 };
+      const turnCost = turn.usage?.cost?.total ?? 0;
+      prev.cost += turnCost;
+      prev.turns += 1;
+      totalSessionTurns += 1;
+      totalSessionCost += turnCost;
+      if (turn.startedAt && turn.endedAt) prev.durationMs += turn.endedAt - turn.startedAt;
+      activityCosts.set(turn.activityId, prev);
+    }
+  }
+
+  const results: RenderedSessionDiagram[] = [];
+  const diagramList = diagrams.length > 0 ? diagrams : [undefined];
+
+  for (let i = 0; i < diagramList.length; i++) {
+    const d = diagramList[i];
+    if (d) {
+      try {
+        await modeler.open(d);
+      } catch {
+        continue;
+      }
+    }
+
+    const canvas = modeler.get('canvas');
+    const elementRegistry = modeler.get('elementRegistry');
+    const processId = d?.plane?.bpmnElement?.id || '';
+    const name = d?.plane?.bpmnElement?.name || processId || (i === 0 ? 'Main Process' : `Diagram ${i + 1}`);
+    const isRoot = d ? (d.plane?.bpmnElement?.isExecutable === true || i === 0) : true;
+
+    // Mark visited elements present in this diagram
+    for (const id of detail.visited || []) {
+      if (elementRegistry.get(id)) {
+        try {
+          canvas.addMarker(id, 'ga-visited');
+        } catch {}
+      }
+    }
+
+    // Mark active tokens present in this diagram
+    for (const id of detail.tokens || []) {
+      if (elementRegistry.get(id)) {
+        try {
+          canvas.addMarker(id, 'ga-token');
+        } catch {}
+      }
+    }
+
+    let { svg } = await modeler.saveSVG();
+    let diagramTurns = 0;
+    let diagramCost = 0;
+
+    if (options.showCostBadges !== false && svg) {
+      const badges: string[] = [];
+      const allElements = elementRegistry.getAll();
+
+      for (const shape of allElements) {
+        if (!shape || typeof shape.x !== 'number' || typeof shape.y !== 'number' || !shape.width) continue;
+
+        let cost = 0;
+        let turns = 0;
+
+        if (activityCosts.has(shape.id)) {
+          const stat = activityCosts.get(shape.id)!;
+          cost = stat.cost;
+          turns = stat.turns;
+          diagramCost += cost;
+          diagramTurns += turns;
+        } else if (shape.type === 'bpmn:CallActivity' || shape.businessObject?.$type === 'bpmn:CallActivity') {
+          // Aggregate subprocess costs onto callActivity node if root
+          const calledElement = shape.businessObject?.calledElement;
+          if (calledElement && totalSessionTurns > 0) {
+            cost = totalSessionCost;
+            turns = totalSessionTurns;
+          }
+        }
+
+        if (cost > 0 || turns > 0) {
+          const costFormatted = cost > 0
+            ? (cost < 0.01 ? `$${cost.toFixed(4)}` : `$${cost.toFixed(2)}`)
+            : `${turns} turn${turns === 1 ? '' : 's'}`;
+          const badgeWidth = Math.max(46, costFormatted.length * 6.5 + 8);
+          const bx = shape.x + shape.width - badgeWidth;
+          const by = shape.y + shape.height - 14;
+          badges.push(
+            `<g class="ga-cost-badge" transform="translate(${bx}, ${by})">` +
+            `<rect x="0" y="0" width="${badgeWidth}" height="14" rx="3" fill="#0f766e" fill-opacity="0.95"/>` +
+            `<text x="${badgeWidth / 2}" y="10" fill="#ffffff" font-family="monospace" font-size="9" text-anchor="middle" font-weight="bold">${costFormatted}</text>` +
+            `</g>`
+          );
+        }
+      }
+
+      if (badges.length > 0) {
+        svg = svg.replace('</svg>', `${badges.join('')}</svg>`);
+      }
+    }
+
+    const tightenedSvg = tightenSvgViewBox(svg || '', elementRegistry.getAll(), undefined, options.background);
+    let pngDataUri: string | undefined;
+    if (options.includePngDataUri) {
+      try {
+        const pngBuf = svgToPng(tightenedSvg, { scale: options.scale ?? 2, background: options.background ?? '#ffffff' });
+        pngDataUri = `data:image/png;base64,${pngBuf.toString('base64')}`;
+      } catch {}
+    }
+
+    results.push({
+      id: d?.id,
+      processId,
+      name,
+      isRoot,
+      svg: tightenedSvg,
+      pngDataUri,
+      turnCount: diagramTurns,
+      totalCostUSD: diagramCost,
+    });
+  }
+
+  return results;
+}
+
 /**
  * Render a session's execution diagram to SVG with visited path highlights,
  * active token markers, and activity cost / duration overlays.
@@ -39,86 +189,11 @@ export async function renderSessionSvg(
   detail: SessionDetail,
   options: RenderOptions & { showCostBadges?: boolean } = {}
 ): Promise<string> {
-  const modeler = await createModelerFromXml(detail.graph, options);
-  const canvas = modeler.get('canvas');
-  const overlays = modeler.get('overlays');
-
-  // Mark visited elements
-  for (const id of detail.visited || []) {
-    try {
-      canvas.addMarker(id, 'ga-visited');
-    } catch {}
-  }
-
-  // Mark active tokens
-  for (const id of detail.tokens || []) {
-    try {
-      canvas.addMarker(id, 'ga-token');
-    } catch {}
-  }
-
-  // Add floating cost badges
-  if (options.showCostBadges !== false && detail.turns?.length) {
-    const activityCosts = new Map<string, { cost: number; turns: number; durationMs: number }>();
-    for (const turn of detail.turns) {
-      const prev = activityCosts.get(turn.activityId) || { cost: 0, turns: 0, durationMs: 0 };
-      prev.cost += turn.usage?.cost?.total ?? 0;
-      prev.turns += 1;
-      if (turn.startedAt && turn.endedAt) prev.durationMs += (turn.endedAt - turn.startedAt);
-      activityCosts.set(turn.activityId, prev);
-    }
-    for (const [activityId, stat] of activityCosts) {
-      if (stat.cost > 0 || stat.turns > 0) {
-        try {
-          const costFormatted = stat.cost > 0
-            ? (stat.cost < 0.01 ? `$${stat.cost.toFixed(4)}` : `$${stat.cost.toFixed(2)}`)
-            : `${stat.turns}t`;
-          overlays.add(activityId, 'cost-badge', {
-            position: { bottom: 0, right: 0 },
-            html: `<div style="background:#0f766e;color:white;font-size:9px;font-family:monospace;padding:1px 4px;border-radius:3px;box-shadow:0 1px 2px rgba(0,0,0,0.2);">${costFormatted}</div>`,
-          });
-        } catch {}
-      }
-    }
-  }
-
-  let { svg } = await modeler.saveSVG();
-  const elementRegistry = modeler.get('elementRegistry');
-
-  if (options.showCostBadges !== false && detail.turns?.length && svg) {
-    const activityCosts = new Map<string, { cost: number; turns: number; durationMs: number }>();
-    for (const turn of detail.turns) {
-      const prev = activityCosts.get(turn.activityId) || { cost: 0, turns: 0, durationMs: 0 };
-      prev.cost += turn.usage?.cost?.total ?? 0;
-      prev.turns += 1;
-      if (turn.startedAt && turn.endedAt) prev.durationMs += (turn.endedAt - turn.startedAt);
-      activityCosts.set(turn.activityId, prev);
-    }
-
-    const badges: string[] = [];
-    for (const [activityId, stat] of activityCosts) {
-      const shape = elementRegistry.get(activityId);
-      if (shape && typeof shape.x === 'number' && typeof shape.y === 'number') {
-        const costFormatted = stat.cost > 0
-          ? (stat.cost < 0.01 ? `$${stat.cost.toFixed(4)}` : `$${stat.cost.toFixed(2)}`)
-          : `${stat.turns} turn${stat.turns === 1 ? '' : 's'}`;
-        const badgeWidth = Math.max(46, costFormatted.length * 6.5 + 8);
-        const bx = shape.x + shape.width - badgeWidth;
-        const by = shape.y + shape.height - 14;
-        badges.push(
-          `<g class="ga-cost-badge" transform="translate(${bx}, ${by})">` +
-          `<rect x="0" y="0" width="${badgeWidth}" height="14" rx="3" fill="#0f766e" fill-opacity="0.95"/>` +
-          `<text x="${badgeWidth / 2}" y="10" fill="#ffffff" font-family="monospace" font-size="9" text-anchor="middle" font-weight="bold">${costFormatted}</text>` +
-          `</g>`
-        );
-      }
-    }
-    if (badges.length > 0) {
-      svg = svg.replace('</svg>', `${badges.join('')}</svg>`);
-    }
-  }
-
-  return tightenSvgViewBox(svg || '', elementRegistry.getAll(), undefined, options.background);
+  const diagrams = await renderSessionDiagrams(detail, options);
+  if (diagrams.length === 0) return '';
+  // Pick the diagram with active turns if available, else the root diagram
+  const active = diagrams.find((d) => d.turnCount > 0) || diagrams.find((d) => d.isRoot) || diagrams[0];
+  return active?.svg ?? '';
 }
 
 /**
