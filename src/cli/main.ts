@@ -24,6 +24,7 @@ import {
   projectName,
   type Paths,
 } from "../agent/paths.ts";
+import { compareGraphVersions, extractModelInfo } from "../agent/versioning.ts";
 
 const USAGE = `graph-agent - a Pi coding agent whose control flow is a BPMN graph
 
@@ -210,25 +211,39 @@ function cmdInit(args: string[]): number {
   // Seed the library with the bundled graphs, but never silently overwrite a
   // graph the user has since edited -- the library is theirs, and it is
   // shared by every project, so a re-init in a new checkout must not clobber
-  // it. A bundled graph can still be *fixed* upstream after someone's already
-  // seeded a copy, though, and nothing said so (issue #35): a stale copy just
-  // keeps running its old bug with no warning. So compare content, report a
-  // mismatch, and let --refresh take the bundled copy (backed up first).
+  // it. Using self-hashing, unmodified older copies are upgraded automatically,
+  // while graphs with manual modifications are preserved and backed up on --refresh.
   const stale: string[] = [];
   const refreshed: string[] = [];
+  const autoUpgraded: string[] = [];
   for (const { id, path: from } of listBpmnFiles(bundledWorkflowsDir())) {
     const to = join(p.workflowsDir, `${id}.bpmn`);
     if (!existsSync(to)) {
       copyFileSync(from, to);
       continue;
     }
-    if (readFileSync(from, "utf8") === readFileSync(to, "utf8")) continue;
-    if (refresh) {
-      copyFileSync(to, `${to}.bak`);
-      copyFileSync(from, to);
-      refreshed.push(id);
+    const bundledXml = readFileSync(from, "utf8");
+    const libraryXml = readFileSync(to, "utf8");
+    const check = compareGraphVersions(libraryXml, bundledXml, id);
+    if (check.decision === "identical") continue;
+
+    if (check.decision === "can_auto_upgrade") {
+      if (refresh) {
+        copyFileSync(to, `${to}.bak`);
+        copyFileSync(from, to);
+        refreshed.push(id);
+      } else {
+        copyFileSync(from, to);
+        autoUpgraded.push(id);
+      }
     } else {
-      stale.push(id);
+      if (refresh) {
+        copyFileSync(to, `${to}.bak`);
+        copyFileSync(from, to);
+        refreshed.push(id);
+      } else {
+        stale.push(id);
+      }
     }
   }
 
@@ -246,13 +261,16 @@ function cmdInit(args: string[]): number {
   }
 
   process.stdout.write(`graphs   ${p.workflowsDir}\nsessions ${p.sessionsDir}\nconfig   ${p.configFile}\n`);
+  if (autoUpgraded.length > 0) {
+    process.stdout.write(`upgraded ${autoUpgraded.length} unmodified graph(s) to newer bundled version: ${autoUpgraded.join(", ")}\n`);
+  }
   if (refreshed.length > 0) {
     process.stdout.write(`refreshed from the bundled version (old copy backed up as .bak): ${refreshed.join(", ")}\n`);
   }
   if (stale.length > 0) {
     process.stdout.write(
-      `${stale.length} graph(s) differ from the bundled version: ${stale.join(", ")}\n` +
-        `If that's your own edit, ignore this. Otherwise a bug fix may not have reached your copy yet -- ` +
+      `${stale.length} graph(s) differ from the bundled version and contain manual modifications: ${stale.join(", ")}\n` +
+        `If that's your own edit, ignore this. Otherwise a bug fix or update may not have reached your copy yet -- ` +
         `re-run \`graph-agent init --refresh\` to take the bundled version (your copy is backed up as <id>.bpmn.bak).\n`,
     );
   }
@@ -558,6 +576,14 @@ async function cmdRun(args: string[]): Promise<number> {
   if (!graphFile) {
     process.stderr.write(`graph-agent: no graph named '${flags.graph}' in ${p.workflowsDir}\n`);
     return 1;
+  }
+
+  const bundledFile = join(bundledWorkflowsDir(), `${flags.graph}.bpmn`);
+  if (existsSync(bundledFile) && graphFile.startsWith(p.workflowsDir)) {
+    const check = compareGraphVersions(readFileSync(graphFile, "utf8"), readFileSync(bundledFile, "utf8"), flags.graph);
+    if (check.decision === "can_auto_upgrade") {
+      process.stdout.write(`notice: an updated bundled version of '${flags.graph}' is available (v${check.bundledVersion ?? ""}); run \`graph-agent init\` to upgrade\n\n`);
+    }
   }
 
   const prompt = flags.positionals.join(" ");

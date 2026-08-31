@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_session_default" targetNamespace="http://graph-agent/bpmn">
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_session_default" targetNamespace="http://graph-agent/bpmn" exporter="graph-agent" exporterVersion="0.1.0">
   <bpmn:process id="session_default" name="Default session" isExecutable="true">
     <bpmn:documentation>The out-of-the-box session graph: a single callActivity into
 pi_default_loop, so a fresh session behaves exactly like plain Pi while still
@@ -44,4 +44,5 @@ session-skeleton extends craft-graph.</bpmn:documentation>
       </bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>
+  <!-- ga:modelHash:c0f79975793d748067bd8bf3919ff3eb8e00f930d40df5995babcc8c0ce402d3 -->
 </bpmn:definitions>

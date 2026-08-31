@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Layout and lint for the workflow graphs.
+ * Layout, lint, and stamp for the workflow graphs.
  *
  * Diagrams in this repo are hand-written semantics plus generated DI: writing
  * <bpmndi:> coordinates by hand is miserable and gets stale the moment a node is
@@ -8,14 +8,19 @@
  *
  *   node scripts/bpmn-tools.mjs layout <file.bpmn>...   (in place)
  *   node scripts/bpmn-tools.mjs lint   <file.bpmn>...
- *   node scripts/bpmn-tools.mjs check  <file.bpmn>...   (layout + lint)
+ *   node scripts/bpmn-tools.mjs stamp  <file.bpmn>...   (version + hash stamp)
+ *   node scripts/bpmn-tools.mjs check  <file.bpmn>...   (layout + lint + stamp)
  */
 import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { layoutProcess } from "bpmn-auto-layout";
 import { Linter } from "bpmnlint";
 import { BpmnModdle } from "bpmn-moddle";
 import zeebe from "zeebe-bpmn-moddle/resources/zeebe.json" with { type: "json" };
 import NodeResolver from "bpmnlint/lib/resolver/node-resolver.js";
+import { stampModel } from "../src/agent/versioning.ts";
+
+const pkg = JSON.parse(readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8"));
 
 const CONFIG = {
   extends: "bpmnlint:recommended",
@@ -112,8 +117,17 @@ function withLocalRules(resolver) {
 
 async function layout(file) {
   const xml = readFileSync(file, "utf8");
-  writeFileSync(file, await layoutProcess(xml));
+  const laidOut = await layoutProcess(xml);
+  const stamped = stampModel(laidOut, pkg.version);
+  writeFileSync(file, stamped);
   return `layout  ${file}`;
+}
+
+async function stamp(file) {
+  const xml = readFileSync(file, "utf8");
+  const stamped = stampModel(xml, pkg.version);
+  writeFileSync(file, stamped);
+  return `stamp   ${file}`;
 }
 
 async function lint(file) {
@@ -136,13 +150,14 @@ async function lint(file) {
 
 const [command, ...files] = process.argv.slice(2);
 if (!command || files.length === 0) {
-  console.error("usage: bpmn-tools.mjs <layout|lint|check> <file.bpmn>...");
+  console.error("usage: bpmn-tools.mjs <layout|lint|stamp|check> <file.bpmn>...");
   process.exit(2);
 }
 
 let failed = 0;
 for (const file of files) {
   if (command === "layout" || command === "check") console.log(await layout(file));
+  if (command === "stamp") console.log(await stamp(file));
   if (command === "lint" || command === "check") {
     const result = await lint(file);
     console.log(`lint    ${file}${result.lines.length ? "" : "  clean"}`);

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_shell_demo" targetNamespace="http://graph-agent/bpmn">
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_shell_demo" targetNamespace="http://graph-agent/bpmn" exporter="graph-agent" exporterVersion="0.1.0">
   <bpmn:process id="shell_demo" name="Shell step demo" isExecutable="true">
     <bpmn:documentation>The smallest graph that pairs a Pi turn with a deterministic step.
 
@@ -72,6 +72,9 @@ actually confirm (a test run, a lint, a build).</bpmn:documentation>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_verified_di" bpmnElement="gw_verified" isMarkerVisible="true">
         <dc:Bounds x="500" y="45" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="485" y="15" width="80" height="20" />
+        </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="end_verified_di" bpmnElement="end_verified">
         <dc:Bounds x="657" y="52" width="36" height="36" />
@@ -102,4 +105,5 @@ actually confirm (a test run, a lint, a build).</bpmn:documentation>
       </bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>
+  <!-- ga:modelHash:28cec19fb9205af38e53f62eebe190fdd02b876bd945f32ebe70d0435f8a6143 -->
 </bpmn:definitions>

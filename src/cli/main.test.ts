@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { installEpipeGuard, parseAnswers, answersFor, boundedOnWait, reportWait } from "./main.ts";
 import { ensurePaths, paths as resolvePaths } from "../agent/paths.ts";
 import { SessionStore } from "../agent/session-store.ts";
+import { stampModel } from "../agent/versioning.ts";
 
 describe("installEpipeGuard", () => {
   it("swallows an EPIPE error instead of letting it become an unhandled exception", () => {
@@ -142,6 +143,69 @@ describe("cmdStudio flags (issue #56)", () => {
     expect(result.stderr).toContain("--port must be an integer");
     expect(result.stderr).toContain("got 'abc'");
     expect(result.status).toBe(1);
+  });
+});
+
+describe("cmdInit and BPMN model versioning upgrades", () => {
+  const distFile = join(import.meta.dirname, "..", "..", "dist", "graph-agent.js");
+
+  it("seeds bundled workflows and config on initial run", () => {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-init-"));
+    const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
+    const result = spawnSync("node", [distFile, "init"], { env, encoding: "utf8" });
+
+    expect(result.status).toBe(0);
+    expect(existsSync(join(home, "config", "graph-agent", "workflows", "session-default.bpmn"))).toBe(true);
+    expect(existsSync(join(home, "config", "graph-agent", "config.toml"))).toBe(true);
+  });
+
+  it("automatically upgrades unmodified older library graphs to the new bundled version", () => {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-init-upgrade-"));
+    const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
+    execFileSync("node", [distFile, "init"], { env });
+
+    // Simulate an older unmodified version on disk
+    const target = join(home, "config", "graph-agent", "workflows", "session-default.bpmn");
+    const oldXml = stampModel(readFileSync(target, "utf8").replace('id="session_default"', 'id="session_default"'), "0.0.9");
+    writeFileSync(target, oldXml);
+
+    const result = spawnSync("node", [distFile, "init"], { env, encoding: "utf8" });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("upgraded 1 unmodified graph(s) to newer bundled version: session-default");
+  });
+
+  it("detects manual modifications and preserves them with an upgrade prompt", () => {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-init-modified-"));
+    const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
+    execFileSync("node", [distFile, "init"], { env });
+
+    // Simulate user editing the workflow manually
+    const target = join(home, "config", "graph-agent", "workflows", "session-default.bpmn");
+    const userXml = readFileSync(target, "utf8").replace('name="Run the Pi loop"', 'name="My Custom Loop"');
+    writeFileSync(target, userXml);
+
+    const result = spawnSync("node", [distFile, "init"], { env, encoding: "utf8" });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("1 graph(s) differ from the bundled version and contain manual modifications: session-default");
+    // Verify user file was NOT overwritten
+    expect(readFileSync(target, "utf8")).toContain("My Custom Loop");
+  });
+
+  it("backs up manually modified graphs and refreshes them when --refresh is used", () => {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-init-refresh-"));
+    const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
+    execFileSync("node", [distFile, "init"], { env });
+
+    const target = join(home, "config", "graph-agent", "workflows", "session-default.bpmn");
+    const userXml = readFileSync(target, "utf8").replace('name="Run the Pi loop"', 'name="My Custom Loop"');
+    writeFileSync(target, userXml);
+
+    const result = spawnSync("node", [distFile, "init", "--refresh"], { env, encoding: "utf8" });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("refreshed from the bundled version (old copy backed up as .bak): session-default");
+    expect(existsSync(`${target}.bak`)).toBe(true);
+    expect(readFileSync(`${target}.bak`, "utf8")).toContain("My Custom Loop");
+    expect(readFileSync(target, "utf8")).not.toContain("My Custom Loop");
   });
 });
 

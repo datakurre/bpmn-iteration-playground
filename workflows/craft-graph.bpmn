@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_craft_graph" targetNamespace="http://graph-agent/bpmn">
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_craft_graph" targetNamespace="http://graph-agent/bpmn" exporter="graph-agent" exporterVersion="0.1.0">
   <bpmn:process id="craft_graph" name="Craft a graph extension" isExecutable="true">
     <bpmn:documentation>Turning a prompt into new graph.
 
@@ -162,7 +162,7 @@ reasoning as gw_draft_entry above.</bpmn:documentation>
       <bpmn:outgoing>into_craft_rejected</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="into_craft_rejected" sourceRef="gw_rejected_entry" targetRef="craft_rejected" />
-    <bpmn:sequenceFlow id="lint_retry" name="redraft" sourceRef="gw_lint" targetRef="draft_fragment" />
+    <bpmn:sequenceFlow id="lint_retry" name="redraft" sourceRef="gw_lint" targetRef="gw_draft_entry" />
     <bpmn:userTask id="review_fragment" name="Review extension">
       <bpmn:extensionElements>
         <zeebe:userTask />
@@ -206,99 +206,110 @@ reasoning as gw_draft_entry above.</bpmn:documentation>
   <bpmndi:BPMNDiagram id="BPMNDiagram_craft_graph">
     <bpmndi:BPMNPlane id="BPMNPlane_craft_graph" bpmnElement="craft_graph">
       <bpmndi:BPMNShape id="craft_start_di" bpmnElement="craft_start">
-        <dc:Bounds x="57" y="52" width="36" height="36" />
+        <dc:Bounds x="57" y="102" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_draft_entry_di" bpmnElement="gw_draft_entry" isMarkerVisible="true">
-        <dc:Bounds x="200" y="45" width="50" height="50" />
+        <dc:Bounds x="160" y="95" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="155" y="155" width="60" height="20" />
+        </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="draft_fragment_di" bpmnElement="draft_fragment">
-        <dc:Bounds x="325" y="30" width="100" height="80" />
+        <dc:Bounds x="270" y="80" width="100" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="lint_fragment_di" bpmnElement="lint_fragment">
-        <dc:Bounds x="475" y="30" width="100" height="80" />
+        <dc:Bounds x="420" y="80" width="100" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="layout_fragment_di" bpmnElement="layout_fragment">
-        <dc:Bounds x="625" y="30" width="100" height="80" />
+        <dc:Bounds x="570" y="80" width="100" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_lint_di" bpmnElement="gw_lint" isMarkerVisible="true">
-        <dc:Bounds x="800" y="45" width="50" height="50" />
+        <dc:Bounds x="720" y="95" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="700" y="65" width="90" height="20" />
+        </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="review_fragment_di" bpmnElement="review_fragment">
-        <dc:Bounds x="925" y="30" width="100" height="80" />
+        <dc:Bounds x="830" y="80" width="100" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_approve_di" bpmnElement="gw_approve" isMarkerVisible="true">
-        <dc:Bounds x="1100" y="45" width="50" height="50" />
+        <dc:Bounds x="980" y="95" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="970" y="65" width="70" height="20" />
+        </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="apply_extension_di" bpmnElement="apply_extension">
-        <dc:Bounds x="1225" y="30" width="100" height="80" />
+        <dc:Bounds x="1090" y="80" width="100" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="craft_applied_di" bpmnElement="craft_applied">
-        <dc:Bounds x="1407" y="52" width="36" height="36" />
+        <dc:Bounds x="1242" y="102" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_rejected_entry_di" bpmnElement="gw_rejected_entry" isMarkerVisible="true">
-        <dc:Bounds x="1550" y="45" width="50" height="50" />
+        <dc:Bounds x="1115" y="215" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1115" y="275" width="50" height="20" />
+        </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="craft_rejected_di" bpmnElement="craft_rejected">
-        <dc:Bounds x="1707" y="52" width="36" height="36" />
+        <dc:Bounds x="1242" y="222" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNEdge id="to_draft_di" bpmnElement="to_draft">
-        <di:waypoint x="93" y="70" />
-        <di:waypoint x="200" y="70" />
+        <di:waypoint x="93" y="120" />
+        <di:waypoint x="160" y="120" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="into_draft_fragment_di" bpmnElement="into_draft_fragment">
-        <di:waypoint x="250" y="70" />
-        <di:waypoint x="325" y="70" />
+        <di:waypoint x="210" y="120" />
+        <di:waypoint x="270" y="120" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="to_lint_di" bpmnElement="to_lint">
-        <di:waypoint x="425" y="70" />
-        <di:waypoint x="475" y="70" />
+        <di:waypoint x="370" y="120" />
+        <di:waypoint x="420" y="120" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="to_layout_di" bpmnElement="to_layout">
-        <di:waypoint x="575" y="70" />
-        <di:waypoint x="625" y="70" />
+        <di:waypoint x="520" y="120" />
+        <di:waypoint x="570" y="120" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="to_gw_lint_di" bpmnElement="to_gw_lint">
-        <di:waypoint x="725" y="70" />
-        <di:waypoint x="800" y="70" />
+        <di:waypoint x="670" y="120" />
+        <di:waypoint x="720" y="120" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="lint_ok_di" bpmnElement="lint_ok">
-        <di:waypoint x="850" y="70" />
-        <di:waypoint x="925" y="70" />
+        <di:waypoint x="770" y="120" />
+        <di:waypoint x="830" y="120" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="lint_exhausted_di" bpmnElement="lint_exhausted">
-        <di:waypoint x="825" y="95" />
-        <di:waypoint x="825" y="140" />
-        <di:waypoint x="1575" y="140" />
-        <di:waypoint x="1575" y="95" />
+        <di:waypoint x="745" y="145" />
+        <di:waypoint x="745" y="240" />
+        <di:waypoint x="1115" y="240" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="lint_retry_di" bpmnElement="lint_retry">
-        <di:waypoint x="825" y="95" />
-        <di:waypoint x="825" y="140" />
-        <di:waypoint x="375" y="140" />
-        <di:waypoint x="375" y="110" />
+        <di:waypoint x="745" y="95" />
+        <di:waypoint x="745" y="30" />
+        <di:waypoint x="185" y="30" />
+        <di:waypoint x="185" y="95" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="to_gw_approve_di" bpmnElement="to_gw_approve">
-        <di:waypoint x="1025" y="70" />
-        <di:waypoint x="1100" y="70" />
+        <di:waypoint x="930" y="120" />
+        <di:waypoint x="980" y="120" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="approved_di" bpmnElement="approved">
-        <di:waypoint x="1150" y="70" />
-        <di:waypoint x="1225" y="70" />
+        <di:waypoint x="1030" y="120" />
+        <di:waypoint x="1090" y="120" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="rejected_di" bpmnElement="rejected">
-        <di:waypoint x="1125" y="95" />
-        <di:waypoint x="1125" y="140" />
-        <di:waypoint x="1575" y="140" />
-        <di:waypoint x="1575" y="95" />
+        <di:waypoint x="1005" y="145" />
+        <di:waypoint x="1005" y="240" />
+        <di:waypoint x="1115" y="240" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="to_applied_di" bpmnElement="to_applied">
-        <di:waypoint x="1325" y="70" />
-        <di:waypoint x="1407" y="70" />
+        <di:waypoint x="1190" y="120" />
+        <di:waypoint x="1242" y="120" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="into_craft_rejected_di" bpmnElement="into_craft_rejected">
-        <di:waypoint x="1600" y="70" />
-        <di:waypoint x="1707" y="70" />
+        <di:waypoint x="1165" y="240" />
+        <di:waypoint x="1242" y="240" />
       </bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>
+  <!-- ga:modelHash:299e0143729ae64a88598de2a835a45fca7bd272370ba9ffb8851b58c4faa8cf -->
 </bpmn:definitions>

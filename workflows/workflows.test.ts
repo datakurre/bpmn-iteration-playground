@@ -7,6 +7,7 @@ import zeebe from "zeebe-bpmn-moddle/resources/zeebe.json" with { type: "json" }
 import { activityProperties, harnessOf, ioMapping, type ActivityLike } from "../src/agent/zeebe.ts";
 import { firstActivity, toSourceContext } from "../src/agent/graph.ts";
 import { createHarnesses, harnessIOContract, type HarnessDeps } from "../src/agent/harnesses.ts";
+import { extractModelInfo, verifyModelHash } from "../src/agent/versioning.ts";
 
 const DIR = join(import.meta.dirname);
 const files = readdirSync(DIR).filter((f) => f.endsWith(".bpmn"));
@@ -289,6 +290,18 @@ describe.each(files)("%s", (file) => {
     const xml = readFileSync(join(DIR, file), "utf8");
     expect(xml).not.toMatch(/<camunda:/);
     expect(xml).not.toMatch(/\$\{/);
+  });
+
+  it("carries exporter and version metadata", () => {
+    const xml = readFileSync(join(DIR, file), "utf8");
+    const info = extractModelInfo(xml);
+    expect(info.version).toBeTruthy();
+    expect(xml).toContain('exporter="graph-agent"');
+  });
+
+  it("carries a valid self-hash confirming it is unmodified", () => {
+    const xml = readFileSync(join(DIR, file), "utf8");
+    expect(verifyModelHash(xml)).toBe(true);
   });
 });
 

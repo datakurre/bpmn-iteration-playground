@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_session" targetNamespace="http://graph-agent/bpmn">
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_session" targetNamespace="http://graph-agent/bpmn" exporter="graph-agent" exporterVersion="0.1.0">
   <bpmn:process id="session" name="Agent session" isExecutable="true">
     <bpmn:documentation>What a session looks like before it has done anything.
 
@@ -104,50 +104,57 @@ self-documenting artifact.</bpmn:documentation>
   <bpmndi:BPMNDiagram id="BPMNDiagram_session">
     <bpmndi:BPMNPlane id="BPMNPlane_session" bpmnElement="session">
       <bpmndi:BPMNShape id="session_start_di" bpmnElement="session_start">
-        <dc:Bounds x="57" y="52" width="36" height="36" />
+        <dc:Bounds x="57" y="102" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_intent_entry_di" bpmnElement="gw_intent_entry" isMarkerVisible="true">
-        <dc:Bounds x="200" y="45" width="50" height="50" />
+        <dc:Bounds x="170" y="95" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="165" y="155" width="60" height="20" />
+        </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="await_intent_di" bpmnElement="await_intent">
-        <dc:Bounds x="325" y="30" width="100" height="80" />
+        <dc:Bounds x="290" y="80" width="100" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_more_di" bpmnElement="gw_more" isMarkerVisible="true">
-        <dc:Bounds x="500" y="45" width="50" height="50" />
+        <dc:Bounds x="460" y="95" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="445" y="65" width="80" height="20" />
+        </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="craft_di" bpmnElement="craft">
-        <dc:Bounds x="625" y="30" width="100" height="80" />
+        <dc:Bounds x="580" y="80" width="100" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="session_end_di" bpmnElement="session_end">
-        <dc:Bounds x="657" y="192" width="36" height="36" />
+        <dc:Bounds x="612" y="242" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNEdge id="to_intent_di" bpmnElement="to_intent">
-        <di:waypoint x="93" y="70" />
-        <di:waypoint x="200" y="70" />
+        <di:waypoint x="93" y="120" />
+        <di:waypoint x="170" y="120" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="into_await_intent_di" bpmnElement="into_await_intent">
-        <di:waypoint x="250" y="70" />
-        <di:waypoint x="325" y="70" />
+        <di:waypoint x="220" y="120" />
+        <di:waypoint x="290" y="120" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="to_gw_more_di" bpmnElement="to_gw_more">
-        <di:waypoint x="425" y="70" />
-        <di:waypoint x="500" y="70" />
+        <di:waypoint x="390" y="120" />
+        <di:waypoint x="460" y="120" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="more_work_di" bpmnElement="more_work">
-        <di:waypoint x="550" y="70" />
-        <di:waypoint x="625" y="70" />
+        <di:waypoint x="510" y="120" />
+        <di:waypoint x="580" y="120" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="session_over_di" bpmnElement="session_over">
-        <di:waypoint x="525" y="95" />
-        <di:waypoint x="525" y="210" />
-        <di:waypoint x="657" y="210" />
+        <di:waypoint x="485" y="145" />
+        <di:waypoint x="485" y="260" />
+        <di:waypoint x="612" y="260" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="back_to_intent_di" bpmnElement="back_to_intent">
-        <di:waypoint x="675" y="110" />
-        <di:waypoint x="675" y="140" />
-        <di:waypoint x="225" y="140" />
-        <di:waypoint x="225" y="95" />
+        <di:waypoint x="630" y="80" />
+        <di:waypoint x="630" y="30" />
+        <di:waypoint x="195" y="30" />
+        <di:waypoint x="195" y="95" />
       </bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>
+  <!-- ga:modelHash:0d6c0bfcb57ffb3f32a1403034e8cb27429f582d0e28d866367dc58631e315de -->
 </bpmn:definitions>
