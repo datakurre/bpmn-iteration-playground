@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { mountShell, relativeTime, statusChip } from "./shell";
+import { mountShell, projectName, relativeTime, statusChip } from "./shell";
+
 
 beforeEach(() => {
   document.body.innerHTML = "";
@@ -74,3 +75,14 @@ describe("statusChip", () => {
     expect(statusChip("completed")).toContain("text-muted");
   });
 });
+
+describe("projectName", () => {
+  it("extracts the project name from a path", () => {
+    expect(projectName("/path/to/my-project")).toBe("my-project");
+    expect(projectName("/path/to/my-project/")).toBe("my-project");
+    expect(projectName("my-project")).toBe("my-project");
+    expect(projectName("")).toBe("");
+    expect(projectName(undefined)).toBe("");
+  });
+});
+

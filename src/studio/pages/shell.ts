@@ -71,3 +71,10 @@ export function statusChip(status: string): string {
           : "text-muted border-line bg-panel-header";
   return `<span class="text-[10px] uppercase tracking-wide font-bold px-1.5 py-0.5 rounded border ${tone}">${escapeHtml(status)}</span>`;
 }
+
+/** Short display name for a project directory path. */
+export function projectName(id?: string): string {
+  if (!id) return "";
+  return id.split("/").filter(Boolean).pop() ?? id;
+}
+

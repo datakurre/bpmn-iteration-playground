@@ -61,9 +61,9 @@ const graphWithoutGate = `<?xml version="1.0" encoding="UTF-8"?>
   </bpmn:process>
 </bpmn:definitions>`;
 
-function createSession(id: string, live: string[] = []): SessionStore {
+function createSession(id: string, live: string[] = [], sessionProject: string = project): SessionStore {
   const store = new SessionStore(paths, id);
-  store.create(project);
+  store.create(sessionProject);
   store.appendGraph(graph, "started", []);
   store.update((meta) => {
     meta.visited = live;
@@ -81,6 +81,38 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await studio.close();
+});
+
+describe("GET /api/sessions", () => {
+  it("returns all sessions across projects by default", async () => {
+    createSession("s1", [], project);
+    createSession("s2", [], "/tmp/other-project");
+
+    const res = await fetch(`${studio.url}/api/sessions`);
+    expect(res.status).toBe(200);
+    const sessions = (await res.json()) as Array<{ id: string; project: string }>;
+    expect(sessions.map((s) => s.id).sort()).toEqual(["s1", "s2"]);
+  });
+
+  it("filters to project when scope=project is requested", async () => {
+    createSession("s1", [], project);
+    createSession("s2", [], "/tmp/other-project");
+
+    const res = await fetch(`${studio.url}/api/sessions?scope=project`);
+    expect(res.status).toBe(200);
+    const sessions = (await res.json()) as Array<{ id: string; project: string }>;
+    expect(sessions.map((s) => s.id)).toEqual(["s1"]);
+  });
+
+  it("returns all sessions when scope=all is requested", async () => {
+    createSession("s1", [], project);
+    createSession("s2", [], "/tmp/other-project");
+
+    const res = await fetch(`${studio.url}/api/sessions?scope=all`);
+    expect(res.status).toBe(200);
+    const sessions = (await res.json()) as Array<{ id: string; project: string }>;
+    expect(sessions.map((s) => s.id).sort()).toEqual(["s1", "s2"]);
+  });
 });
 
 describe("GET /api/sessions/:id/graph", () => {

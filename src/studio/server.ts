@@ -168,9 +168,13 @@ async function handle(
     return sendJson(res, 200, info);
   }
 
-  // ---- sessions, this project's unless asked otherwise
+  // ---- sessions, all sessions across projects unless scoped
   if (path === "/api/sessions") {
-    const scope = url.searchParams.get("scope") === "all" ? undefined : project;
+    const scopeParam = url.searchParams.get("scope");
+    const scope =
+      scopeParam === "project"
+        ? project
+        : (url.searchParams.get("project") ?? (scopeParam === "all" || !scopeParam ? undefined : scopeParam));
     return sendJson(res, 200, listSessions(paths, scope).map((s) => s.summary()));
   }
   const sessionMatch = /^\/api\/sessions\/([^/]+)$/.exec(path);

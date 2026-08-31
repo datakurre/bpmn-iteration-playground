@@ -9,10 +9,31 @@
  * Usage: node scripts/verify-editor.mjs [workspaceDir]
  */
 import { chromium } from "playwright-core";
-import { mkdtempSync, mkdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, existsSync, readdirSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+function findChromium() {
+  if (process.env.CHROMIUM_PATH) return process.env.CHROMIUM_PATH;
+  if (existsSync("/opt/pw-browsers/chromium")) return "/opt/pw-browsers/chromium";
+  const which = spawnSync("which", ["chromium"], { encoding: "utf8" });
+  if (which.status === 0 && which.stdout.trim() && existsSync(which.stdout.trim())) return which.stdout.trim();
+  const whichChrome = spawnSync("which", ["google-chrome"], { encoding: "utf8" });
+  if (whichChrome.status === 0 && whichChrome.stdout.trim() && existsSync(whichChrome.stdout.trim())) return whichChrome.stdout.trim();
+  if (existsSync("/nix/store")) {
+    try {
+      const entries = readdirSync("/nix/store");
+      for (const e of entries) {
+        if (e.includes("profile") || e.includes("chromium")) {
+          const candidate = join("/nix/store", e, "bin", "chromium");
+          if (existsSync(candidate)) return candidate;
+        }
+      }
+    } catch {}
+  }
+  return "/opt/pw-browsers/chromium";
+}
 
 // A throwaway XDG home, so verification never touches the real graph library.
 const home = mkdtempSync(join(tmpdir(), "graph-agent-verify-"));
@@ -50,7 +71,7 @@ let browser;
 
 try {
   browser = await chromium.launch({
-    executablePath: process.env.CHROMIUM_PATH ?? "/opt/pw-browsers/chromium",
+    executablePath: findChromium(),
     args: ["--no-sandbox", "--disable-dev-shm-usage"],
   });
   const page = await browser.newPage();

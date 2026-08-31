@@ -1,7 +1,9 @@
 import { $, escapeHtml } from "../../js/lib/dom";
 import { connectStudioEvents } from "./live";
-import { mountShell, relativeTime, statusChip } from "./shell";
-import type { GraphSummary, SessionSummary } from "../types";
+import { mountShell, projectName, relativeTime, statusChip } from "./shell";
+import type { GraphSummary, ProjectInfo, SessionSummary } from "../types";
+
+let currentProject: ProjectInfo | null = null;
 
 async function loadSessions(): Promise<void> {
   const host = $("sessions");
@@ -12,17 +14,27 @@ async function loadSessions(): Promise<void> {
   const sessions: SessionSummary[] = await res.json();
   empty?.classList.toggle("hidden", sessions.length > 0);
   host.innerHTML = sessions
-    .map(
-      (s) => `
+    .map((s) => {
+      const isCurrent = Boolean(currentProject && s.project === currentProject.id);
+      const projectBadge = isCurrent
+        ? `<span class="text-[10px] uppercase tracking-wide font-bold px-1.5 py-0.5 rounded border text-accent border-accent-border bg-accent-dim">this project</span>`
+        : `<span class="text-[10px] text-muted border border-line bg-panel-header px-1.5 py-0.5 rounded font-mono truncate max-w-[140px]" title="${escapeHtml(s.project || "")}">${escapeHtml(projectName(s.project))}</span>`;
+
+      return `
       <a href="/session?id=${encodeURIComponent(s.id)}"
-         class="flex items-center justify-between gap-3 bg-panel border border-line rounded-lg px-3 py-2 hover:bg-card-hover hover:border-line-highlight transition-colors">
+         class="flex items-center justify-between gap-3 bg-panel border ${
+           isCurrent ? "border-accent-border" : "border-line"
+         } rounded-lg px-3 py-2 hover:bg-card-hover hover:border-line-highlight transition-colors">
         <span class="min-w-0">
           <span class="block font-semibold text-ink truncate">${escapeHtml(s.name || s.id)}</span>
-          <span class="block text-xs text-muted">${s.turnCount} turn${s.turnCount === 1 ? "" : "s"} &middot; ${escapeHtml(relativeTime(s.updatedAt))}</span>
+          <span class="block text-xs text-muted truncate">${escapeHtml(projectName(s.project))} &middot; ${s.turnCount} turn${s.turnCount === 1 ? "" : "s"} &middot; ${escapeHtml(relativeTime(s.updatedAt))}</span>
         </span>
-        ${statusChip(s.status)}
-      </a>`,
-    )
+        <div class="flex items-center gap-2 shrink-0">
+          ${projectBadge}
+          ${statusChip(s.status)}
+        </div>
+      </a>`;
+    })
     .join("");
 }
 
@@ -47,7 +59,7 @@ async function loadGraphs(): Promise<void> {
 }
 
 async function init(): Promise<void> {
-  await mountShell("project");
+  currentProject = await mountShell("project");
   await Promise.all([loadSessions(), loadGraphs()]);
 
   connectStudioEvents("/ws", (event) => {
@@ -57,3 +69,4 @@ async function init(): Promise<void> {
 }
 
 void init();
+

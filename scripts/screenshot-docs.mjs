@@ -8,10 +8,31 @@
  * Usage: node scripts/screenshot-docs.mjs [outDir]
  */
 import { chromium } from "playwright-core";
-import { mkdtempSync, mkdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, existsSync, readdirSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+function findChromium() {
+  if (process.env.CHROMIUM_PATH) return process.env.CHROMIUM_PATH;
+  if (existsSync("/opt/pw-browsers/chromium")) return "/opt/pw-browsers/chromium";
+  const which = spawnSync("which", ["chromium"], { encoding: "utf8" });
+  if (which.status === 0 && which.stdout.trim() && existsSync(which.stdout.trim())) return which.stdout.trim();
+  const whichChrome = spawnSync("which", ["google-chrome"], { encoding: "utf8" });
+  if (whichChrome.status === 0 && whichChrome.stdout.trim() && existsSync(whichChrome.stdout.trim())) return whichChrome.stdout.trim();
+  if (existsSync("/nix/store")) {
+    try {
+      const entries = readdirSync("/nix/store");
+      for (const e of entries) {
+        if (e.includes("profile") || e.includes("chromium")) {
+          const candidate = join("/nix/store", e, "bin", "chromium");
+          if (existsSync(candidate)) return candidate;
+        }
+      }
+    } catch {}
+  }
+  return "/opt/pw-browsers/chromium";
+}
 
 const outDir = process.argv[2] ?? join(import.meta.dirname, "..", "docs", "screenshots");
 mkdirSync(outDir, { recursive: true });
@@ -31,6 +52,7 @@ function run(args) {
   return result.stdout;
 }
 
+spawnSync("git", ["init"], { cwd: root });
 run(["init"]);
 const runOutput = run(["run", "verify this workspace", "--dry-run", "--graph", "shell-demo"]);
 const sessionId = /^session (\S+)/m.exec(runOutput)?.[1];
@@ -68,7 +90,7 @@ const shots = [
 let browser;
 try {
   browser = await chromium.launch({
-    executablePath: process.env.CHROMIUM_PATH ?? "/opt/pw-browsers/chromium",
+    executablePath: findChromium(),
     args: ["--no-sandbox", "--disable-dev-shm-usage"],
   });
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
