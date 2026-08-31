@@ -290,5 +290,65 @@ describe("graph-agent tui --resume (issue #67)", () => {
     expect(rendered).toContain("initial user prompt");
     expect(rendered).toContain("Done.");
   });
+
+  it("waits for interactive prompt in editor when starting without initial prompt", async () => {
+    const directGraph = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_tui_direct" xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" targetNamespace="http://graph-agent/bpmn">
+  <bpmn:process id="tui_direct" isExecutable="true">
+    <bpmn:startEvent id="start">
+      <bpmn:outgoing>to_turn</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="to_turn" sourceRef="start" targetRef="turn" />
+    <bpmn:serviceTask id="turn" name="Respond">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="agent:turn" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=prompt" target="prompt" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>to_turn</bpmn:incoming>
+      <bpmn:outgoing>to_end</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="to_end" sourceRef="turn" targetRef="end" />
+    <bpmn:endEvent id="end">
+      <bpmn:incoming>to_end</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+
+    const directGraphFile = join(home, "direct.bpmn");
+    writeFileSync(directGraphFile, directGraph);
+
+    const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", name: "Faux" }] });
+    faux.setResponses([fauxAssistantMessage([fauxText("Prompt received.")], { stopReason: "stop" })] as never);
+
+    let handles: TuiHandles | undefined;
+    const outcomePromise = startTui({
+      paths,
+      project: home,
+      start: { kind: "run", graphPath: directGraphFile, graphLabel: "direct" },
+      model: faux.getModel(),
+      modelLabel: "faux-model",
+      systemPrompt: "test agent",
+      streamFn: (model, context, options) => faux.provider.streamSimple(model, context, options),
+      tools: createNoopToolExecutor([]),
+      terminal: new FakeTerminal(),
+      onReady: (ready) => {
+        handles = ready;
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(handles?.root.render(80).join("\n")).toContain("enter prompt to start");
+    });
+
+    handles?.editor.onSubmit?.("my custom prompt from editor");
+    const result = await outcomePromise;
+    expect(result.outcome).toBe("completed");
+
+    const rendered = handles?.root.render(80).join("\n") ?? "";
+    expect(rendered).toContain("my custom prompt from editor");
+    expect(rendered).toContain("Prompt received.");
+  });
 });
 

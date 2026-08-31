@@ -11,9 +11,10 @@
  * turn on its own.
  */
 import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { pendingGates } from "../agent/graph.ts";
+import { firstActivity, pendingGates } from "../agent/graph.ts";
 import type { Paths } from "../agent/paths.ts";
 import type { PiSession } from "../agent/pi-session.ts";
 import { resumeSession, runSession, type RunSessionOptions, type SessionOutcome } from "../agent/runner.ts";
@@ -136,10 +137,12 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
 
   const trail: string[] = [];
   let activeGate: GateWizard | undefined;
+  let waitingForPrompt: ((prompt: string | undefined) => void) | undefined;
 
   function refreshStatus(state: "running" | "idle" | "waiting" = "running"): void {
     if (!store.exists()) {
-      statusText.setText(`graph ${graphLabel} · model ${options.modelLabel} · session ${sessionId} · starting…`);
+      const stateSuffix = state === "idle" ? "enter prompt to start" : "starting…";
+      statusText.setText(`graph ${graphLabel} · model ${options.modelLabel} · session ${sessionId} · ${stateSuffix}`);
       tui.requestRender();
       return;
     }
@@ -236,6 +239,15 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
     editor.setText("");
     if (!text) return;
 
+    if (text === "/exit" || text === "/quit") {
+      if (waitingForPrompt) {
+        const resolve = waitingForPrompt;
+        waitingForPrompt = undefined;
+        resolve(undefined);
+        return;
+      }
+    }
+
     if (text === "/help") {
       transcript.addChild(
         new Text(
@@ -290,6 +302,16 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
       return;
     }
 
+    if (waitingForPrompt) {
+      const resolve = waitingForPrompt;
+      waitingForPrompt = undefined;
+      transcript.addChild(userMessageComponent(text));
+      refreshStatus("running");
+      tui.requestRender();
+      resolve(text);
+      return;
+    }
+
     if (!store.exists()) return;
 
     if (text.startsWith("/follow ")) {
@@ -324,6 +346,21 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
 
   tui.start();
   try {
+    let promptToUse = options.start.kind === "run" ? options.start.prompt : undefined;
+    if (options.start.kind === "run" && !promptToUse) {
+      const xml = existsSync(options.start.graphPath) ? readFileSync(options.start.graphPath, "utf8") : "";
+      const first = xml ? await firstActivity(xml) : undefined;
+      if (first?.type !== "bpmn:UserTask") {
+        refreshStatus("idle");
+        promptToUse = await new Promise<string | undefined>((resolve) => {
+          waitingForPrompt = resolve;
+        });
+        if (!promptToUse) {
+          return { sessionId, outcome: "stopped", turns: 0 };
+        }
+      }
+    }
+
     const shared = {
       paths: options.paths,
       project: options.project,
@@ -347,7 +384,7 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
         : await runSession({
             ...shared,
             graphPath: options.start.graphPath,
-            prompt: options.start.prompt,
+            prompt: promptToUse,
             name: options.start.name,
             sessionId,
           });
