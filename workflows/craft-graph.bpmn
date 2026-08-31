@@ -96,7 +96,7 @@ republish is an inert overwrite there.</bpmn:documentation>
         <zeebe:ioMapping>
           <zeebe:input source="=if intent = null then prompt else intent" target="prompt" />
           <zeebe:input source="=lint_feedback" target="lint_feedback" />
-          <zeebe:output source="=text" target="fragment" />
+          <zeebe:output source="text" target="fragment" />
           <zeebe:output source="=null" target="extend_status" />
           <zeebe:output source="=prompt" target="prompt" />
         </zeebe:ioMapping>
@@ -116,11 +116,11 @@ apply_extension) to read.</bpmn:documentation>
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="graph:lint" />
         <zeebe:ioMapping>
-          <zeebe:input source="=fragment" target="fragment" />
-          <zeebe:output source="=status" target="lint_status" />
-          <zeebe:output source="=summary" target="lint_feedback" />
-          <zeebe:output source="=attempt" target="lint_attempts" />
-          <zeebe:output source="=fragment" target="fragment" />
+          <zeebe:input source="fragment" target="fragment" />
+          <zeebe:output source="status" target="lint_status" />
+          <zeebe:output source="summary" target="lint_feedback" />
+          <zeebe:output source="attempt" target="lint_attempts" />
+          <zeebe:output source="fragment" target="fragment" />
         </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>to_lint</bpmn:incoming>
@@ -131,8 +131,8 @@ apply_extension) to read.</bpmn:documentation>
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="graph:layout" />
         <zeebe:ioMapping>
-          <zeebe:input source="=fragment" target="fragment" />
-          <zeebe:output source="=fragment" target="fragment" />
+          <zeebe:input source="fragment" target="fragment" />
+          <zeebe:output source="fragment" target="fragment" />
         </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>to_layout</bpmn:incoming>
@@ -188,8 +188,8 @@ reasoning as gw_draft_entry above.</bpmn:documentation>
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="graph:extend" />
         <zeebe:ioMapping>
-          <zeebe:input source="=fragment" target="fragment" />
-          <zeebe:output source="=status" target="extend_status" />
+          <zeebe:input source="fragment" target="fragment" />
+          <zeebe:output source="status" target="extend_status" />
         </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>approved</bpmn:incoming>
