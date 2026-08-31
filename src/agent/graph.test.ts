@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { Engine } from "bpmn-engine";
 import { EventEmitter } from "node:events";
 import {
+  applyGraphOps,
   checkMigration,
   checkSplice,
   definitionsId,
@@ -15,6 +16,7 @@ import {
   withDefinitionsId,
   type EngineConstructor,
   type EngineState,
+  type GraphOp,
 } from "./graph.ts";
 
 const EngineCtor = Engine as unknown as EngineConstructor;
@@ -450,6 +452,388 @@ describe("toSourceContext", () => {
   it("keys the context on the definitions id, which recovery matches on", async () => {
     expect((await toSourceContext(v1)).id).toBe("Defs_session");
   });
+});
+
+describe("checkSplice with an element-type allowlist", () => {
+  const base = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="start" />
+  </bpmn:process>
+</bpmn:definitions>`;
+  const allowed = new Set(["bpmn:StartEvent", "bpmn:SequenceFlow", "bpmn:ServiceTask", "bpmn:EndEvent"]);
+
+  function withGateway(): string {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="start" />
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="gw" />
+    <bpmn:inclusiveGateway id="gw" />
+  </bpmn:process>
+</bpmn:definitions>`;
+  }
+  function withServiceTask(): string {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="start" />
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="t" />
+    <bpmn:serviceTask id="t" />
+  </bpmn:process>
+</bpmn:definitions>`;
+  }
+
+  it("accepts a new element whose type is allowed", async () => {
+    const result = await checkSplice(base, withServiceTask(), undefined, undefined, allowed);
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects a new element whose type is not allowed, naming the allowed set", async () => {
+    const result = await checkSplice(base, withGateway(), undefined, undefined, allowed);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/bpmn:InclusiveGateway/);
+    expect(result.reason).toMatch(/bpmn:ServiceTask/);
+  });
+
+  it("does not check element types when no allowlist is given -- existing callers are unaffected", async () => {
+    const result = await checkSplice(base, withGateway());
+    expect(result.ok).toBe(true);
+  });
+
+  it("does not re-validate an existing element's type -- only newly added ones", async () => {
+    const already = withGateway();
+    const result = await checkSplice(already, already, undefined, undefined, allowed);
+    expect(result.ok).toBe(true);
+  });
+
+  it("checkMigration applies the same allowlist to a genuinely new element", async () => {
+    const result = await checkMigration(base, withGateway(), new Set(), undefined, undefined, allowed);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/bpmn:InclusiveGateway/);
+  });
+});
+
+describe("applyGraphOps", () => {
+  const NS = 'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"';
+  const base = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions ${NS} id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="start" />
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="gate" />
+    <bpmn:userTask id="gate" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+  it("appendShape adds a new node wired from an existing one, reported as additive by checkSplice", async () => {
+    const ops: GraphOp[] = [{ op: "appendShape", type: "bpmn:ServiceTask", id: "run_it", after: "gate" }];
+    const merged = await applyGraphOps(base, ops);
+    const result = await checkSplice(base, merged);
+    expect(result.ok).toBe(true);
+    expect(result.removed).toEqual([]);
+    expect(result.added.sort()).toEqual(["Flow_ops_1", "run_it"]);
+  });
+
+  it("setTaskDefinition wires zeebe:taskDefinition/ioMapping onto a node created earlier in the same batch", async () => {
+    const ops: GraphOp[] = [
+      { op: "appendShape", type: "bpmn:ServiceTask", id: "run_it", after: "gate" },
+      {
+        op: "setTaskDefinition",
+        id: "run_it",
+        jobType: "shell",
+        headers: { command: "npm test" },
+        outputs: [{ source: "=exit_code", target: "rc" }],
+      },
+    ];
+    const merged = await applyGraphOps(base, ops);
+    expect(merged).toContain('<zeebe:taskDefinition type="shell"');
+    expect(merged).toContain('key="command"');
+    expect(merged).toContain('target="rc"');
+    const result = await checkSplice(base, merged, new Set(["shell"]));
+    expect(result.ok).toBe(true);
+  });
+
+  it("insertShape splices a step into an existing flow, keeping the flow's own id", async () => {
+    const ops: GraphOp[] = [{ op: "insertShape", type: "bpmn:ServiceTask", id: "mid", into: "f1" }];
+    const merged = await applyGraphOps(base, ops);
+    const result = await checkSplice(base, merged);
+    expect(result.ok).toBe(true);
+    expect(result.removed).toEqual([]);
+    // f1 (start -> mid) keeps its id; only the new node and the new
+    // mid -> gate flow are genuinely additive.
+    expect(result.added.sort()).toEqual(["Flow_ops_1", "mid"]);
+    expect(merged).toMatch(/<bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="mid"/);
+  });
+
+  it("connect wires two nodes created earlier in the same op list", async () => {
+    const ops: GraphOp[] = [
+      { op: "appendShape", type: "bpmn:ExclusiveGateway", id: "gw", after: "gate" },
+      { op: "appendShape", type: "bpmn:EndEvent", id: "a_end", after: "gw" },
+      { op: "connect", from: "gw", to: "a_end", id: "extra_flow" },
+    ];
+    const merged = await applyGraphOps(base, ops);
+    const result = await checkSplice(base, merged);
+    expect(result.ok).toBe(true);
+    // appendShape wires its own connecting flow each time (Flow_ops_1 for gw,
+    // Flow_ops_2 for a_end); "connect" adds one more, explicitly-named, flow
+    // between the two on top of that.
+    expect(result.added.sort()).toEqual(["Flow_ops_1", "Flow_ops_2", "a_end", "extra_flow", "gw"]);
+  });
+
+  it("createProcess + insertShape(CallActivity) adds a sibling process reachable by calledElement", async () => {
+    const ops: GraphOp[] = [
+      { op: "createProcess", id: "sub_graph" },
+      { op: "insertShape", type: "bpmn:CallActivity", id: "call_sub", into: "f1", calledElement: "sub_graph" },
+    ];
+    const merged = await applyGraphOps(base, ops);
+    expect(merged).toContain('<bpmn:process id="sub_graph"');
+    expect(merged).toContain('isExecutable="false"');
+    expect(merged).toMatch(/<bpmn:callActivity id="call_sub"[^>]*calledElement="sub_graph"/);
+    const result = await checkSplice(base, merged);
+    expect(result.ok).toBe(true);
+    expect(result.added).toContain("sub_graph");
+    expect(result.added).toContain("call_sub");
+  });
+
+  it("throws a clear error for an unknown target id", async () => {
+    await expect(applyGraphOps(base, [{ op: "appendShape", type: "bpmn:ServiceTask", id: "x", after: "nope" }])).rejects.toThrow(
+      /unknown element id 'nope'/,
+    );
+  });
+
+  it("throws a clear error for an unsupported type", async () => {
+    await expect(
+      applyGraphOps(base, [{ op: "appendShape", type: "bpmn:InclusiveGateway", id: "x", after: "gate" }]),
+    ).rejects.toThrow(/not supported/);
+  });
+
+  it("throws a clear error when insertShape targets something other than a sequenceFlow", async () => {
+    await expect(applyGraphOps(base, [{ op: "insertShape", type: "bpmn:ServiceTask", id: "x", into: "gate" }])).rejects.toThrow(
+      /is not a sequenceFlow/,
+    );
+  });
+
+  it("throws a clear error for a duplicate id", async () => {
+    await expect(applyGraphOps(base, [{ op: "appendShape", type: "bpmn:ServiceTask", id: "gate", after: "start" }])).rejects.toThrow(
+      /already exists/,
+    );
+  });
+
+  it("appendShape with eventDefinitionType adds a Terminate end event (closing the pre-existing gap)", async () => {
+    const ops: GraphOp[] = [
+      { op: "appendShape", type: "bpmn:EndEvent", id: "terminated", after: "gate", eventDefinitionType: "bpmn:TerminateEventDefinition" },
+    ];
+    const merged = await applyGraphOps(base, ops);
+    expect(merged).toContain("<bpmn:terminateEventDefinition");
+    const result = await checkSplice(base, merged);
+    expect(result.ok).toBe(true);
+    expect(result.added).toContain("terminated");
+  });
+
+  it("attachBoundaryEvent(timer) attaches a timeout to an existing activity, routed with a separate connect", async () => {
+    const ops: GraphOp[] = [
+      { op: "attachBoundaryEvent", id: "timeout1", attachedTo: "gate", eventDefinitionType: "bpmn:TimerEventDefinition", timerDuration: "PT30M" },
+      { op: "appendShape", type: "bpmn:EndEvent", id: "timed_out", after: "timeout1" },
+    ];
+    const merged = await applyGraphOps(base, ops);
+    expect(merged).toMatch(/<bpmn:boundaryEvent id="timeout1" attachedToRef="gate"/);
+    expect(merged).toContain("<bpmn:timeDuration");
+    expect(merged).toContain("PT30M");
+    const result = await checkSplice(base, merged);
+    expect(result.ok).toBe(true);
+    expect(result.added).toEqual(expect.arrayContaining(["timeout1", "timed_out"]));
+  });
+
+  it("attachBoundaryEvent(error) defaults to interrupting (cancelActivity's own BPMN default, so moddle omits the attribute)", async () => {
+    const ops: GraphOp[] = [
+      { op: "attachBoundaryEvent", id: "err1", attachedTo: "gate", eventDefinitionType: "bpmn:ErrorEventDefinition" },
+    ];
+    const merged = await applyGraphOps(base, ops);
+    expect(merged).toMatch(/<bpmn:boundaryEvent id="err1" attachedToRef="gate"/);
+    expect(merged).not.toContain('cancelActivity="false"');
+    expect(merged).toContain("<bpmn:errorEventDefinition");
+  });
+
+  it("attachBoundaryEvent honours cancelActivity: false (non-interrupting)", async () => {
+    const ops: GraphOp[] = [
+      { op: "attachBoundaryEvent", id: "err1", attachedTo: "gate", eventDefinitionType: "bpmn:ErrorEventDefinition", cancelActivity: false },
+    ];
+    const merged = await applyGraphOps(base, ops);
+    expect(merged).toMatch(/cancelActivity="false"/);
+  });
+
+  it("attachBoundaryEvent throws a clear error against an unknown host id", async () => {
+    await expect(
+      applyGraphOps(base, [{ op: "attachBoundaryEvent", id: "t1", attachedTo: "nope", eventDefinitionType: "bpmn:TimerEventDefinition", timerDuration: "PT1H" }]),
+    ).rejects.toThrow(/unknown element id 'nope'/);
+  });
+
+  it("a timer without timerDuration is rejected", async () => {
+    await expect(
+      applyGraphOps(base, [{ op: "appendShape", type: "bpmn:EndEvent", id: "e1", after: "gate", eventDefinitionType: "bpmn:TimerEventDefinition" }]),
+    ).rejects.toThrow(/needs a 'timerDuration'/);
+  });
+
+  it("attachBoundaryEvent rejects an out-of-scope event definition (Terminate makes no sense on a boundary event)", async () => {
+    await expect(
+      applyGraphOps(base, [
+        { op: "attachBoundaryEvent", id: "t1", attachedTo: "gate", eventDefinitionType: "bpmn:TerminateEventDefinition" as never },
+      ]),
+    ).rejects.toThrow(/not supported here/);
+  });
+
+  it("rejects a start/end event's out-of-scope event definition", async () => {
+    await expect(
+      applyGraphOps(base, [
+        { op: "appendShape", type: "bpmn:EndEvent", id: "e1", after: "gate", eventDefinitionType: "bpmn:MessageEventDefinition" },
+      ]),
+    ).rejects.toThrow(/not supported/);
+  });
+});
+
+describe("checkSplice/checkMigration reject a disallowed event definition", () => {
+  const base = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="start" />
+  </bpmn:process>
+</bpmn:definitions>`;
+  const allowedTypes = new Set(["bpmn:StartEvent", "bpmn:SequenceFlow", "bpmn:EndEvent"]);
+  const allowedEventDefs = new Set(["bpmn:TerminateEventDefinition"]);
+
+  function withEndEvent(eventDefTag: string): string {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="start" />
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="end" />
+    <bpmn:endEvent id="end">${eventDefTag}</bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+  }
+
+  it("accepts a new event whose event definition is allowed", async () => {
+    const result = await checkSplice(
+      base,
+      withEndEvent("<bpmn:terminateEventDefinition />"),
+      undefined,
+      undefined,
+      allowedTypes,
+      allowedEventDefs,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects a new event whose event definition is not allowed, naming the allowed set", async () => {
+    const result = await checkSplice(
+      base,
+      withEndEvent("<bpmn:messageEventDefinition />"),
+      undefined,
+      undefined,
+      allowedTypes,
+      allowedEventDefs,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/bpmn:MessageEventDefinition/);
+    expect(result.reason).toMatch(/bpmn:TerminateEventDefinition/);
+  });
+
+  it("does not check event definitions when no allowlist is given -- existing callers are unaffected", async () => {
+    const result = await checkSplice(base, withEndEvent("<bpmn:messageEventDefinition />"), undefined, undefined, allowedTypes);
+    expect(result.ok).toBe(true);
+  });
+
+  it("checkMigration applies the same event-definition allowlist to a genuinely new element", async () => {
+    const result = await checkMigration(
+      base,
+      withEndEvent("<bpmn:messageEventDefinition />"),
+      new Set(),
+      undefined,
+      undefined,
+      allowedTypes,
+      allowedEventDefs,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/bpmn:MessageEventDefinition/);
+  });
+});
+
+describe("bpmn-elements really executes a parallel gateway and a timer boundary event (issue: parallel gateway and boundary event support)", () => {
+  it("a parallel gateway forks into both branches and joins only once both have arrived", async () => {
+    const parallelGraph = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions id="Defs_parallel" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <process id="parallel_proc" isExecutable="true">
+    <startEvent id="start" />
+    <sequenceFlow id="f1" sourceRef="start" targetRef="fork" />
+    <parallelGateway id="fork" />
+    <sequenceFlow id="f2" sourceRef="fork" targetRef="a" />
+    <sequenceFlow id="f3" sourceRef="fork" targetRef="b" />
+    <task id="a" />
+    <task id="b" />
+    <sequenceFlow id="f4" sourceRef="a" targetRef="join" />
+    <sequenceFlow id="f5" sourceRef="b" targetRef="join" />
+    <parallelGateway id="join" />
+    <sequenceFlow id="f6" sourceRef="join" targetRef="end" />
+    <endEvent id="end" />
+  </process>
+</definitions>`;
+
+    const engine = new EngineCtor({ name: "parallel", source: parallelGraph });
+    const executed: string[] = [];
+    const listener = new EventEmitter();
+    listener.on("activity.end", (api: { id: string }) => executed.push(api.id));
+    const ended = engine.waitFor("end");
+    await engine.execute({ listener });
+    await ended;
+
+    expect(executed).toEqual(expect.arrayContaining(["fork", "a", "b", "join", "end"]));
+    // The join only ran once both branches had actually ended -- a real wait,
+    // not bpmn-elements re-triggering it once per arriving token the way a
+    // plain node with two incoming flows would (that's exactly the "fake
+    // join" trap the linter forbids elsewhere).
+    expect(executed.filter((id) => id === "join")).toHaveLength(1);
+    const joinIndex = executed.indexOf("join");
+    expect(executed.indexOf("a")).toBeLessThan(joinIndex);
+    expect(executed.indexOf("b")).toBeLessThan(joinIndex);
+  });
+
+  it("a timer boundary event fires its own path and cancels the (interrupted) host activity", async () => {
+    const NS = 'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"';
+    const timerGraph = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_timer" ${NS}>
+  <bpmn:process id="timer_proc" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="wait_here" />
+    <bpmn:userTask id="wait_here">
+      <bpmn:incoming>f1</bpmn:incoming>
+    </bpmn:userTask>
+    <bpmn:boundaryEvent id="timeout" attachedToRef="wait_here">
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:timerEventDefinition>
+        <bpmn:timeDuration>PT0.05S</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="f2" sourceRef="timeout" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+
+    const engine = new EngineCtor({ name: "timer", source: timerGraph });
+    const executed: string[] = [];
+    const listener = new EventEmitter();
+    listener.on("activity.end", (api: { id: string }) => executed.push(api.id));
+    const ended = engine.waitFor("end");
+    // Never signal "wait_here" -- the only way this run reaches "end" at all
+    // is the timer firing on its own.
+    await engine.execute({ listener });
+    await ended;
+
+    expect(executed).toContain("timeout");
+    expect(executed).toContain("end");
+    // Interrupting (cancelActivity's default): the host activity is
+    // discarded when the timer fires, never reaching its own "activity.end".
+    expect(executed).not.toContain("wait_here");
+  }, 10000);
 });
 
 describe("firstActivity sees through a plain merge gateway (issue: forbid implicit merges)", () => {

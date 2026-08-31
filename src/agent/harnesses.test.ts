@@ -148,6 +148,16 @@ describe("graph:lint and graph:extend reject an unregistered job type (issue #40
 </bpmn:definitions>`;
   }
 
+  // graph:lint's input is now an ops list (GraphOp[], see src/agent/graph.ts),
+  // not a full document -- graph:extend's stays a full document (it receives
+  // whatever graph:lint already merged and published back onto `fragment`).
+  function opsWith(jobType: string): string {
+    return JSON.stringify([
+      { op: "appendShape", type: "bpmn:ServiceTask", id: "run_it", after: "start" },
+      { op: "setTaskDefinition", id: "run_it", jobType },
+    ]);
+  }
+
   function graphHarnesses(): ReturnType<typeof createHarnesses> {
     const home = mkdtempSync(join(tmpdir(), "graph-agent-jobtype-"));
     const paths = ensurePaths(
@@ -176,7 +186,7 @@ describe("graph:lint and graph:extend reject an unregistered job type (issue #40
       activityId: "lint_fragment",
       harness: "graph:lint",
       properties: {},
-      input: { fragment: fragmentWith("shell:exec") },
+      input: { fragment: opsWith("shell:exec") },
       variables: {},
     });
     expect(result.status).toBe("failed");
@@ -192,10 +202,28 @@ describe("graph:lint and graph:extend reject an unregistered job type (issue #40
       activityId: "lint_fragment",
       harness: "graph:lint",
       properties: {},
-      input: { fragment: fragmentWith("shell") },
+      input: { fragment: opsWith("shell") },
       variables: {},
     });
     expect(result.status).toBe("success");
+    expect(result.fragment).toContain('<zeebe:taskDefinition type="shell"');
+  });
+
+  it("graph:lint rejects a fragment naming an unsupported element type", async () => {
+    const harnesses = graphHarnesses();
+    const lint = harnesses["graph:lint"];
+    if (!lint) throw new Error("no 'graph:lint' harness registered");
+
+    const ops = JSON.stringify([{ op: "appendShape", type: "bpmn:InclusiveGateway", id: "gw", after: "start" }]);
+    const result = await lint({
+      activityId: "lint_fragment",
+      harness: "graph:lint",
+      properties: {},
+      input: { fragment: ops },
+      variables: {},
+    });
+    expect(result.status).toBe("failed");
+    expect(result.summary).toMatch(/not supported/);
   });
 
   it("graph:extend also refuses to commit a fragment with an unregistered job type", async () => {

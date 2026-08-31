@@ -51,6 +51,7 @@ declare global {
     ElementTemplateChooserModule?: unknown;
     ElementTemplateIconRendererModule?: unknown;
     ElementTemplatesExtendModule?: unknown;
+    SupportedElementsRulesModule?: unknown;
   }
 }
 

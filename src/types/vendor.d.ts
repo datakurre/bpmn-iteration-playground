@@ -23,6 +23,10 @@ declare module "bpmn-moddle" {
     constructor(options?: Record<string, unknown>);
     fromXML(xml: string, typeName?: string): Promise<ParseResult>;
     toXML(element: unknown, options?: Record<string, unknown>): Promise<{ xml: string }>;
+    // Inherited from the base `Moddle` class -- builds a detached moddle
+    // object of the given type, the same primitive bpmn-js's own
+    // `BpmnFactory.create` uses to construct new elements live in the editor.
+    create(type: string, attrs?: Record<string, unknown>): ModdleElement;
   }
 }
 
@@ -49,5 +53,7 @@ declare module "bpmnlint" {
 declare module "bpmnlint/lib/resolver/node-resolver.js" {
   export default class NodeResolver {
     constructor();
+    resolveRule(pkg: string, ruleName: string): unknown;
+    resolveConfig(pkg: string, configName: string): unknown;
   }
 }

@@ -3,14 +3,19 @@
   <bpmn:process id="craft_graph" name="Craft a graph extension" isExecutable="true">
     <bpmn:documentation>Turning a prompt into new graph.
 
-The agent proposes a BPMN fragment, the fragment is laid out and linted, a human
-approves it, and only then is it spliced into the running session. Because this
-is itself a BPMN process, the act of extending the agent is as visible and as
-auditable as the work the extension goes on to do.
+The agent proposes a small list of operations (GraphOp[], src/agent/graph.ts) --
+new elements, not a whole document -- which graph:lint merges into the current
+graph before anything else runs. The merged graph is laid out and linted, a
+human approves it, and only then is it spliced into the running session.
+Because this is itself a BPMN process, the act of extending the agent is as
+visible and as auditable as the work the extension goes on to do.
 
 The splice must be additive with stable ids: bpmn-engine replays recovered child
 state by element id, so a fragment that renames or removes a live element cannot
-be recovered. graph:extend rejects those before they are applied.</bpmn:documentation>
+be recovered. graph:extend rejects those before they are applied. applyGraphOps
+only ever adds elements (or re-points an *existing* sequence flow while keeping
+its own id), so this holds by construction rather than needing the model to get
+a verbatim echo right.</bpmn:documentation>
     <bpmn:extensionElements>
       <zeebe:userTaskForm id="craft_review_form">{
   "$schema": "https://unpkg.com/@bpmn-io/form-js@1/dist/assets/form-json-schema/schema.json",
@@ -97,9 +102,31 @@ republish is an inert overwrite there.</bpmn:documentation>
         </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>into_draft_fragment</bpmn:incoming>
+      <bpmn:outgoing>to_lint</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="to_lint" sourceRef="draft_fragment" targetRef="lint_fragment" />
+    <bpmn:serviceTask id="lint_fragment" name="Merge and lint">
+      <bpmn:documentation>Runs before layout now (issue: graph_architect drafting-representation
+blocker): draft_fragment's own "fragment" output is an ops list, not a
+document, and graph:layout needs a real, complete BPMN document to lay out --
+one only exists once graph:lint has merged the ops into the current graph
+(applyGraphOps, src/agent/graph.ts). On success this republishes the merged
+document back onto "fragment" for layout_fragment (and, eventually,
+apply_extension) to read.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="graph:lint" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=fragment" target="fragment" />
+          <zeebe:output source="=status" target="lint_status" />
+          <zeebe:output source="=summary" target="lint_feedback" />
+          <zeebe:output source="=attempt" target="lint_attempts" />
+          <zeebe:output source="=fragment" target="fragment" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>to_lint</bpmn:incoming>
       <bpmn:outgoing>to_layout</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:sequenceFlow id="to_layout" sourceRef="draft_fragment" targetRef="layout_fragment" />
+    <bpmn:sequenceFlow id="to_layout" sourceRef="lint_fragment" targetRef="layout_fragment" />
     <bpmn:serviceTask id="layout_fragment" name="Auto-layout">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="graph:layout" />
@@ -109,23 +136,9 @@ republish is an inert overwrite there.</bpmn:documentation>
         </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>to_layout</bpmn:incoming>
-      <bpmn:outgoing>to_lint</bpmn:outgoing>
-    </bpmn:serviceTask>
-    <bpmn:sequenceFlow id="to_lint" sourceRef="layout_fragment" targetRef="lint_fragment" />
-    <bpmn:serviceTask id="lint_fragment" name="Lint and check splice">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="graph:lint" />
-        <zeebe:ioMapping>
-          <zeebe:input source="=fragment" target="fragment" />
-          <zeebe:output source="=status" target="lint_status" />
-          <zeebe:output source="=summary" target="lint_feedback" />
-          <zeebe:output source="=attempt" target="lint_attempts" />
-        </zeebe:ioMapping>
-      </bpmn:extensionElements>
-      <bpmn:incoming>to_lint</bpmn:incoming>
       <bpmn:outgoing>to_gw_lint</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:sequenceFlow id="to_gw_lint" sourceRef="lint_fragment" targetRef="gw_lint" />
+    <bpmn:sequenceFlow id="to_gw_lint" sourceRef="layout_fragment" targetRef="gw_lint" />
     <bpmn:exclusiveGateway id="gw_lint" name="Fragment valid?" default="lint_retry">
       <bpmn:documentation>Flows are evaluated in order, and the default is taken only when none
 matched: valid first, then out of attempts, then redraft.</bpmn:documentation>
@@ -201,10 +214,10 @@ reasoning as gw_draft_entry above.</bpmn:documentation>
       <bpmndi:BPMNShape id="draft_fragment_di" bpmnElement="draft_fragment">
         <dc:Bounds x="325" y="30" width="100" height="80" />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="layout_fragment_di" bpmnElement="layout_fragment">
+      <bpmndi:BPMNShape id="lint_fragment_di" bpmnElement="lint_fragment">
         <dc:Bounds x="475" y="30" width="100" height="80" />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="lint_fragment_di" bpmnElement="lint_fragment">
+      <bpmndi:BPMNShape id="layout_fragment_di" bpmnElement="layout_fragment">
         <dc:Bounds x="625" y="30" width="100" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_lint_di" bpmnElement="gw_lint" isMarkerVisible="true">
@@ -236,11 +249,11 @@ reasoning as gw_draft_entry above.</bpmn:documentation>
         <di:waypoint x="250" y="70" />
         <di:waypoint x="325" y="70" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="to_layout_di" bpmnElement="to_layout">
+      <bpmndi:BPMNEdge id="to_lint_di" bpmnElement="to_lint">
         <di:waypoint x="425" y="70" />
         <di:waypoint x="475" y="70" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="to_lint_di" bpmnElement="to_lint">
+      <bpmndi:BPMNEdge id="to_layout_di" bpmnElement="to_layout">
         <di:waypoint x="575" y="70" />
         <di:waypoint x="625" y="70" />
       </bpmndi:BPMNEdge>
