@@ -77,8 +77,8 @@
         }
       );
 
-      # `nix run .` starts the agent; `nix run . -- studio` opens the BPMN studio.
-      # One CLI, studio is a subcommand.
+      # `nix run .` starts the agent; `nix run .#studio` or `nix run . -- studio` opens the BPMN studio.
+      # One CLI, studio is a subcommand and also exposed as an app target.
       apps = forAllSystems (
         pkgs:
         let
@@ -86,9 +86,15 @@
             type = "app";
             program = "${self.packages.${pkgs.stdenv.hostPlatform.system}.graph-agent}/bin/graph-agent";
           };
+          studio = {
+            type = "app";
+            program = "${pkgs.writeShellScript "graph-agent-studio" ''
+              exec ${self.packages.${pkgs.stdenv.hostPlatform.system}.graph-agent}/bin/graph-agent studio "$@"
+            ''}";
+          };
         in
         {
-          inherit graph-agent;
+          inherit graph-agent studio;
           default = graph-agent;
         }
       );
