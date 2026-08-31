@@ -56,18 +56,115 @@ function paintTokens(detail: SessionDetail): void {
   };
   mark(detail.visited, "ga-visited");
   mark(detail.tokens, "ga-token");
+  paintOverlays(detail);
+}
+
+function formatCost(usd: number): string {
+  if (!usd || usd <= 0) return "$0.00";
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  return `$${usd.toFixed(2)}`;
+}
+
+function paintOverlays(detail: SessionDetail): void {
+  if (!viewer) return;
+  const overlays = viewer.get("overlays") as any;
+  try {
+    overlays.clear();
+  } catch {}
+  if (!detail.turns?.length) return;
+
+  const activityCosts = new Map<string, { cost: number; turns: number; durationMs: number }>();
+  for (const turn of detail.turns) {
+    const prev = activityCosts.get(turn.activityId) || { cost: 0, turns: 0, durationMs: 0 };
+    prev.cost += turn.usage?.cost?.total ?? 0;
+    prev.turns += 1;
+    if (turn.startedAt && turn.endedAt) prev.durationMs += turn.endedAt - turn.startedAt;
+    activityCosts.set(turn.activityId, prev);
+  }
+
+  for (const [activityId, stat] of activityCosts) {
+    try {
+      const costFormatted = stat.cost > 0 ? formatCost(stat.cost) : `${stat.turns} turn${stat.turns === 1 ? "" : "s"}`;
+      overlays.add(activityId, "cost-badge", {
+        position: { bottom: 0, right: 0 },
+        html: `<div class="font-mono text-[9px] px-1 py-0.5 rounded bg-accent text-white font-bold shadow-md cursor-pointer pointer-events-auto" title="${stat.turns} turn(s), ${formatCost(stat.cost)}">${costFormatted}</div>`,
+      });
+    } catch {}
+  }
 }
 
 function usageChip(turn: TurnRecord): string {
   if (!turn.usage) return "";
   const { input, output, cacheRead } = turn.usage;
-  // cacheRead is the number worth watching: a graph-coordinated run reuses one
-  // Pi session, so every turn after the first should read most of its prefix
-  // from cache. A run of zeros means the prefix is being invalidated somewhere.
+  const cost = turn.usage.cost?.total ? ` · ${formatCost(turn.usage.cost.total)}` : "";
   const cached = cacheRead > 0;
   return `<span class="font-mono text-[10px] px-1 py-0.5 rounded border ${
     cached ? "text-accent border-accent-border bg-accent-dim" : "text-muted border-line bg-panel-header"
-  }" title="input ${input}, output ${output}, cache read ${cacheRead}">${cached ? `cache ${cacheRead}` : "uncached"}</span>`;
+  }" title="input ${input}, output ${output}, cache read ${cacheRead}">${cached ? `cache ${cacheRead}` : "uncached"}${cost}</span>`;
+}
+
+function renderActivities(turns: TurnRecord[]): void {
+  const host = $("activities");
+  if (!host) return;
+  const map = new Map<string, { id: string; name: string; harness: string; turns: number; cost: number; tokens: number }>();
+  for (const turn of turns) {
+    const prev = map.get(turn.activityId) || {
+      id: turn.activityId,
+      name: turn.activityName || turn.activityId,
+      harness: turn.harness || "-",
+      turns: 0,
+      cost: 0,
+      tokens: 0,
+    };
+    prev.turns += 1;
+    if (turn.usage) {
+      prev.cost += turn.usage.cost?.total || 0;
+      prev.tokens += (turn.usage.input || 0) + (turn.usage.output || 0);
+    }
+    map.set(turn.activityId, prev);
+  }
+
+  if (map.size === 0) {
+    host.innerHTML = `<p class="px-3 py-4 text-muted">No activities executed yet.</p>`;
+    return;
+  }
+
+  host.innerHTML = `
+    <table class="w-full text-left border-collapse text-[11px]">
+      <thead>
+        <tr class="border-b border-line text-muted">
+          <th class="py-1 px-2 font-semibold">Activity</th>
+          <th class="py-1 px-2 font-semibold">Harness</th>
+          <th class="py-1 px-1 font-semibold text-center">Turns</th>
+          <th class="py-1 px-2 font-semibold text-right">Cost</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${[...map.values()]
+          .map(
+            (act) => `
+          <tr class="border-b border-line-subtle hover:bg-card-hover cursor-pointer" data-activity="${escapeHtml(act.id)}">
+            <td class="py-1.5 px-2 font-medium text-ink truncate max-w-[120px]">${escapeHtml(act.name)}</td>
+            <td class="py-1.5 px-2 font-mono text-[10px] text-muted">${escapeHtml(act.harness)}</td>
+            <td class="py-1.5 px-1 font-mono text-[10px] text-center">${act.turns}</td>
+            <td class="py-1.5 px-2 font-mono text-[10px] text-right font-bold text-accent">${formatCost(act.cost)}</td>
+          </tr>`,
+          )
+          .join("")}
+      </tbody>
+    </table>
+  `;
+
+  for (const row of host.querySelectorAll<HTMLElement>("tr[data-activity]")) {
+    row.onclick = () => {
+      const id = row.dataset.activity;
+      if (!id || !viewer) return;
+      try {
+        const element = viewer.get("elementRegistry").get(id);
+        if (element) viewer.get("canvas").scrollToElement(element);
+      } catch {}
+    };
+  }
 }
 
 function renderTurns(turns: TurnRecord[]): void {
@@ -159,11 +256,25 @@ async function refresh(): Promise<void> {
   if (title) title.textContent = detail.name || detail.id;
   const status = $("session-status");
   if (status) status.innerHTML = statusChip(detail.status);
+
+  const costEl = $("session-cost");
+  if (costEl) {
+    if (detail.stats?.totalCostUSD && detail.stats.totalCostUSD > 0) {
+      costEl.textContent = formatCost(detail.stats.totalCostUSD);
+      costEl.classList.remove("hidden");
+    } else {
+      costEl.classList.add("hidden");
+    }
+  }
+
   const meta = $("session-meta");
   if (meta) {
+    const tokenInfo = detail.stats?.totalTokens
+      ? ` · ${Math.round((detail.stats.totalTokens / 1000) * 10) / 10}k tokens (${Math.round(detail.stats.cacheHitRatio * 100)}% cached)`
+      : "";
     meta.textContent = `${detail.turnCount} turns · ${detail.revisions.length} graph revision${
       detail.revisions.length === 1 ? "" : "s"
-    }`;
+    }${tokenInfo}`;
   }
 
   // The session graph mutates, so re-import only when the XML actually changed
@@ -177,6 +288,7 @@ async function refresh(): Promise<void> {
   }
   paintTokens(detail);
   renderTurns(detail.turns);
+  renderActivities(detail.turns);
   renderRevisions(detail);
   void refreshPending();
 }
@@ -487,6 +599,26 @@ async function init(): Promise<void> {
   if (cancelBtn) cancelBtn.onclick = () => exitEdit();
   const saveBtn = $("save-btn");
   if (saveBtn) saveBtn.onclick = () => void saveEdit();
+
+  const tabTurns = $("tab-btn-turns");
+  const tabActivities = $("tab-btn-activities");
+  const turnsHost = $("turns");
+  const activitiesHost = $("activities");
+
+  if (tabTurns && tabActivities && turnsHost && activitiesHost) {
+    tabTurns.onclick = () => {
+      tabTurns.className = "text-[11.5px] font-bold tracking-wider uppercase text-accent border-b-2 border-accent pb-0.5";
+      tabActivities.className = "text-[11.5px] font-bold tracking-wider uppercase text-muted hover:text-ink pb-0.5";
+      turnsHost.classList.remove("hidden");
+      activitiesHost.classList.add("hidden");
+    };
+    tabActivities.onclick = () => {
+      tabActivities.className = "text-[11.5px] font-bold tracking-wider uppercase text-accent border-b-2 border-accent pb-0.5";
+      tabTurns.className = "text-[11.5px] font-bold tracking-wider uppercase text-muted hover:text-ink pb-0.5";
+      activitiesHost.classList.remove("hidden");
+      turnsHost.classList.add("hidden");
+    };
+  }
 
   connectStudioEvents("/ws", (event) => {
     if (event.type === "session_changed" && event.sessionId !== sessionId) return;

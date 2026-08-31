@@ -67,6 +67,7 @@ const SUPPORTED_EVENT_DEFINITIONS = new Set([
   "bpmn:TerminateEventDefinition",
   "bpmn:TimerEventDefinition",
   "bpmn:ErrorEventDefinition",
+  "bpmn:ConditionalEventDefinition",
 ]);
 
 function isAny(node, types) {

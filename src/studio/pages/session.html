@@ -41,6 +41,7 @@
   <div class="flex items-baseline gap-2 mb-3 flex-wrap">
     <h2 id="session-title" class="text-lg font-bold text-ink truncate">&hellip;</h2>
     <span id="session-status"></span>
+    <span id="session-cost" class="hidden font-mono text-xs px-2 py-0.5 rounded bg-accent-dim text-accent border border-accent-border font-bold"></span>
     <span id="session-meta" class="text-muted text-xs"></span>
     <span class="flex-1"></span>
     <button id="edit-btn" class="btn btn-secondary px-2.5 py-1 text-xs" title="Edit this session's graph">Edit</button>
@@ -74,8 +75,14 @@
         <div id="pending-gates" class="max-h-64 overflow-y-auto text-xs"></div>
       </section>
       <section class="bg-panel border border-line rounded-lg overflow-hidden flex flex-col min-h-0 flex-1">
-        <h3 class="px-3 py-2 bg-panel-header border-b border-line text-[11.5px] font-bold tracking-wider uppercase">Turns</h3>
+        <div class="px-3 py-2 bg-panel-header border-b border-line flex items-center justify-between">
+          <div class="flex gap-2">
+            <button id="tab-btn-turns" class="text-[11.5px] font-bold tracking-wider uppercase text-accent border-b-2 border-accent pb-0.5">Turns</button>
+            <button id="tab-btn-activities" class="text-[11.5px] font-bold tracking-wider uppercase text-muted hover:text-ink pb-0.5">Activities</button>
+          </div>
+        </div>
         <div id="turns" class="flex-1 overflow-y-auto text-xs"></div>
+        <div id="activities" class="hidden flex-1 overflow-y-auto text-xs"></div>
       </section>
       <section class="bg-panel border border-line rounded-lg overflow-hidden">
         <h3 class="px-3 py-2 bg-panel-header border-b border-line text-[11.5px] font-bold tracking-wider uppercase">Graph revisions</h3>

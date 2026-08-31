@@ -49,6 +49,11 @@ Commands
                        otherwise stop
   ls                   list this project's sessions (--all for every project)
   show <session>       print a session's turns and current graph revision
+  report <session>     generate a markdown, html or json execution report
+                        (--format <markdown|html|json>, --out <file>, --embed-svg)
+  export <session|file>
+                       export the workflow or session execution diagram to SVG
+                        (--out <file.svg>, --background <color>)
   promote <session> --as <name>
                        write a session's graph (its own callActivity links
                        removed) into the shared library, so a fresh session
@@ -123,6 +128,38 @@ export async function main(argv: string[]): Promise<number> {
       return cmdLs(argv.includes("--all"));
     case "show":
       return cmdShow(argv[1]);
+    case "report": {
+      const parsed = parseArgs({
+        args: argv.slice(1),
+        options: {
+          format: { type: "string" },
+          out: { type: "string" },
+          "embed-svg": { type: "boolean" },
+        },
+        allowPositionals: true,
+      });
+      const { cmdReport } = await import("./report.ts");
+      return cmdReport(parsed.positionals[0], {
+        format: parsed.values.format,
+        out: parsed.values.out,
+        embedSvg: parsed.values["embed-svg"],
+      });
+    }
+    case "export": {
+      const parsed = parseArgs({
+        args: argv.slice(1),
+        options: {
+          out: { type: "string" },
+          background: { type: "string" },
+        },
+        allowPositionals: true,
+      });
+      const { cmdExport } = await import("./report.ts");
+      return cmdExport(parsed.positionals[0], {
+        out: parsed.values.out,
+        background: parsed.values.background,
+      });
+    }
     case "run":
       return cmdRun(argv.slice(1));
     case "tui":
@@ -145,7 +182,7 @@ function version(): string {
   return "0.1.0";
 }
 
-function requirePaths(): Paths | null {
+export function requirePaths(): Paths | null {
   const p = resolvePaths();
   if (!isInitialized(p)) {
     process.stderr.write("graph-agent: not set up yet. Run `graph-agent init` first.\n");
