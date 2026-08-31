@@ -275,12 +275,24 @@ export class PiSession {
 }
 
 function readUsage(message: AssistantMessage): TurnUsage {
-  const usage = (message as { usage?: Partial<TurnUsage> }).usage;
+  const usage = (message as { usage?: any }).usage;
   if (!usage) return { ...EMPTY_USAGE };
+  const cost = usage.cost
+    ? {
+        input: usage.cost.input ?? 0,
+        output: usage.cost.output ?? 0,
+        cacheRead: usage.cost.cacheRead ?? 0,
+        cacheWrite: usage.cost.cacheWrite ?? 0,
+        total: usage.cost.total ?? 0,
+      }
+    : undefined;
   return {
     input: usage.input ?? 0,
     output: usage.output ?? 0,
     cacheRead: usage.cacheRead ?? 0,
     cacheWrite: usage.cacheWrite ?? 0,
+    ...(usage.reasoning !== undefined ? { reasoning: usage.reasoning } : {}),
+    ...(usage.totalTokens !== undefined ? { totalTokens: usage.totalTokens } : {}),
+    ...(cost ? { cost } : {}),
   };
 }

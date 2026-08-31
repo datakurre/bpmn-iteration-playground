@@ -78,15 +78,12 @@ const AGENT_ROLES: Record<string, string> = {
     'on a start or end event, an optional "eventDefinitionType" (one of the ' +
     'event definitions listed below), with "timerDuration" required alongside ' +
     'a timer one.\n\n' +
-    "Prefer expressing new work as its own small called sub-process: " +
-    "createProcess, build the new steps inside it (every op that belongs " +
-    'there needs "process":"<that id>"), then insertShape (or appendShape) a ' +
-    "single bpmn:CallActivity into the main process naming it as " +
-    "calledElement. That is the default for anything beyond a one- or " +
-    "two-step tweak -- it keeps the main graph small and the new logic " +
-    "independently reviewable. Reserve a direct appendShape/insertShape/" +
-    "connect into the main process for a genuinely small, local change (one " +
-    "extra gateway branch, one inserted step).\n\n" +
+    "When extending the workflow, the most direct and reliable approach is to " +
+    'insertShape the new task(s) or gateway(s) into an existing sequenceFlow ' +
+    '(such as "to_applied" in craft-graph or "crafted_ok" in session-craft). ' +
+    'If you define a separate sub-process with createProcess, you MUST also ' +
+    'insertShape a bpmn:CallActivity (with "calledElement":"<process id>") ' +
+    "into an existing sequenceFlow so the sub-process is connected to the execution path.\n\n" +
     'Every new element\'s "type" must be exactly one of these -- anything ' +
     "else has no tested behaviour here and will be rejected:\n" +
     [...SUPPORTED_ELEMENT_TYPES].sort().join(", ") +

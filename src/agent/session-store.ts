@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { GraphRevision, SessionDetail, SessionSummary, TurnRecord } from "../studio/types.ts";
+import type { GraphRevision, SessionDetail, SessionStats, SessionSummary, TurnRecord } from "../studio/types.ts";
 import type { Paths } from "./paths.ts";
 
 /**
@@ -308,6 +308,7 @@ export class SessionStore {
       status: effectiveStatus(meta),
       updatedAt: meta.updatedAt,
       turnCount: meta.turns.length,
+      stats: computeSessionStats(meta.turns),
     };
   }
 
@@ -323,6 +324,42 @@ export class SessionStore {
       ...(meta.harnessError === undefined ? {} : { harnessError: meta.harnessError }),
     };
   }
+}
+
+/** Computes cumulative token and cost statistics across recorded turns. */
+export function computeSessionStats(turns: readonly TurnRecord[]): SessionStats {
+  let totalCostUSD = 0;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let totalCacheReadTokens = 0;
+  let totalCacheWriteTokens = 0;
+  let totalTokens = 0;
+
+  for (const turn of turns) {
+    if (!turn.usage) continue;
+    const u = turn.usage;
+    totalInputTokens += u.input ?? 0;
+    totalOutputTokens += u.output ?? 0;
+    totalCacheReadTokens += u.cacheRead ?? 0;
+    totalCacheWriteTokens += u.cacheWrite ?? 0;
+    totalTokens += u.totalTokens ?? ((u.input ?? 0) + (u.output ?? 0) + (u.cacheRead ?? 0));
+    if (u.cost?.total) {
+      totalCostUSD += u.cost.total;
+    }
+  }
+
+  const denominator = totalInputTokens + totalCacheReadTokens;
+  const cacheHitRatio = denominator > 0 ? totalCacheReadTokens / denominator : 0;
+
+  return {
+    totalCostUSD,
+    totalInputTokens,
+    totalOutputTokens,
+    totalCacheReadTokens,
+    totalCacheWriteTokens,
+    totalTokens,
+    cacheHitRatio,
+  };
 }
 
 /**

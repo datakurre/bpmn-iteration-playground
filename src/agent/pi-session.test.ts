@@ -129,4 +129,73 @@ describe("PiSession", () => {
     await pi.beginTurn("go");
     await expect(pi.beginTurn("again")).rejects.toThrow(/already in flight/);
   });
+
+  it("extracts cost, reasoning, and totalTokens from message usage", async () => {
+    const customMessage = {
+      role: "assistant",
+      content: [{ type: "text", text: "Hello with usage" }],
+      stopReason: "stop",
+      usage: {
+        input: 100,
+        output: 50,
+        cacheRead: 200,
+        cacheWrite: 30,
+        reasoning: 25,
+        totalTokens: 350,
+        cost: {
+          input: 0.0001,
+          output: 0.0002,
+          cacheRead: 0.00005,
+          cacheWrite: 0.00003,
+          total: 0.00038,
+        },
+      },
+    };
+
+    const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", name: "Faux" }] });
+    const pi = new PiSession({
+      model: faux.getModel(),
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      streamFn: () => {
+        async function* gen() {
+          yield {
+            type: "start",
+            partial: { role: "assistant", content: [], stopReason: "pending" },
+          } as never;
+          yield {
+            type: "text_start",
+            contentIndex: 0,
+            partial: { role: "assistant", content: [{ type: "text", text: "Hello with usage" }] },
+          } as never;
+          yield {
+            type: "text_end",
+            contentIndex: 0,
+            content: "Hello with usage",
+            partial: { role: "assistant", content: [{ type: "text", text: "Hello with usage" }] },
+          } as never;
+          yield {
+            type: "done",
+            reason: "stop",
+            message: customMessage,
+          } as never;
+        }
+        return Object.assign(gen(), {
+          result: async () => customMessage,
+        }) as never;
+      },
+    });
+
+    const outcome = await pi.beginTurn("test usage");
+    await pi.endTurn();
+
+    expect(outcome.usage.input).toBe(100);
+    expect(outcome.usage.output).toBe(50);
+    expect(outcome.usage.cacheRead).toBe(200);
+    expect(outcome.usage.cacheWrite).toBe(30);
+    expect(outcome.usage.reasoning).toBe(25);
+    expect(outcome.usage.totalTokens).toBe(350);
+    expect(outcome.usage.cost?.total).toBe(0.00038);
+    expect(outcome.usage.cost?.input).toBe(0.0001);
+  });
 });

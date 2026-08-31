@@ -80,3 +80,43 @@ describe("SessionStore.appendGraph's optimistic concurrency (issue #75)", () => 
     expect(store.readMeta().revisions).toHaveLength(2);
   });
 });
+
+describe("computeSessionStats", () => {
+  it("calculates cumulative tokens, costs, and cache hit ratio across turns", async () => {
+    const { computeSessionStats } = await import("./session-store.ts");
+    const turns = [
+      {
+        index: 1,
+        activityId: "turn_1",
+        usage: {
+          input: 100,
+          output: 50,
+          cacheRead: 0,
+          cacheWrite: 100,
+          cost: { input: 0.001, output: 0.001, cacheRead: 0, cacheWrite: 0, total: 0.002 },
+        },
+      },
+      {
+        index: 2,
+        activityId: "turn_2",
+        usage: {
+          input: 20,
+          output: 80,
+          cacheRead: 80,
+          cacheWrite: 20,
+          totalTokens: 180,
+          cost: { input: 0.0002, output: 0.0016, cacheRead: 0.0001, cacheWrite: 0, total: 0.0019 },
+        },
+      },
+    ];
+
+    const stats = computeSessionStats(turns);
+    expect(stats.totalCostUSD).toBeCloseTo(0.0039);
+    expect(stats.totalInputTokens).toBe(120);
+    expect(stats.totalOutputTokens).toBe(130);
+    expect(stats.totalCacheReadTokens).toBe(80);
+    expect(stats.totalCacheWriteTokens).toBe(120);
+    // cache hit ratio = 80 / (120 + 80) = 80 / 200 = 0.40
+    expect(stats.cacheHitRatio).toBe(0.4);
+  });
+});

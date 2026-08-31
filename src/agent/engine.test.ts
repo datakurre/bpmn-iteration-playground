@@ -420,4 +420,50 @@ describe("a callActivity's own zeebe:output (issue #66)", () => {
     expect(visited.has("end_yes")).toBe(true);
     expect(visited.has("c_turn")).toBe(true);
   });
+
+  it("injects _session metrics into FEEL evaluation scope for gateway routing", async () => {
+    const costGated = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions ${DEFS}>
+  <process id="p_cost" isExecutable="true">
+    <startEvent id="start" />
+    <sequenceFlow id="f1" sourceRef="start" targetRef="turn" />
+    <serviceTask id="turn">
+      <extensionElements>
+        <zeebe:taskDefinition type="agent:turn" />
+      </extensionElements>
+    </serviceTask>
+    <sequenceFlow id="f2" sourceRef="turn" targetRef="gw_cost" />
+    <exclusiveGateway id="gw_cost" default="under_budget" />
+    <sequenceFlow id="over_budget" sourceRef="gw_cost" targetRef="end_expensive">
+      <conditionExpression xsi:type="tFormalExpression">=_session.total_cost &gt;= 0.05</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="under_budget" sourceRef="gw_cost" targetRef="end_cheap" />
+    <endEvent id="end_expensive" />
+    <endEvent id="end_cheap" />
+  </process>
+</definitions>`;
+
+    const visited = new Set<string>();
+    const harness: Harness = async () =>
+      ok("done turn", {
+        usage: {
+          input: 1000,
+          output: 500,
+          cacheRead: 0,
+          cacheWrite: 0,
+          cost: { input: 0.02, output: 0.04, cacheRead: 0, cacheWrite: 0, total: 0.06 },
+        },
+      });
+
+    const result = await runGraph(costGated, {
+      harnesses: { "agent:turn": harness },
+      onTokens: (_tokens, v) => v.forEach((id) => visited.add(id)),
+    });
+
+    expect(result.outcome).toBe("completed");
+    expect(visited.has("end_expensive")).toBe(true);
+    expect(visited.has("end_cheap")).toBe(false);
+    expect((result.variables._session as any).total_cost).toBe(0.06);
+    expect((result.variables._session as any).turn_count).toBe(1);
+  });
 });

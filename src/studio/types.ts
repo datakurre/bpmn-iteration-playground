@@ -33,6 +33,15 @@ export interface TurnRecord {
   usage?: TurnUsage;
 }
 
+/** Financial cost breakdown for an LLM turn. */
+export interface CostDetail {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+}
+
 /**
  * Per-turn token usage. `cacheRead` is the number that matters here: a
  * graph-coordinated run should be reusing one Pi session, so every turn after
@@ -43,6 +52,20 @@ export interface TurnUsage {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  reasoning?: number;
+  totalTokens?: number;
+  cost?: CostDetail;
+}
+
+/** Aggregated token and cost statistics across a session. */
+export interface SessionStats {
+  totalCostUSD: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheWriteTokens: number;
+  totalTokens: number;
+  cacheHitRatio: number;
 }
 
 /** A saved version of the session graph. Sessions mutate, so this is a history. */
@@ -66,6 +89,7 @@ export interface SessionSummary {
   status: "running" | "wait" | "timer" | "idle" | "completed" | "error" | "stale";
   updatedAt: number;
   turnCount: number;
+  stats?: SessionStats;
 }
 
 export interface SessionDetail extends SessionSummary {

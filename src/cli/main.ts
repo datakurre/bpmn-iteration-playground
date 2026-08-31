@@ -733,6 +733,18 @@ export async function reportWait(p: Paths, sessionId: string, outcome: string): 
   }
 }
 
+function formatCost(costUSD?: number): string {
+  if (costUSD === undefined || costUSD === 0) return "";
+  if (costUSD < 0.01) return `$${costUSD.toFixed(4)}`;
+  return `$${costUSD.toFixed(2)}`;
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
 function cmdLs(all: boolean): number {
   const p = requirePaths();
   if (!p) return 1;
@@ -744,8 +756,9 @@ function cmdLs(all: boolean): number {
   for (const store of sessions) {
     const s = store.summary();
     const where = all ? `  ${projectName(s.project)}` : "";
+    const cost = s.stats?.totalCostUSD ? `  ${formatCost(s.stats.totalCostUSD)}` : "";
     process.stdout.write(
-      `${s.id}  ${s.status.padEnd(9)}  ${String(s.turnCount).padStart(3)} turns${where}  ${s.name ?? ""}\n`,
+      `${s.id}  ${s.status.padEnd(9)}  ${String(s.turnCount).padStart(3)} turns${cost}${where}  ${s.name ?? ""}\n`,
     );
   }
   return 0;
@@ -902,13 +915,22 @@ function cmdShow(id: string | undefined): number {
     return 1;
   }
   const detail = store.detail();
-  process.stdout.write(`${detail.id}  ${detail.status}  ${detail.turnCount} turns\n`);
+  const stats = detail.stats;
+  const costStr = stats?.totalCostUSD ? ` · cost ${formatCost(stats.totalCostUSD)}` : "";
+  const tokenStr = stats?.totalTokens
+    ? ` · tokens ${formatTokens(stats.totalTokens)} (${Math.round(stats.cacheHitRatio * 100)}% cached)`
+    : "";
+  process.stdout.write(`${detail.id}  ${detail.status}  ${detail.turnCount} turns${tokenStr}${costStr}\n`);
   process.stdout.write(`project: ${detail.project}\n`);
   process.stdout.write(`tokens: ${detail.tokens.join(", ") || "-"}\n`);
   process.stdout.write(`graph revisions: ${detail.revisions.length}\n\n`);
   for (const turn of detail.turns) {
+    const turnCost = turn.usage?.cost?.total ? ` (${formatCost(turn.usage.cost.total)})` : "";
+    const turnTokens = turn.usage
+      ? ` [in:${turn.usage.input} out:${turn.usage.output} cache:${turn.usage.cacheRead}]`
+      : "";
     process.stdout.write(
-      `${String(turn.index).padStart(3)}  ${turn.activityId}  ${turn.harness ?? ""}  ${turn.stopReason ?? ""}\n`,
+      `${String(turn.index).padStart(3)}  ${turn.activityId}  ${turn.harness ?? ""}  ${turn.stopReason ?? ""}${turnTokens}${turnCost}\n`,
     );
     if (turn.error) process.stdout.write(`       ${turn.error}\n`);
   }

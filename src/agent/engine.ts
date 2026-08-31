@@ -157,12 +157,38 @@ async function callWithRetries(call: () => Promise<HarnessResult>, attempts: num
 
 type RegisteredActivity = ActivityLike & Record<string, unknown>;
 
+interface SessionStatsTracker {
+  total_cost: number;
+  turn_count: number;
+  total_tokens: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+}
+
+function initSessionStats(existing?: unknown): SessionStatsTracker {
+  const s = existing as Partial<SessionStatsTracker> | undefined;
+  return {
+    total_cost: s?.total_cost ?? 0,
+    turn_count: s?.turn_count ?? 0,
+    total_tokens: s?.total_tokens ?? 0,
+    input_tokens: s?.input_tokens ?? 0,
+    output_tokens: s?.output_tokens ?? 0,
+    cache_read_tokens: s?.cache_read_tokens ?? 0,
+    cache_write_tokens: s?.cache_write_tokens ?? 0,
+  };
+}
+
 function makeExtension(
   options: RunnerOptions,
   activities: ActivityOutcome[],
   byId: Map<string, RegisteredActivity>,
   sharedOutput: Record<string, unknown>,
 ) {
+  const sessionStats = initSessionStats(sharedOutput._session);
+  sharedOutput._session = { ...sessionStats };
+
   return function harnessExtension(activity: RegisteredActivity): void {
     // Multi-instance activities carry their collection in a zeebe: extension the
     // engine does not read; translate it before anything tries to run the loop.
@@ -184,6 +210,8 @@ function makeExtension(
 
     const environment = (activity as unknown as { environment: { variables: Record<string, unknown>; output: Record<string, unknown> } })
       .environment;
+
+    environment.output._session = { ...sessionStats };
 
     activity.behaviour.Service = function HarnessService() {
       return {
@@ -235,6 +263,24 @@ function makeExtension(
                   sharedOutput[key] = value;
                 }
               }
+
+              if (result && typeof result === "object" && "usage" in result && result.usage) {
+                const u = (result as { usage?: any }).usage;
+                if (u) {
+                  sessionStats.turn_count += 1;
+                  sessionStats.input_tokens += u.input ?? 0;
+                  sessionStats.output_tokens += u.output ?? 0;
+                  sessionStats.cache_read_tokens += u.cacheRead ?? 0;
+                  sessionStats.cache_write_tokens += u.cacheWrite ?? 0;
+                  sessionStats.total_tokens += u.totalTokens ?? ((u.input ?? 0) + (u.output ?? 0) + (u.cacheRead ?? 0));
+                  if (u.cost?.total) {
+                    sessionStats.total_cost += u.cost.total;
+                  }
+                  environment.output._session = { ...sessionStats };
+                  sharedOutput._session = { ...sessionStats };
+                }
+              }
+
               activities.push({
                 activityId: activity.id,
                 ...(activity.name === undefined ? {} : { activityName: activity.name }),
