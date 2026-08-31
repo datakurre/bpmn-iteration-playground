@@ -307,6 +307,20 @@ export class SessionStore {
     writeAtomic(this.enginePath, JSON.stringify(state));
   }
 
+  writeTranscript(messages: readonly unknown[]): void {
+    mkdirSync(this.dir, { recursive: true });
+    const content = messages.map((m) => JSON.stringify(m)).join("\n") + (messages.length > 0 ? "\n" : "");
+    writeAtomic(this.transcriptPath, content);
+  }
+
+  readTranscript(): unknown[] {
+    if (!existsSync(this.transcriptPath)) return [];
+    return readFileSync(this.transcriptPath, "utf8")
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line));
+  }
+
   summary(): SessionSummary {
     const meta = this.readMeta();
     let prompt = meta.prompt;

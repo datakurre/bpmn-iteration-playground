@@ -51,7 +51,8 @@ Commands
   ls                   list this project's sessions (--all for every project)
   show <session>       print a session's turns and current graph revision
   report <session>     generate a markdown, html or json execution report
-                        (--format <markdown|html|json>, --out <file>, --embed-svg)
+                        (--format <markdown|html|json>, --out <file>, --embed-svg,
+                         --verbose / -v for full inputs, outputs, prompts & tool calls)
   export <session|file>
                        export the workflow or session execution diagram to SVG
                         (--out <file.svg>, --background <color>)
@@ -139,6 +140,7 @@ export async function main(argv: string[]): Promise<number> {
           "embed-data-uri": { type: "boolean" },
           "image-format": { type: "string" },
           scale: { type: "string" },
+          verbose: { type: "boolean", short: "v" },
         },
         allowPositionals: true,
       });
@@ -150,6 +152,7 @@ export async function main(argv: string[]): Promise<number> {
         embedDataUri: parsed.values["embed-data-uri"],
         imageFormat: parsed.values["image-format"] as "png" | "svg" | "raw-svg" | undefined,
         scale: parsed.values.scale ? parseFloat(parsed.values.scale) : undefined,
+        verbose: parsed.values.verbose,
       });
     }
     case "export": {

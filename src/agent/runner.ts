@@ -429,6 +429,9 @@ async function drive(
     outcome !== "error" ? undefined : result.error?.message ? result.error : new Error(fallbackMessage);
 
   store.writeEngineState(result.state);
+  if (pi.messages.length > 0) {
+    store.writeTranscript(pi.messages);
+  }
   // A terminal "completed" status is never written backwards. resumeSession
   // already refuses to even start against a completed session, but this is
   // the general invariant issue #63 asks for rather than a fix scoped to one

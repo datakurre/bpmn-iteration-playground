@@ -347,6 +347,20 @@ would from another terminal, since it goes through the same
 `graph-agent run` is unchanged: non-interactive, scriptable, what CI uses.
 The TUI is a new command, not a flag on `run`.
 
+> **Tip: Continuous multi-prompt pair programming in the TUI**  
+> Running `graph-agent tui [prompt]` uses `session-default` by default, which
+> completes and exits once the initial turn and tool batch finish.  
+> To run a **continuous, multi-prompt session** where the agent stays open and
+> prompts you for subsequent tasks, start with `--graph session-craft` or
+> `--graph session-skeleton`:
+> ```bash
+> graph-agent tui --graph session-craft "Draft a simple CLI tool"
+> ```
+> When the first task settles, the TUI pauses on `await_intent` and asks:
+> `waiting on await_intent — Goal (intent):`  
+> Type your next instruction and press Enter; the agent continues in the same
+> session with full prompt cache retention.
+
 A session the TUI (or anything else) left parked reattaches with
 `--resume <session-id>` instead of `--graph`/a prompt -- a resumed session
 already has both ([#67](https://github.com/datakurre/graph-agent/issues/67)):
@@ -377,6 +391,17 @@ as it resumes.
 | `craft-graph` | drafts a small ops list and splices the elements it describes into the running session |
 | `session-skeleton` | asks for an intent, then calls `craft-graph` |
 | `session-craft` | the vision's own sentence as one graph: a prompt goes straight into `craft-graph`, which builds the steps that follow and runs them in the same invocation, falling back to `pi-default-loop` when nothing was crafted ([#66](https://github.com/datakurre/graph-agent/issues/66)) -- opt-in via `--graph session-craft`, not (yet) the default |
+
+### Single-task runs vs. continuous multi-prompt sessions
+
+Understanding which workflow to pick comes down to whether you want a **discrete batch task** or a **continuous conversation**:
+
+- **Discrete, single-task runs (`session-default`, `shell-demo`)**:
+  A single prompt enters the graph, `pi-default-loop` executes turns and tool calls, and the process terminates when done. This is the mode used for scripting, CI pipelines, and all example execution reports in `example/`.
+- **Continuous, multi-prompt sessions (`session-craft`, `session-skeleton`)**:
+  The workflow incorporates human gates (`bpmn:UserTask`, like `await_intent`) followed by a gateway loop. After each task completes, the engine pauses and requests the next instruction. Answering it (in the TUI or via `resume`) resumes the engine for another lap without losing conversation history.
+- **Prompt cache retention across turns**:
+  Because a single long-lived `PiSession` instance manages the entire session, the prefix (`system prompt → tools → messages`) is preserved byte-for-byte. Consecutive prompts in the same session hit the LLM prompt cache with 90–100% cache read rates, making multi-prompt sessions both fast and cost-efficient.
 
 ### Extending a graph from inside a session
 

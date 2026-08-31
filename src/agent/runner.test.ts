@@ -71,7 +71,14 @@ describe("runSession on the built-in loop", () => {
     const detail = new SessionStore(paths, result.sessionId).detail();
     expect(detail.turns.map((t) => t.stopReason)).toEqual(["toolUse", "stop"]);
     expect(detail.turns[0]?.toolCalls).toEqual(["read"]);
+    expect(detail.turns[0]?.toolCallDetails?.[0]?.name).toBe("read");
+    expect(detail.turns[0]?.toolCallDetails?.[0]?.arguments).toEqual({ path: "a.ts" });
+    expect(detail.turns[0]?.prompt).toContain("read a.ts");
+    expect(detail.turns[0]?.response).toContain("Looking.");
     expect(detail.status).toBe("completed");
+
+    const transcript = new SessionStore(paths, result.sessionId).readTranscript();
+    expect(transcript.length).toBeGreaterThan(0);
   });
 
   it("reads the later turn's prompt prefix from cache", async () => {

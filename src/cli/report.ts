@@ -84,9 +84,135 @@ function escapeHtml(str: string): string {
     .replace(/'/g, "&#039;");
 }
 
+function formatToolCallMarkdown(tc: { id: string; name: string; arguments?: Record<string, unknown>; result?: { content: string; isError?: boolean } }): string {
+  const status = tc.result ? (tc.result.isError ? "failed" : "ok") : "pending";
+  let md = `<details>\n<summary>Tool: <code>${tc.name}</code> (${tc.id}) — ${status}</summary>\n\n`;
+
+  if (tc.name === "bash" && tc.arguments?.command) {
+    md += `**Command**:\n\`\`\`bash\n$ ${String(tc.arguments.command)}\n\`\`\`\n\n`;
+    if (tc.result) {
+      md += `**Output**${tc.result.isError ? " (Failed)" : ""}:\n\`\`\`text\n${tc.result.content || "(no output)"}\n\`\`\`\n\n`;
+    }
+  } else if (tc.name === "edit" && tc.arguments?.path) {
+    md += `**File**: \`${tc.arguments.path}\`\n\n`;
+    const edits = Array.isArray(tc.arguments.edits) ? tc.arguments.edits : [];
+    if (edits.length > 0) {
+      md += `**Edits**:\n\`\`\`diff\n`;
+      for (const e of edits) {
+        if (e.oldText) {
+          md += e.oldText.split("\n").map((l: string) => `- ${l}`).join("\n") + "\n";
+        }
+        if (e.newText) {
+          md += e.newText.split("\n").map((l: string) => `+ ${l}`).join("\n") + "\n";
+        }
+      }
+      md += `\`\`\`\n\n`;
+    }
+    if (tc.result) {
+      md += `**Result**: ${tc.result.content}\n\n`;
+    }
+  } else {
+    if (tc.arguments && Object.keys(tc.arguments).length > 0) {
+      md += `**Arguments**:\n\`\`\`json\n${JSON.stringify(tc.arguments, null, 2)}\n\`\`\`\n\n`;
+    }
+    if (tc.result) {
+      md += `**Result**${tc.result.isError ? " (Error)" : ""}:\n\`\`\`text\n${tc.result.content || "(empty)"}\n\`\`\`\n\n`;
+    }
+  }
+  md += `</details>\n\n`;
+  return md;
+}
+
+function formatToolCallHtml(tc: { id: string; name: string; arguments?: Record<string, unknown>; durationMs?: number; result?: { content: string; isError?: boolean } }, isVerbose: boolean): string {
+  const statusBadge = tc.result
+    ? (tc.result.isError ? `<span class="badge badge-error">failed</span>` : `<span class="badge badge-success">ok</span>`)
+    : `<span class="badge badge-pending">pending</span>`;
+  const durStr = tc.durationMs ? `<span class="tool-dur">${(tc.durationMs / 1000).toFixed(2)}s</span>` : "";
+
+  let bodyHtml = "";
+  if (tc.name === "bash" && tc.arguments?.command) {
+    const cmd = String(tc.arguments.command);
+    bodyHtml = `
+      <div class="terminal-card">
+        <div class="terminal-bar">
+          <span class="terminal-title">Terminal</span>
+          <button type="button" class="btn-copy" data-copy="${escapeHtml(cmd)}" title="Copy Command">Copy</button>
+        </div>
+        <pre class="terminal-cmd"><code>$ ${escapeHtml(cmd)}</code></pre>
+      </div>
+      <div class="tool-result-section">
+        <div class="detail-subheading">Output ${tc.result ? (tc.result.isError ? "(Error)" : "(Success)") : ""}:</div>
+        <pre class="code-block ${tc.result?.isError ? 'code-error' : ''}">${escapeHtml(tc.result?.content || '(no output)')}</pre>
+      </div>
+    `;
+  } else if (tc.name === "edit" && tc.arguments?.path) {
+    const path = String(tc.arguments.path);
+    const edits = Array.isArray(tc.arguments.edits) ? tc.arguments.edits : [];
+    let diffHtml = "";
+    if (edits.length > 0) {
+      diffHtml = edits.map((e, idx) => `
+        <div class="diff-container">
+          <div class="diff-title">Replacement #${idx + 1}</div>
+          ${e.oldText ? `<div class="diff-chunk diff-old"><pre>${escapeHtml(e.oldText)}</pre></div>` : ""}
+          ${e.newText ? `<div class="diff-chunk diff-new"><pre>${escapeHtml(e.newText)}</pre></div>` : ""}
+        </div>
+      `).join("");
+    }
+    bodyHtml = `
+      <div class="file-path-badge">File: <code>${escapeHtml(path)}</code></div>
+      ${diffHtml}
+      <div class="tool-result-section">
+        <div class="detail-subheading">Result:</div>
+        <pre class="code-block">${escapeHtml(tc.result?.content || 'ok')}</pre>
+      </div>
+    `;
+  } else if ((tc.name === "read" || tc.name === "write") && tc.arguments?.path) {
+    const path = String(tc.arguments.path);
+    const writeContent = tc.name === "write" && typeof tc.arguments.content === "string" ? tc.arguments.content : "";
+    bodyHtml = `
+      <div class="file-path-badge">File: <code>${escapeHtml(path)}</code> <span class="badge badge-muted">${escapeHtml(tc.name)}</span></div>
+      ${writeContent ? `<div class="detail-subheading">Written Content:</div><pre class="code-block">${escapeHtml(writeContent)}</pre>` : ""}
+      <div class="tool-result-section">
+        <div class="detail-subheading">Result:</div>
+        <pre class="code-block ${tc.result?.isError ? 'code-error' : ''}">${escapeHtml(tc.result?.content || '(empty)')}</pre>
+      </div>
+    `;
+  } else {
+    const argsHtml = tc.arguments && Object.keys(tc.arguments).length > 0
+      ? `<div class="detail-subheading">Arguments:</div><pre class="code-block">${escapeHtml(JSON.stringify(tc.arguments, null, 2))}</pre>`
+      : "";
+    const resultHtml = tc.result
+      ? `<div class="detail-subheading">Result ${tc.result.isError ? "(Error)" : ""}:</div><pre class="code-block ${tc.result.isError ? 'code-error' : ''}">${escapeHtml(tc.result.content || "(empty)")}</pre>`
+      : "";
+    bodyHtml = `${argsHtml}${resultHtml}`;
+  }
+
+  return `
+    <details class="detail-box tool-card" ${isVerbose ? "open" : ""}>
+      <summary class="detail-summary">
+        <div>
+          <span class="tool-name-badge">${escapeHtml(tc.name)}</span>
+          <span class="tool-id-label">${escapeHtml(tc.id)}</span>
+          ${durStr}
+        </div>
+        ${statusBadge}
+      </summary>
+      <div class="detail-body">
+        ${bodyHtml}
+      </div>
+    </details>
+  `;
+}
+
 export async function generateMarkdownReport(
   detail: SessionDetail,
-  options: { embedSvg?: boolean; embedDataUri?: boolean; imageFormat?: "png" | "svg"; scale?: number } = {}
+  options: {
+    embedSvg?: boolean;
+    embedDataUri?: boolean;
+    imageFormat?: "png" | "svg";
+    scale?: number;
+    verbose?: boolean;
+  } = {}
 ): Promise<string> {
   const stats = detail.stats;
   const activities = computeActivitySummaries(detail.turns);
@@ -99,6 +225,11 @@ export async function generateMarkdownReport(
     if (t.startedAt && t.endedAt) totalDurationMs += t.endedAt - t.startedAt;
   }
   const durationStr = totalDurationMs > 0 ? `${(totalDurationMs / 1000).toFixed(1)}s` : "-";
+
+  let totalToolCalls = 0;
+  for (const t of detail.turns) {
+    totalToolCalls += t.toolCallDetails?.length || t.toolCalls?.length || 0;
+  }
 
   let promptSection = "";
   if (detail.prompt) {
@@ -154,16 +285,38 @@ export async function generateMarkdownReport(
         : "-";
       const cost = turn.usage?.cost?.total ? formatCost(turn.usage.cost.total) : "$0.00";
       const stopReason = turn.stopReason ? ` (${turn.stopReason})` : "";
+      const turnDur = turn.startedAt && turn.endedAt ? ` · ${(turn.endedAt - turn.startedAt) / 1000}s` : "";
 
       turnLog += `### [T${turn.index}] Turn ${turn.index}: ${turn.activityName || turn.activityId}${stopReason}\n\n`;
       turnLog += `- **Activity**: \`${turn.activityId}\` (\`${turn.harness || "-"}\`)\n`;
-      turnLog += `- **Tokens & Cost**: ${tokens} · **${cost}**\n`;
+      turnLog += `- **Tokens & Cost**: ${tokens} · **${cost}**${turnDur}\n`;
       turnLog += `- **Tools Called**: ${toolList}\n`;
       if (turn.summary) {
         turnLog += `\n**Response Summary**:\n> ${turn.summary.replace(/\n/g, "\n> ")}\n\n`;
       }
       if (turn.error) {
-        turnLog += `\n> ⚠️ **Error**: ${turn.error}\n\n`;
+        turnLog += `\n> **Error**: ${turn.error}\n\n`;
+      }
+
+      if (options.verbose) {
+        if (turn.prompt) {
+          turnLog += `<details>\n<summary>Input Prompt (${turn.prompt.length} chars)</summary>\n\n\`\`\`text\n${turn.prompt}\n\`\`\`\n</details>\n\n`;
+        } else if (turn.inputs && Object.keys(turn.inputs).length > 0) {
+          turnLog += `<details>\n<summary>Inputs</summary>\n\n\`\`\`json\n${JSON.stringify(turn.inputs, null, 2)}\n\`\`\`\n</details>\n\n`;
+        }
+
+        if (turn.response && turn.response !== turn.summary) {
+          turnLog += `<details>\n<summary>Model Response (${turn.response.length} chars)</summary>\n\n\`\`\`text\n${turn.response}\n\`\`\`\n</details>\n\n`;
+        } else if (turn.outputs && Object.keys(turn.outputs).length > 0 && !turn.response) {
+          turnLog += `<details>\n<summary>Outputs</summary>\n\n\`\`\`json\n${JSON.stringify(turn.outputs, null, 2)}\n\`\`\`\n</details>\n\n`;
+        }
+
+        if (turn.toolCallDetails && turn.toolCallDetails.length > 0) {
+          turnLog += `**Tool Call Details**:\n\n`;
+          for (const tc of turn.toolCallDetails) {
+            turnLog += formatToolCallMarkdown(tc);
+          }
+        }
       }
     }
   }
@@ -179,7 +332,7 @@ export async function generateMarkdownReport(
 
   let errorSection = "";
   if (detail.harnessError) {
-    errorSection = `\n> ⚠️ **Harness Error**: ${detail.harnessError}\n`;
+    errorSection = `\n> **Harness Error**: ${detail.harnessError}\n`;
   }
 
   return `# Session Report: ${detail.name || detail.id}
@@ -189,6 +342,7 @@ export async function generateMarkdownReport(
 - **Model**: \`${detail.model || "default"}\`
 - **Total Cost**: **${totalCost}**
 - **Turns**: ${detail.turnCount}
+- **Tool Calls**: ${totalToolCalls}
 - **Total Tokens**: ${totalTokens} (${cacheHit} cache hit)
 - **Duration**: ${durationStr}
 - **Project**: \`${detail.project}\`
@@ -202,10 +356,14 @@ ${turnLog}${revisionsLog}
 
 export async function generateHtmlReport(
   detail: SessionDetail,
-  options: { imageFormat?: "png" | "svg" | "raw-svg"; scale?: number } = {}
+  options: {
+    imageFormat?: "png" | "svg" | "raw-svg";
+    scale?: number;
+    verbose?: boolean;
+  } = {}
 ): Promise<string> {
   const format = options.imageFormat || "png";
-  let diagramCardsHtml = "";
+  let diagramSectionHtml = "";
 
   try {
     const rendered = await renderSessionDiagrams(detail, {
@@ -216,26 +374,43 @@ export async function generateHtmlReport(
     });
 
     if (rendered.length === 0) {
-      diagramCardsHtml = `<p class="text-muted">Diagram preview unavailable.</p>`;
+      diagramSectionHtml = `<p class="text-muted">Diagram preview unavailable.</p>`;
     } else {
-      diagramCardsHtml = rendered
-        .map((diag, idx) => {
-          const title = diag.isRoot ? `${escapeHtml(diag.name)} (Root Process)` : `Subprocess: ${escapeHtml(diag.name)}`;
-          const badge = diag.turnCount > 0
-            ? `<span class="badge badge-accent">${diag.turnCount} turn(s) · ${formatCost(diag.totalCostUSD)}</span>`
-            : "";
+      const tabsNavHtml = rendered.length > 1
+        ? `
+          <div class="diagram-tabs-nav">
+            ${rendered.map((diag, idx) => {
+              const tabTitle = diag.isRoot ? `Root: ${escapeHtml(diag.name)}` : `Subprocess: ${escapeHtml(diag.name)}`;
+              const turnRange = diag.turnCount > 0 ? `<span class="badge badge-accent">${diag.turnCount} turn(s)</span>` : "";
+              return `
+                <button type="button" class="diagram-tab-btn ${idx === 0 ? 'active' : ''}" data-tab-target="pane-diag-${idx}">
+                  <span>${tabTitle}</span>
+                  ${turnRange}
+                </button>
+              `;
+            }).join("")}
+          </div>
+        `
+        : "";
 
-          let imgTag = "";
-          if (format === "png" && diag.pngDataUri) {
-            imgTag = `<img src="${diag.pngDataUri}" alt="${escapeHtml(diag.name)}" style="display: block;" />`;
-          } else if (format === "raw-svg") {
-            imgTag = diag.svg;
-          } else {
-            const svgDataUri = `data:image/svg+xml;base64,${Buffer.from(diag.svg).toString("base64")}`;
-            imgTag = `<img src="${svgDataUri}" alt="${escapeHtml(diag.name)}" style="display: block;" />`;
-          }
+      const panesHtml = rendered.map((diag, idx) => {
+        const title = diag.isRoot ? `${escapeHtml(diag.name)} (Root Process)` : `Subprocess: ${escapeHtml(diag.name)}`;
+        const badge = diag.turnCount > 0
+          ? `<span class="badge badge-accent">${diag.turnCount} turn(s) · ${formatCost(diag.totalCostUSD)}</span>`
+          : "";
 
-          return `
+        let imgTag = "";
+        if (format === "png" && diag.pngDataUri) {
+          imgTag = `<img src="${diag.pngDataUri}" alt="${escapeHtml(diag.name)}" draggable="false" style="display: block; user-select: none; -webkit-user-drag: none; pointer-events: none;" />`;
+        } else if (format === "raw-svg") {
+          imgTag = diag.svg;
+        } else {
+          const svgDataUri = `data:image/svg+xml;base64,${Buffer.from(diag.svg).toString("base64")}`;
+          imgTag = `<img src="${svgDataUri}" alt="${escapeHtml(diag.name)}" draggable="false" style="display: block; user-select: none; -webkit-user-drag: none; pointer-events: none;" />`;
+        }
+
+        return `
+          <div class="diagram-tab-pane ${idx === 0 ? 'active' : ''}" id="pane-diag-${idx}" style="${idx === 0 ? '' : 'display: none;'}">
             <div class="diagram-viewer" id="viewer-diagram-${idx}">
               <div class="diagram-toolbar">
                 <div class="diagram-info">
@@ -243,10 +418,10 @@ export async function generateHtmlReport(
                   ${badge}
                 </div>
                 <div class="diagram-actions">
-                  <button type="button" class="btn-tool" data-action="zoom-in" title="Zoom In (+)">➕ Zoom In</button>
-                  <button type="button" class="btn-tool" data-action="zoom-out" title="Zoom Out (-)">➖ Zoom Out</button>
-                  <button type="button" class="btn-tool" data-action="reset" title="Reset View (100%)">⟲ 100%</button>
-                  <button type="button" class="btn-tool" data-action="fit" title="Fit to Viewport">⛶ Fit</button>
+                  <button type="button" class="btn-tool" data-action="zoom-in" title="Zoom In (+)">Zoom In</button>
+                  <button type="button" class="btn-tool" data-action="zoom-out" title="Zoom Out (-)">Zoom Out</button>
+                  <button type="button" class="btn-tool" data-action="reset" title="Reset View (100%)">100%</button>
+                  <button type="button" class="btn-tool" data-action="fit" title="Fit to Viewport">Fit</button>
                   <span class="zoom-pill" data-zoom-label>100%</span>
                 </div>
               </div>
@@ -256,25 +431,39 @@ export async function generateHtmlReport(
                 </div>
               </div>
             </div>
-          `;
-        })
-        .join("");
+          </div>
+        `;
+      }).join("");
+
+      diagramSectionHtml = `
+        <div class="diagram-tabs-container">
+          ${tabsNavHtml}
+          ${panesHtml}
+        </div>
+      `;
     }
   } catch (err) {
     console.error("[generateHtmlReport] Error during diagram rendering:", err);
-    diagramCardsHtml = `<p class="text-muted">Diagram preview unavailable.</p>`;
+    diagramSectionHtml = `<p class="text-muted">Diagram preview unavailable.</p>`;
   }
 
   let totalDurationMs = 0;
+  let totalToolCallsCount = 0;
+  let errorCount = 0;
+
   for (const t of detail.turns) {
     if (t.startedAt && t.endedAt) totalDurationMs += t.endedAt - t.startedAt;
+    totalToolCallsCount += t.toolCallDetails?.length || t.toolCalls?.length || 0;
+    if (t.error || t.stopReason === "error" || t.toolCallDetails?.some(tc => tc.result?.isError)) {
+      errorCount++;
+    }
   }
   const durationStr = totalDurationMs > 0 ? `${(totalDurationMs / 1000).toFixed(1)}s` : "-";
 
   const promptHtml = detail.prompt
     ? `
       <div class="card">
-        <h2>🎯 Task Prompt</h2>
+        <h2>Task Prompt</h2>
         <blockquote class="prompt-box">${escapeHtml(detail.prompt)}</blockquote>
       </div>
     `
@@ -288,44 +477,110 @@ export async function generateHtmlReport(
     `
     : "";
 
+  const isVerbose = options.verbose === true;
+
   const turnLogHtml = detail.turns.length === 0
     ? `<p class="text-muted">No turns executed.</p>`
     : detail.turns
         .map((t) => {
-          const tools = t.toolCalls?.length
+          const hasToolCalls = (t.toolCallDetails?.length || 0) > 0 || (t.toolCalls?.length || 0) > 0;
+          const hasError = Boolean(t.error || t.stopReason === "error" || t.toolCallDetails?.some(tc => tc.result?.isError));
+
+          const tools = t.toolCallDetails?.length
+            ? `<div class="tool-details-container">
+                <div class="section-subtitle">Tool Invocations (${t.toolCallDetails.length})</div>
+                ${t.toolCallDetails.map(tc => formatToolCallHtml(tc, isVerbose)).join("")}
+              </div>`
+            : t.toolCalls?.length
             ? `<div class="tool-tags">${t.toolCalls
                 .map((name) => `<span class="tool-tag">${escapeHtml(name)}</span>`)
                 .join("")}</div>`
             : "";
+
+          const promptBlock = t.prompt
+            ? `
+              <details class="detail-box" ${isVerbose ? "open" : ""}>
+                <summary class="detail-summary">
+                  <span><strong>Input Prompt</strong> (${t.prompt.length} chars)</span>
+                  <button type="button" class="btn-copy" data-copy="${escapeHtml(t.prompt)}" title="Copy Prompt">Copy</button>
+                </summary>
+                <div class="detail-body">
+                  <pre class="code-block">${escapeHtml(t.prompt)}</pre>
+                </div>
+              </details>
+            `
+            : t.inputs && Object.keys(t.inputs).length > 0 && t.inputs.prompt !== null
+            ? `
+              <details class="detail-box" ${isVerbose ? "open" : ""}>
+                <summary class="detail-summary">
+                  <span><strong>Inputs</strong> (${Object.keys(t.inputs).length} field(s))</span>
+                </summary>
+                <div class="detail-body">
+                  <pre class="code-block">${escapeHtml(JSON.stringify(t.inputs, null, 2))}</pre>
+                </div>
+              </details>
+            `
+            : "";
+
+          const responseBlock = t.response && t.response !== t.summary
+            ? `
+              <details class="detail-box" ${isVerbose ? "open" : ""}>
+                <summary class="detail-summary">
+                  <span><strong>Model Response</strong> (${t.response.length} chars)</span>
+                  <button type="button" class="btn-copy" data-copy="${escapeHtml(t.response)}" title="Copy Response">Copy</button>
+                </summary>
+                <div class="detail-body">
+                  <pre class="code-block">${escapeHtml(t.response)}</pre>
+                </div>
+              </details>
+            `
+            : t.outputs && Object.keys(t.outputs).length > 0 && !t.response
+            ? `
+              <details class="detail-box" ${isVerbose ? "open" : ""}>
+                <summary class="detail-summary">
+                  <span><strong>Outputs</strong></span>
+                </summary>
+                <div class="detail-body">
+                  <pre class="code-block">${escapeHtml(JSON.stringify(t.outputs, null, 2))}</pre>
+                </div>
+              </details>
+            `
+            : "";
+
           const cost = t.usage?.cost?.total ? formatCost(t.usage.cost.total) : "$0.00";
           const cacheRead = t.usage?.cacheRead || 0;
           const cachedBadge = cacheRead > 0
             ? `<span class="badge badge-cache">cache ${formatTokens(cacheRead)}</span>`
             : `<span class="badge badge-muted">uncached</span>`;
 
+          const turnDur = t.startedAt && t.endedAt ? `<span class="badge badge-dur">${((t.endedAt - t.startedAt) / 1000).toFixed(1)}s</span>` : "";
+
           const summaryBlock = t.summary
             ? `<div class="turn-summary">${escapeHtml(t.summary)}</div>`
             : "";
           const errBlock = t.error
-            ? `<div class="turn-error">⚠️ ${escapeHtml(t.error)}</div>`
+            ? `<div class="turn-error">${escapeHtml(t.error)}</div>`
             : "";
 
           return `
-            <div class="turn-item" id="turn-${t.index}" data-activity="${escapeHtml(t.activityId)}">
+            <div class="turn-item ${hasToolCalls ? 'has-tools' : ''} ${hasError ? 'has-error' : ''}" id="turn-${t.index}" data-activity="${escapeHtml(t.activityId)}">
               <div class="turn-header">
                 <div>
-                  <span class="badge badge-turn" style="margin-right: 0.35rem; font-size: 0.8rem;">T${t.index}</span>
+                  <span class="badge badge-turn" style="margin-right: 0.35rem; font-size: 0.75rem;">T${t.index}</span>
                   <span class="turn-index">Turn ${t.index}</span>
                   <span class="turn-title">${escapeHtml(t.activityName || t.activityId)}</span>
                   <span class="turn-harness"><code>${escapeHtml(t.activityId)}</code> &middot; <code>${escapeHtml(t.harness || "-")}</code></span>
                 </div>
                 <div class="turn-meta">
                   ${cachedBadge}
+                  ${turnDur}
                   <span class="badge badge-cost">${cost}</span>
                   ${t.stopReason ? `<span class="badge badge-stop">${escapeHtml(t.stopReason)}</span>` : ""}
                 </div>
               </div>
               ${summaryBlock}
+              ${promptBlock}
+              ${responseBlock}
               ${tools}
               ${errBlock}
             </div>
@@ -359,61 +614,119 @@ export async function generateHtmlReport(
   <meta charset="utf-8">
   <title>Session Report - ${escapeHtml(detail.name || detail.id)}</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 2rem; background: #f8fafc; color: #1e293b; line-height: 1.6; }
-    .header-bar { margin-bottom: 2rem; }
-    .header-title { font-size: 2rem; font-weight: 800; color: #0f172a; margin: 0 0 0.5rem 0; }
-    .header-sub { font-size: 0.875rem; color: #64748b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .card { background: white; border: 1px solid #e2e8f0; border-radius: 10px; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
-    .card h2 { font-size: 1.25rem; font-weight: 700; margin-top: 0; margin-bottom: 1rem; color: #0f172a; }
-    .metrics { display: flex; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
-    .metric-box { background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem 1.25rem; min-width: 130px; flex: 1; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
-    .metric-val { font-size: 1.5rem; font-weight: 800; color: #0f766e; }
-    .metric-lbl { font-size: 0.75rem; text-transform: uppercase; color: #64748b; font-weight: 600; margin-top: 0.25rem; }
-    .prompt-box { margin: 0; padding: 1rem 1.25rem; background: #f1f5f9; border-left: 4px solid #0f766e; border-radius: 4px; font-size: 0.95rem; color: #334155; white-space: pre-wrap; word-break: break-word; }
-    
-    /* Diagram Viewer with Pan & Zoom */
-    .diagram-viewer { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 1.5rem; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.03); }
-    .diagram-viewer:last-child { margin-bottom: 0; }
-    .diagram-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background: #f8fafc; border-bottom: 1px solid #e2e8f0; flex-wrap: wrap; gap: 0.5rem; }
-    .diagram-info { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; font-size: 0.95rem; color: #1e293b; }
-    .diagram-actions { display: flex; align-items: center; gap: 0.35rem; }
-    .btn-tool { background: white; border: 1px solid #cbd5e1; border-radius: 4px; padding: 0.25rem 0.5rem; font-size: 0.8rem; font-weight: 600; color: #334155; cursor: pointer; transition: all 0.15s ease; user-select: none; }
-    .btn-tool:hover { background: #f1f5f9; border-color: #94a3b8; color: #0f172a; }
-    .zoom-pill { font-size: 0.75rem; font-family: ui-monospace, monospace; color: #64748b; min-width: 42px; text-align: center; font-weight: 600; }
-    .diagram-viewport { position: relative; width: 100%; height: 460px; overflow: hidden; background: #ffffff; cursor: grab; user-select: none; }
-    .diagram-viewport:active { cursor: grabbing; }
-    .diagram-canvas { position: absolute; transform-origin: 0 0; display: inline-block; }
-    .diagram-canvas img, .diagram-canvas svg { display: block; max-width: none; user-select: none; -webkit-user-drag: none; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 1.5rem; background: #f8fafc; color: #0f172a; font-size: 13px; line-height: 1.5; }
+    .header-bar { margin-bottom: 1.25rem; }
+    .header-title { font-size: 1.5rem; font-weight: 700; color: #0f172a; margin: 0 0 0.25rem 0; letter-spacing: -0.01em; }
+    .header-sub { font-size: 12px; color: #64748b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .card { background: white; border: 1px solid #e2e8f0; border-radius: 4px; padding: 1rem 1.25rem; margin-bottom: 1rem; box-shadow: none; }
+    .card h2 { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 0; margin-bottom: 0.75rem; color: #475569; }
+    .metrics { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+    .metric-box { background: white; border: 1px solid #e2e8f0; border-radius: 4px; padding: 0.5rem 0.75rem; min-width: 100px; flex: 1; box-shadow: none; }
+    .metric-val { font-size: 1.15rem; font-weight: 700; color: #0f766e; line-height: 1.2; }
+    .metric-lbl { font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: 600; margin-top: 0.2rem; letter-spacing: 0.05em; }
+    .prompt-box { margin: 0; padding: 0.75rem 1rem; background: #f8fafc; border-left: 3px solid #0f766e; border-radius: 2px; font-size: 13px; color: #334155; white-space: pre-wrap; word-break: break-word; }
 
-    table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.875rem; }
-    th, td { text-align: left; padding: 0.65rem 0.75rem; border-bottom: 1px solid #e2e8f0; }
-    th { background: #f8fafc; font-weight: 600; color: #475569; }
-    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; background: #f1f5f9; padding: 0.15em 0.35em; border-radius: 4px; }
-    .badge { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 0.2em 0.5em; border-radius: 4px; font-family: ui-monospace, monospace; }
+    /* Tabbed Diagram View */
+    .diagram-tabs-container { border: 1px solid #e2e8f0; border-radius: 4px; overflow: hidden; background: white; }
+    .diagram-tabs-nav { display: flex; background: #f8fafc; border-bottom: 1px solid #e2e8f0; gap: 0.25rem; padding: 0 0.5rem; overflow-x: auto; }
+    .diagram-tab-btn { background: transparent; border: none; border-bottom: 2px solid transparent; padding: 0.45rem 0.75rem; font-size: 12px; font-weight: 500; color: #64748b; cursor: pointer; display: flex; align-items: center; gap: 0.4rem; border-radius: 0; transition: all 0.15s; white-space: nowrap; }
+    .diagram-tab-btn:hover { color: #0f172a; }
+    .diagram-tab-btn.active { color: #0f766e; border-bottom-color: #0f766e; font-weight: 600; background: transparent; }
+    .diagram-tab-pane { width: 100%; }
+
+    /* Diagram Viewer with Pan & Zoom */
+    .diagram-viewer { background: #ffffff; overflow: hidden; }
+    .diagram-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 0.4rem 0.75rem; background: #ffffff; border-bottom: 1px solid #f1f5f9; flex-wrap: wrap; gap: 0.5rem; }
+    .diagram-info { display: flex; align-items: center; gap: 0.4rem; font-weight: 600; font-size: 12px; color: #1e293b; }
+    .diagram-actions { display: flex; align-items: center; gap: 0.25rem; }
+    .btn-tool { background: white; border: 1px solid #cbd5e1; border-radius: 3px; padding: 0.2rem 0.45rem; font-size: 11px; font-weight: 600; color: #475569; cursor: pointer; transition: all 0.15s ease; user-select: none; }
+    .btn-tool:hover { background: #f1f5f9; border-color: #94a3b8; color: #0f172a; }
+    .zoom-pill { font-size: 11px; font-family: ui-monospace, monospace; color: #64748b; min-width: 36px; text-align: center; font-weight: 600; }
+    .diagram-viewport { position: relative; width: 100%; height: 420px; overflow: hidden; background: #ffffff; cursor: grab; user-select: none; touch-action: none; }
+    .diagram-viewport:active { cursor: grabbing; }
+    .diagram-canvas { position: absolute; transform-origin: 0 0; display: inline-block; pointer-events: none; }
+    .diagram-canvas img, .diagram-canvas svg { display: block; max-width: none; user-select: none; -webkit-user-drag: none; pointer-events: none; }
+
+    /* Table & Badges */
+    table { width: 100%; border-collapse: collapse; margin-top: 0.25rem; font-size: 12px; }
+    th, td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid #f1f5f9; }
+    th { background: #f8fafc; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #64748b; border-bottom: 1px solid #e2e8f0; }
+    .clickable-row { cursor: pointer; }
+    .clickable-row:hover td { background: #f8fafc; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; background: #f1f5f9; padding: 0.1em 0.3em; border-radius: 2px; }
+    .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 0.15em 0.4em; border-radius: 2px; font-family: ui-monospace, monospace; }
     .badge-accent { background: #0f766e; color: white; }
     .badge-turn { background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; }
     .badge-cache { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; }
+    .badge-dur { background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }
     .badge-cost { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
     .badge-stop { background: #f1f5f9; color: #475569; }
     .badge-muted { background: #f1f5f9; color: #64748b; }
-    .turn-item { border-bottom: 1px solid #e2e8f0; padding: 1rem 0; }
+    .badge-success { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+    .badge-error { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+    .badge-pending { background: #fefce8; color: #a16207; border: 1px solid #fef08a; }
+
+    /* Turn Items & Log */
+    .turn-item { border-bottom: 1px solid #f1f5f9; padding: 0.85rem 0; transition: background-color 0.2s; }
     .turn-item:last-child { border-bottom: none; }
-    .turn-header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; margin-bottom: 0.5rem; }
-    .turn-index { font-weight: 700; color: #0f172a; margin-right: 0.5rem; }
-    .turn-title { font-weight: 600; color: #1e293b; margin-right: 0.5rem; }
-    .turn-harness { font-size: 0.8rem; color: #64748b; }
-    .turn-meta { display: flex; gap: 0.4rem; align-items: center; }
-    .turn-summary { background: #f8fafc; border-radius: 6px; padding: 0.75rem 1rem; font-size: 0.875rem; color: #334155; margin-top: 0.5rem; white-space: pre-wrap; }
-    .turn-error { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; border-radius: 6px; padding: 0.75rem 1rem; font-size: 0.875rem; margin-top: 0.5rem; }
-    .tool-tags { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.5rem; }
-    .tool-tag { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; font-family: monospace; font-size: 0.75rem; padding: 0.15rem 0.45rem; border-radius: 4px; }
-    .revisions-list { display: flex; flex-direction: column; gap: 0.75rem; }
-    .revision-item { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.75rem 1rem; }
-    .revision-header { display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 0.25rem; font-size: 0.875rem; }
-    .revision-time { font-size: 0.75rem; color: #64748b; font-weight: normal; }
-    .revision-reason { font-size: 0.875rem; color: #334155; }
-    .revision-added { font-family: monospace; font-size: 0.75rem; color: #0f766e; margin-top: 0.25rem; }
-    .alert { padding: 1rem 1.25rem; border-radius: 8px; margin-bottom: 1.5rem; font-size: 0.9rem; }
+    .turn-highlight { background-color: #fef3c7 !important; border-radius: 4px; padding-left: 0.5rem; padding-right: 0.5rem; }
+    .turn-header { display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem; margin-bottom: 0.35rem; }
+    .turn-index { font-weight: 700; color: #0f172a; margin-right: 0.4rem; }
+    .turn-title { font-weight: 600; color: #1e293b; margin-right: 0.4rem; }
+    .turn-harness { font-size: 11px; color: #64748b; }
+    .turn-meta { display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap; }
+    .turn-summary { background: #f8fafc; border-radius: 2px; padding: 0.5rem 0.75rem; font-size: 12px; color: #334155; margin-top: 0.35rem; white-space: pre-wrap; border-left: 2px solid #cbd5e1; }
+    .turn-error { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; border-radius: 2px; padding: 0.5rem 0.75rem; font-size: 12px; margin-top: 0.35rem; }
+    .tool-tags { display: flex; gap: 0.25rem; flex-wrap: wrap; margin-top: 0.35rem; }
+    .tool-tag { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; font-family: monospace; font-size: 11px; padding: 0.1rem 0.35rem; border-radius: 2px; }
+
+    /* Turn Filter Toolbar */
+    .turn-filter-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem; background: #f8fafc; padding: 0.4rem 0.6rem; border-radius: 4px; border: 1px solid #e2e8f0; }
+    .filter-btn-group { display: flex; gap: 0.25rem; }
+    .filter-btn { background: white; border: 1px solid #cbd5e1; border-radius: 3px; padding: 0.2rem 0.5rem; font-size: 11px; font-weight: 600; color: #475569; cursor: pointer; transition: all 0.15s; }
+    .filter-btn:hover { background: #f1f5f9; color: #0f172a; }
+    .filter-btn.active { background: #0f766e; color: white; border-color: #0f766e; }
+    .search-wrapper { flex: 1; max-width: 280px; min-width: 160px; }
+    .search-input { width: 100%; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 3px; padding: 0.25rem 0.5rem; font-size: 11px; }
+
+    /* Collapsible Details in Turn Log */
+    .detail-box { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 3px; margin-top: 0.35rem; overflow: hidden; font-size: 12px; }
+    .detail-summary { padding: 0.35rem 0.6rem; cursor: pointer; font-weight: 600; color: #334155; user-select: none; display: flex; align-items: center; gap: 0.4rem; justify-content: space-between; background: #f8fafc; font-size: 12px; }
+    .detail-summary:hover { background: #f1f5f9; }
+    .detail-body { padding: 0.5rem 0.75rem; border-top: 1px solid #f1f5f9; background: #ffffff; }
+    .detail-subheading { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b; margin-bottom: 0.25rem; margin-top: 0.35rem; }
+    .code-block { margin: 0 0 0.4rem 0; padding: 0.5rem 0.65rem; background: #0f172a; color: #f8fafc; border-radius: 2px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; line-height: 1.4; white-space: pre-wrap; word-break: break-all; max-height: 350px; overflow-y: auto; }
+    .code-block:last-child { margin-bottom: 0; }
+    .code-error { background: #450a0a; color: #fecaca; }
+    .btn-copy { background: transparent; border: 1px solid #cbd5e1; border-radius: 2px; padding: 0.1rem 0.35rem; font-size: 11px; cursor: pointer; color: #475569; transition: all 0.15s; }
+    .btn-copy:hover { background: #e2e8f0; color: #0f172a; }
+
+    /* Tool Specific Formatters */
+    .tool-details-container { margin-top: 0.5rem; }
+    .section-subtitle { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 0.25rem; }
+    .tool-name-badge { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; font-family: monospace; font-size: 11px; padding: 0.1rem 0.35rem; border-radius: 2px; font-weight: bold; }
+    .tool-id-label { font-family: monospace; font-size: 11px; color: #64748b; }
+    .tool-dur { font-size: 11px; color: #64748b; font-family: monospace; }
+    .terminal-card { background: #0f172a; border-radius: 3px; overflow: hidden; margin-bottom: 0.4rem; }
+    .terminal-bar { display: flex; align-items: center; justify-content: space-between; padding: 0.25rem 0.6rem; background: #1e293b; border-bottom: 1px solid #334155; font-size: 11px; color: #94a3b8; font-family: monospace; }
+    .terminal-title { font-size: 11px; }
+    .terminal-cmd { margin: 0; padding: 0.5rem 0.75rem; color: #38bdf8; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+    .file-path-badge { font-size: 12px; font-weight: 600; color: #1e293b; margin-bottom: 0.35rem; }
+    .diff-container { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 3px; margin-bottom: 0.4rem; overflow: hidden; }
+    .diff-title { font-size: 11px; font-weight: 600; color: #64748b; background: #f1f5f9; padding: 0.2rem 0.5rem; border-bottom: 1px solid #e2e8f0; }
+    .diff-chunk { padding: 0.3rem 0.6rem; font-family: ui-monospace, monospace; font-size: 11.5px; white-space: pre-wrap; line-height: 1.35; }
+    .diff-chunk pre { margin: 0; font-family: inherit; font-size: inherit; }
+    .diff-old { background: #fef2f2; color: #991b1b; border-left: 2px solid #ef4444; }
+    .diff-new { background: #f0fdf4; color: #166534; border-left: 2px solid #22c55e; }
+
+    /* Revisions */
+    .revisions-list { display: flex; flex-direction: column; gap: 0.5rem; }
+    .revision-item { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 3px; padding: 0.5rem 0.75rem; font-size: 12px; }
+    .revision-header { display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 0.15rem; font-size: 12px; }
+    .revision-time { font-size: 11px; color: #64748b; font-weight: normal; }
+    .revision-reason { font-size: 12px; color: #334155; }
+    .revision-added { font-family: monospace; font-size: 11px; color: #0f766e; margin-top: 0.15rem; }
+    .alert { padding: 0.75rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 12px; }
     .alert-danger { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
   </style>
 </head>
@@ -433,6 +746,7 @@ export async function generateHtmlReport(
     <div class="metric-box"><div class="metric-val">${detail.status}</div><div class="metric-lbl">Status</div></div>
     <div class="metric-box"><div class="metric-val">${formatCost(detail.stats?.totalCostUSD || 0)}</div><div class="metric-lbl">Total Cost</div></div>
     <div class="metric-box"><div class="metric-val">${detail.turnCount}</div><div class="metric-lbl">Turns</div></div>
+    <div class="metric-box"><div class="metric-val">${totalToolCallsCount}</div><div class="metric-lbl">Tool Invocations</div></div>
     <div class="metric-box"><div class="metric-val">${formatTokens(detail.stats?.totalTokens || 0)}</div><div class="metric-lbl">Tokens</div></div>
     <div class="metric-box"><div class="metric-val">${Math.round((detail.stats?.cacheHitRatio || 0) * 100)}%</div><div class="metric-lbl">Cache Hit</div></div>
     <div class="metric-box"><div class="metric-val">${durationStr}</div><div class="metric-lbl">Duration</div></div>
@@ -441,19 +755,19 @@ export async function generateHtmlReport(
   ${promptHtml}
 
   <div class="card">
-    <h2>📊 Execution Diagrams</h2>
-    ${diagramCardsHtml}
+    <h2>Execution Diagrams</h2>
+    ${diagramSectionHtml}
   </div>
 
   <div class="card">
-    <h2>📈 Activity Breakdown</h2>
+    <h2>Activity Breakdown</h2>
     <table>
       <thead>
         <tr><th>Activity</th><th>Symbol</th><th>Harness</th><th>Turns</th><th>Tokens (In / Out / Cache)</th><th>Reasoning</th><th>Cost ($ USD)</th><th>Duration</th></tr>
       </thead>
       <tbody>
         ${computeActivitySummaries(detail.turns).map(a => `
-          <tr>
+          <tr class="clickable-row" onclick="scrollToTurn(${a.turnIndices[0]})" title="Click to view turn in log">
             <td><code>${escapeHtml(a.activityId)}</code></td>
             <td><span class="badge badge-turn">${formatTurnRange(a.turnIndices) || "-"}</span></td>
             <td><code>${escapeHtml(a.harness)}</code></td>
@@ -469,13 +783,128 @@ export async function generateHtmlReport(
   </div>
 
   <div class="card">
-    <h2>📜 Chronological Turn Log & Transcript</h2>
+    <h2 style="margin-top: 0; margin-bottom: 0.75rem;">Chronological Turn Log & Transcript</h2>
+    
+    <div class="turn-filter-bar">
+      <div class="filter-btn-group">
+        <button type="button" class="filter-btn active" data-filter="all">All (${detail.turns.length})</button>
+        <button type="button" class="filter-btn" data-filter="tools">Tool Calls (${detail.turns.filter(t => (t.toolCallDetails?.length || t.toolCalls?.length || 0) > 0).length})</button>
+        <button type="button" class="filter-btn" data-filter="errors">Errors (${errorCount})</button>
+      </div>
+      <div class="search-wrapper">
+        <input type="text" id="turn-search-input" class="search-input" placeholder="Search turns, tools, commands..." />
+      </div>
+      <div>
+        <button type="button" class="btn-tool" id="btn-toggle-all-details" data-expanded="${isVerbose ? "true" : "false"}">
+          ${isVerbose ? "Collapse All Details" : "Expand All Details"}
+        </button>
+      </div>
+    </div>
+
     ${turnLogHtml}
   </div>
 
   ${revisionsHtml}
 
   <script>
+    // Copy button handlers
+    document.querySelectorAll('.btn-copy').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const text = btn.dataset.copy;
+        if (text) {
+          navigator.clipboard.writeText(text).then(() => {
+            const orig = btn.textContent;
+            btn.textContent = 'Copied';
+            setTimeout(() => btn.textContent = orig, 1500);
+          });
+        }
+      });
+    });
+
+    // Expand/collapse all details
+    const toggleBtn = document.getElementById('btn-toggle-all-details');
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', () => {
+        const isExpanded = toggleBtn.dataset.expanded === 'true';
+        const details = document.querySelectorAll('.turn-item details.detail-box');
+        details.forEach(d => d.open = !isExpanded);
+        toggleBtn.dataset.expanded = isExpanded ? 'false' : 'true';
+        toggleBtn.textContent = isExpanded ? 'Expand All Details' : 'Collapse All Details';
+      });
+    }
+
+    // Scroll to turn
+    window.scrollToTurn = function(index) {
+      const el = document.getElementById('turn-' + index);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('turn-highlight');
+        setTimeout(() => el.classList.remove('turn-highlight'), 2000);
+      }
+    };
+
+    // Filter and search
+    const filterBtns = document.querySelectorAll('.filter-btn');
+    const searchInput = document.getElementById('turn-search-input');
+
+    let currentFilter = 'all';
+    let searchQuery = '';
+
+    function applyFilterAndSearch() {
+      document.querySelectorAll('.turn-item').forEach(item => {
+        const hasTools = item.classList.contains('has-tools');
+        const hasError = item.classList.contains('has-error');
+        const textContent = item.textContent.toLowerCase();
+
+        let matchesFilter = true;
+        if (currentFilter === 'tools' && !hasTools) matchesFilter = false;
+        if (currentFilter === 'errors' && !hasError) matchesFilter = false;
+
+        let matchesSearch = true;
+        if (searchQuery && !textContent.includes(searchQuery)) matchesSearch = false;
+
+        item.style.display = (matchesFilter && matchesSearch) ? 'block' : 'none';
+      });
+    }
+
+    filterBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        filterBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentFilter = btn.dataset.filter;
+        applyFilterAndSearch();
+      });
+    });
+
+    if (searchInput) {
+      searchInput.addEventListener('input', (e) => {
+        searchQuery = e.target.value.trim().toLowerCase();
+        applyFilterAndSearch();
+      });
+    }
+
+    // Diagram Tab switching
+    document.querySelectorAll('.diagram-tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const targetId = btn.dataset.tabTarget;
+        document.querySelectorAll('.diagram-tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.diagram-tab-pane').forEach(p => {
+          p.classList.remove('active');
+          p.style.display = 'none';
+        });
+        btn.classList.add('active');
+        const targetPane = document.getElementById(targetId);
+        if (targetPane) {
+          targetPane.classList.add('active');
+          targetPane.style.display = 'block';
+          const viewer = targetPane.querySelector('.diagram-viewer');
+          if (viewer && viewer._fitDiagram) viewer._fitDiagram();
+        }
+      });
+    });
+
+    // Pointer-capture Pan and Zoom for Diagram Viewers
     document.querySelectorAll('.diagram-viewer').forEach((viewer) => {
       const viewport = viewer.querySelector('[data-viewport]');
       const canvas = viewer.querySelector('[data-canvas]');
@@ -501,13 +930,15 @@ export async function generateHtmlReport(
         const iWidth = img.naturalWidth || img.clientWidth || 800;
         const iHeight = img.naturalHeight || img.clientHeight || 400;
         if (iWidth === 0 || iHeight === 0) return;
-        const scaleX = (vRect.width - 32) / iWidth;
-        const scaleY = (vRect.height - 32) / iHeight;
+        const scaleX = (vRect.width - 24) / iWidth;
+        const scaleY = (vRect.height - 24) / iHeight;
         scale = Math.min(scaleX, scaleY, 1.2);
-        translateX = Math.max(16, (vRect.width - iWidth * scale) / 2);
-        translateY = Math.max(16, (vRect.height - iHeight * scale) / 2);
+        translateX = Math.max(12, (vRect.width - iWidth * scale) / 2);
+        translateY = Math.max(12, (vRect.height - iHeight * scale) / 2);
         updateTransform();
       }
+
+      viewer._fitDiagram = fitDiagram;
 
       // Initial fit after image load
       const img = canvas.querySelector('img');
@@ -535,28 +966,34 @@ export async function generateHtmlReport(
         updateTransform();
       }, { passive: false });
 
-      // Pan by dragging
-      viewport.addEventListener('mousedown', (e) => {
+      // Pointer Capture pan dragging (eliminates stuck dragging & ghost images)
+      viewport.addEventListener('dragstart', (e) => e.preventDefault());
+      viewport.addEventListener('pointerdown', (e) => {
         if (e.button !== 0) return;
         isPanning = true;
         startX = e.clientX - translateX;
         startY = e.clientY - translateY;
+        try { viewport.setPointerCapture(e.pointerId); } catch {}
         viewport.style.cursor = 'grabbing';
       });
 
-      window.addEventListener('mousemove', (e) => {
+      viewport.addEventListener('pointermove', (e) => {
         if (!isPanning) return;
         translateX = e.clientX - startX;
         translateY = e.clientY - startY;
         updateTransform();
       });
 
-      window.addEventListener('mouseup', () => {
+      const stopPan = (e) => {
         if (isPanning) {
           isPanning = false;
+          try { viewport.releasePointerCapture(e.pointerId); } catch {}
           viewport.style.cursor = 'grab';
         }
-      });
+      };
+
+      viewport.addEventListener('pointerup', stopPan);
+      viewport.addEventListener('pointercancel', stopPan);
 
       // Double-click to toggle fit / 100%
       viewport.addEventListener('dblclick', () => {
@@ -564,8 +1001,8 @@ export async function generateHtmlReport(
           fitDiagram();
         } else {
           scale = 1;
-          translateX = 20;
-          translateY = 20;
+          translateX = 16;
+          translateY = 16;
           updateTransform();
         }
       });
@@ -581,8 +1018,8 @@ export async function generateHtmlReport(
       });
       viewer.querySelector('[data-action="reset"]')?.addEventListener('click', () => {
         scale = 1;
-        translateX = 20;
-        translateY = 20;
+        translateX = 16;
+        translateY = 16;
         updateTransform();
       });
       viewer.querySelector('[data-action="fit"]')?.addEventListener('click', fitDiagram);
@@ -601,6 +1038,7 @@ export async function cmdReport(
     embedDataUri?: boolean;
     imageFormat?: "png" | "svg" | "raw-svg";
     scale?: number;
+    verbose?: boolean;
   }
 ): Promise<number> {
   const p = requirePaths();
@@ -624,6 +1062,7 @@ export async function cmdReport(
     output = await generateHtmlReport(detail, {
       imageFormat: flags.imageFormat || "png",
       scale: flags.scale,
+      verbose: flags.verbose,
     });
   } else {
     output = await generateMarkdownReport(detail, {
@@ -631,6 +1070,7 @@ export async function cmdReport(
       embedDataUri: flags.embedDataUri,
       imageFormat: flags.imageFormat === "svg" ? "svg" : "png",
       scale: flags.scale,
+      verbose: flags.verbose,
     });
   }
 

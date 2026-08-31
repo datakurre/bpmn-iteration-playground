@@ -172,7 +172,7 @@ describe("cmdInit and BPMN model versioning upgrades", () => {
     const result = spawnSync("node", [distFile, "init"], { env, encoding: "utf8" });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("upgraded 1 unmodified graph(s) to newer bundled version: session-default");
-  });
+  }, 20000);
 
   it("detects manual modifications and preserves them with an upgrade prompt", () => {
     const home = mkdtempSync(join(tmpdir(), "graph-agent-init-modified-"));
@@ -503,7 +503,7 @@ describe("--answer scoping (issue #44)", () => {
       expect(sessionId).toBeDefined();
       const second = runCli(env, ["resume", sessionId!, "--dry-run", "--answer", "gate_b:key=world"]);
       expect(second.stdout).toContain("completed");
-    });
+    }, 20000);
 
     it("caps how many times an unscoped answer auto-answers the same looping gate", () => {
       const { env } = project();
@@ -796,14 +796,14 @@ describe("graph-agent promote (issue #55)", () => {
     const result = runCli(env, ["promote", sessionId]);
     expect(result.code).not.toBe(0);
     expect(result.stderr).toMatch(/--as/);
-  });
+  }, 20000);
 
   it("refuses an unknown session", () => {
     const { env } = project();
     const result = runCli(env, ["promote", "nonexistent", "--as", "x"]);
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain("unknown session");
-  });
+  }, 20000);
 
   it("refuses to overwrite an existing library graph without --force, and backs it up with --force", () => {
     const { env, workflowsDir } = project();

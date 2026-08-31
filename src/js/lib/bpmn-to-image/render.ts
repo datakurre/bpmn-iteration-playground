@@ -120,6 +120,20 @@ export async function renderSessionDiagrams(
       }
     }
 
+    // Mark failed/errored elements present in this diagram
+    const failedActivityIds = new Set(
+      (detail.turns || [])
+        .filter((t) => t.stopReason === 'error' || t.error)
+        .map((t) => t.activityId)
+    );
+    for (const id of failedActivityIds) {
+      if (elementRegistry.get(id)) {
+        try {
+          canvas.addMarker(id, 'ga-error');
+        } catch {}
+      }
+    }
+
     // Also mark visited sequence flows if both source and target were visited
     const allElements = elementRegistry.getAll();
     for (const shape of allElements) {
@@ -129,6 +143,13 @@ export async function renderSessionDiagrams(
         if (sourceId && targetId && visitedSet.has(sourceId) && visitedSet.has(targetId)) {
           try {
             canvas.addMarker(shape.id, 'ga-visited');
+          } catch {}
+        }
+      } else if (shape && (shape.type === 'bpmn:Lane' || shape.type === 'bpmn:Participant')) {
+        const children = shape.children || [];
+        if (children.some((c: any) => visitedSet.has(c.id))) {
+          try {
+            canvas.addMarker(shape.id, 'ga-visited-lane');
           } catch {}
         }
       }
@@ -148,30 +169,82 @@ export async function renderSessionDiagrams(
     let diagramCost = 0;
 
     if (svg) {
+      // Direct SVG attribute replacement so resvg / rasterizers & all browsers render highlights reliably
+      svg = svg.replace(/<g class="([^"]*\bga-(visited|error|token|visited-lane)\b[^"]*)"([^>]*)>([\s\S]*?)<\/g>/g, (_match: string, classAttr: string, _markerType: string, restAttrs: string, innerContent: string) => {
+        let stroke = '#059669';
+        let fill = '#ecfdf5';
+        let strokeWidth = '2.5px';
+
+        if (classAttr.includes('ga-error')) {
+          stroke = '#dc2626';
+          fill = '#fef2f2';
+          strokeWidth = '3px';
+        } else if (classAttr.includes('ga-token')) {
+          stroke = '#d97706';
+          fill = '#fef3c7';
+          strokeWidth = '3.5px';
+        } else if (classAttr.includes('ga-visited-lane')) {
+          stroke = '#059669';
+          fill = 'none';
+          strokeWidth = '2px';
+        }
+
+        const isConnection = classAttr.includes('djs-connection');
+
+        let updatedInner = innerContent;
+        if (isConnection) {
+          updatedInner = updatedInner.replace(/<path([^>]*?)(\/?>)/g, (_m: string, p1: string, p2: string) => {
+            let p = p1.replace(/\s*style="[^"]*"/g, '').replace(/\s*stroke="[^"]*"/g, '').replace(/\s*fill="[^"]*"/g, '').replace(/\s*stroke-width="[^"]*"/g, '');
+            return `<path${p} stroke="${stroke}" stroke-width="${strokeWidth}" fill="none" style="stroke: ${stroke} !important; stroke-width: ${strokeWidth} !important; fill: none !important;"${p2}`;
+          });
+          updatedInner = updatedInner.replace(/<(polygon|polyline)([^>]*?)(\/?>)/g, (_m: string, tag: string, p1: string, p2: string) => {
+            let p = p1.replace(/\s*style="[^"]*"/g, '').replace(/\s*stroke="[^"]*"/g, '').replace(/\s*fill="[^"]*"/g, '').replace(/\s*stroke-width="[^"]*"/g, '');
+            return `<${tag}${p} stroke="${stroke}" stroke-width="${strokeWidth}" fill="${stroke}" style="stroke: ${stroke} !important; stroke-width: ${strokeWidth} !important; fill: ${stroke} !important;"${p2}`;
+          });
+        } else {
+          updatedInner = updatedInner.replace(/<(rect|circle|polygon)([^>]*?)(\/?>)/g, (_m: string, tag: string, p1: string, p2: string) => {
+            let p = p1.replace(/\s*style="[^"]*"/g, '').replace(/\s*stroke="[^"]*"/g, '').replace(/\s*fill="[^"]*"/g, '').replace(/\s*stroke-width="[^"]*"/g, '');
+            if (classAttr.includes('ga-visited-lane')) {
+              return `<${tag}${p} stroke="${stroke}" stroke-width="${strokeWidth}" stroke-dasharray="6 3" fill="none" style="stroke: ${stroke} !important; stroke-width: ${strokeWidth} !important; stroke-dasharray: 6 3 !important; fill: none !important;"${p2}`;
+            }
+            return `<${tag}${p} stroke="${stroke}" stroke-width="${strokeWidth}" fill="${fill}" style="stroke: ${stroke} !important; fill: ${fill} !important; stroke-width: ${strokeWidth} !important;"${p2}`;
+          });
+          updatedInner = updatedInner.replace(/<path([^>]*?)(\/?>)/g, (_m: string, p1: string, p2: string) => {
+            let p = p1.replace(/\s*style="[^"]*"/g, '').replace(/\s*stroke="[^"]*"/g, '').replace(/\s*fill="[^"]*"/g, '');
+            return `<path${p} stroke="${stroke}" fill="none" style="stroke: ${stroke} !important; fill: none !important;"${p2}`;
+          });
+        }
+
+        return `<g class="${classAttr}"${restAttrs}>${updatedInner}</g>`;
+      });
+
       const injectedStyles = `
         <style>
-          .ga-visited:not(.djs-connection) .djs-visual > :nth-child(1) {
-            stroke: #0284c7 !important;
+          .ga-visited.djs-shape .djs-visual rect,
+          .ga-visited.djs-shape .djs-visual circle,
+          .ga-visited.djs-shape .djs-visual polygon {
+            stroke: #059669 !important;
             stroke-width: 2.5px !important;
-            fill: #f0f9ff !important;
+            fill: #ecfdf5 !important;
           }
-          .ga-visited.djs-connection .djs-visual > :nth-child(1),
           .ga-visited.djs-connection .djs-visual path {
-            stroke: #0284c7 !important;
+            stroke: #059669 !important;
             stroke-width: 2.5px !important;
           }
-          .ga-token:not(.djs-connection) .djs-visual > :nth-child(1) {
-            stroke: #0f766e !important;
-            stroke-width: 3.5px !important;
-            fill: #ccfbf1 !important;
+          .ga-error.djs-shape .djs-visual rect,
+          .ga-error.djs-shape .djs-visual circle {
+            stroke: #dc2626 !important;
+            stroke-width: 3px !important;
+            fill: #fef2f2 !important;
           }
-          .ga-token.djs-connection .djs-visual > :nth-child(1),
-          .ga-token.djs-connection .djs-visual path {
-            stroke: #0f766e !important;
+          .ga-token.djs-shape .djs-visual rect,
+          .ga-token.djs-shape .djs-visual circle {
+            stroke: #d97706 !important;
             stroke-width: 3.5px !important;
+            fill: #fef3c7 !important;
           }
           .ga-cost-badge rect, .ga-turn-badge rect {
-            rx: 3px;
+            rx: 2px;
           }
           .ga-cost-badge text, .ga-turn-badge text {
             font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -212,7 +285,7 @@ export async function renderSessionDiagrams(
             const ty = Math.max(0, shape.y - 12);
             badges.push(
               `<g class="ga-turn-badge" transform="translate(${tx}, ${ty})">` +
-              `<rect x="0" y="0" width="${tWidth}" height="14" rx="3" fill="#4338ca" fill-opacity="0.95"/>` +
+              `<rect x="0" y="0" width="${tWidth}" height="14" rx="2" fill="#4338ca" fill-opacity="0.95"/>` +
               `<text x="${tWidth / 2}" y="10" fill="#ffffff" font-family="monospace" font-size="9" text-anchor="middle" font-weight="bold">${turnRangeStr}</text>` +
               `</g>`
             );
@@ -228,7 +301,7 @@ export async function renderSessionDiagrams(
             const by = shape.y + shape.height - 14;
             badges.push(
               `<g class="ga-cost-badge" transform="translate(${bx}, ${by})">` +
-              `<rect x="0" y="0" width="${badgeWidth}" height="14" rx="3" fill="#0f766e" fill-opacity="0.95"/>` +
+              `<rect x="0" y="0" width="${badgeWidth}" height="14" rx="2" fill="#0f766e" fill-opacity="0.95"/>` +
               `<text x="${badgeWidth / 2}" y="10" fill="#ffffff" font-family="monospace" font-size="9" text-anchor="middle" font-weight="bold">${costFormatted}</text>` +
               `</g>`
             );

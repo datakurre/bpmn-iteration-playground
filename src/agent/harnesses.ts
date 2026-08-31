@@ -282,8 +282,8 @@ export interface HarnessDeps {
 }
 
 /** Turn index, so each recorded turn is numbered in execution order. */
-function nextTurnIndex(store: SessionStore): number {
-  return store.readMeta().turns.length + 1;
+function nextTurnIndex(store?: SessionStore): number {
+  return (store && typeof store.readMeta === "function" ? store.readMeta().turns.length : 0) + 1;
 }
 
 export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
@@ -338,6 +338,7 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
           ]
             .filter((part): part is string => Boolean(part))
             .join("\n\n");
+    const startedAt = Date.now();
     const outcome = await pi.beginTurn(text);
     currentToolCalls = outcome.toolCalls;
 
@@ -348,14 +349,30 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
       harness: context.harness,
       stopReason: outcome.stopReason,
       toolCalls: outcome.toolCalls.map((call) => call.name),
+      toolCallDetails: outcome.toolCalls.map((call) => ({
+        id: call.id,
+        name: call.name,
+        arguments: call.arguments,
+      })),
+      prompt: text ?? raw,
+      response: outcome.text,
+      inputs: { ...context.input },
+      outputs: {
+        stop_reason: outcome.stopReason,
+        text: outcome.text,
+        usage: outcome.usage,
+      },
       ...(outcome.text ? { summary: outcome.text.slice(0, 400) } : {}),
       ...(outcome.errorMessage === undefined ? {} : { error: outcome.errorMessage }),
       usage: outcome.usage,
+      startedAt,
       endedAt: Date.now(),
     };
-    store.update((meta) => {
-      meta.turns.push(record);
-    });
+    if (store && typeof store.update === "function") {
+      store.update((meta) => {
+        meta.turns.push(record);
+      });
+    }
 
     const summary =
       outcome.stopReason === "error" && outcome.errorMessage
@@ -389,8 +406,24 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
     if (!resolved.ok) return failed(resolved.reason);
     const call = resolved.call;
 
+    const toolStart = Date.now();
     const outcome = await tools.run(call.name, call.arguments, context.signal);
+    const durationMs = Date.now() - toolStart;
     pi.resolveTool(call.id, outcome);
+
+    if (store && typeof store.update === "function") {
+      store.update((meta) => {
+        const lastTurn = meta.turns[meta.turns.length - 1];
+        if (lastTurn?.toolCallDetails) {
+          const detail = lastTurn.toolCallDetails.find((d) => d.id === call.id || (d.name === call.name && !d.result));
+          if (detail) {
+            detail.result = { content: outcome.content, isError: outcome.isError };
+            detail.durationMs = durationMs;
+          }
+        }
+      });
+    }
+
     return ok(`${call.name}: ${outcome.isError ? "failed" : "ok"}`, {
       tool: call.name,
       terminate: outcome.terminate === true,
@@ -596,11 +629,32 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
       if (!command) return failed("no 'command' header configured for this shell step");
       const failOnError = context.properties.fail_on_error !== "false";
 
+      const startedAt = Date.now();
       const { exit_code, stdout, stderr } = await runCommand(command, cwd, context.signal);
+      const endedAt = Date.now();
       const summary = `\`${command}\` exited ${exit_code}`;
       // `exit_code`, never `status`: HarnessResult already reserves `status` for
       // "success" | "failed", and zeebe:output reads this object by field name.
       const extra = { exit_code, stdout, stderr };
+
+      if (store && typeof store.update === "function") {
+        store.update((meta) => {
+          meta.turns.push({
+            index: nextTurnIndex(store),
+            activityId: context.activityId,
+            ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
+            harness: "shell",
+            stopReason: exit_code === 0 ? "stop" : "error",
+            inputs: { command, fail_on_error: context.properties.fail_on_error },
+            outputs: extra,
+            summary,
+            startedAt,
+            endedAt,
+            ...(exit_code !== 0 ? { error: `exited ${exit_code}: ${stderr || stdout || "command failed"}` } : {}),
+          });
+        });
+      }
+
       if (exit_code !== 0 && failOnError) return failed(summary, extra);
       return ok(summary, extra);
     },

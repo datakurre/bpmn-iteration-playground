@@ -16,7 +16,18 @@ export interface GraphSummary {
   source: "library" | "bundled";
 }
 
-/** One BPMN activity that carried an agent turn, in execution order. */
+export interface ToolCallDetail {
+  id: string;
+  name: string;
+  arguments?: Record<string, unknown>;
+  durationMs?: number;
+  result?: {
+    content: string;
+    isError?: boolean;
+  };
+}
+
+/** One BPMN activity that carried an agent turn or workflow step, in execution order. */
 export interface TurnRecord {
   index: number;
   activityId: string;
@@ -25,6 +36,15 @@ export interface TurnRecord {
   harness?: string;
   stopReason?: string;
   toolCalls?: string[];
+  toolCallDetails?: ToolCallDetail[];
+  /** The prompt/input sent to the model or activity. */
+  prompt?: string;
+  /** Full assistant text response received from the model. */
+  response?: string;
+  /** Mapped input parameters for this activity. */
+  inputs?: Record<string, unknown>;
+  /** Output results produced by this activity. */
+  outputs?: Record<string, unknown>;
   summary?: string;
   startedAt?: number;
   endedAt?: number;

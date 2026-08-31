@@ -15,7 +15,8 @@ TypeScript that actually does the work an activity names.
 
 - [Getting started](getting-started.html) -- build the project, run the bundled
   Pi demo loop, pair it with a deterministic `shell` step, point it at a real
-  model, and read a run that went wrong.
+  model, drive single-task runs or continuous multi-prompt sessions, and read a
+  run that went wrong.
 - [Harness reference](harnesses.html) -- every job type a graph can dispatch to,
   and what it expects on the activity.
 
