@@ -47,8 +47,9 @@ const CONFIG = {
   },
 };
 
-// Mirrors src/js/lib/supported-bpmn-elements.ts's SUPPORTED_ELEMENT_TYPES and
-// onlySupportedElements -- see that file for why the allowlist is what it is.
+// Mirrors src/js/lib/supported-bpmn-elements.ts's SUPPORTED_ELEMENT_TYPES,
+// SUPPORTED_EVENT_DEFINITIONS and onlySupportedElements -- see that file for
+// why the allowlists are what they are.
 const SUPPORTED_ELEMENT_TYPES = new Set([
   "bpmn:StartEvent",
   "bpmn:EndEvent",
@@ -56,8 +57,16 @@ const SUPPORTED_ELEMENT_TYPES = new Set([
   "bpmn:ServiceTask",
   "bpmn:UserTask",
   "bpmn:ExclusiveGateway",
+  "bpmn:ParallelGateway",
   "bpmn:CallActivity",
   "bpmn:SubProcess",
+  "bpmn:BoundaryEvent",
+]);
+
+const SUPPORTED_EVENT_DEFINITIONS = new Set([
+  "bpmn:TerminateEventDefinition",
+  "bpmn:TimerEventDefinition",
+  "bpmn:ErrorEventDefinition",
 ]);
 
 function isAny(node, types) {
@@ -68,11 +77,20 @@ function onlySupportedElements() {
   return {
     check(node, reporter) {
       if (!isAny(node, ["bpmn:FlowElement", "bpmn:Artifact"])) return;
-      if (SUPPORTED_ELEMENT_TYPES.has(node.$type)) return;
-      reporter.report(
-        node.id,
-        `Element type <${node.$type}> is not supported by this project's runtime -- allowed types are: ${[...SUPPORTED_ELEMENT_TYPES].sort().join(", ")}`,
-      );
+      if (!SUPPORTED_ELEMENT_TYPES.has(node.$type)) {
+        reporter.report(
+          node.id,
+          `Element type <${node.$type}> is not supported by this project's runtime -- allowed types are: ${[...SUPPORTED_ELEMENT_TYPES].sort().join(", ")}`,
+        );
+        return;
+      }
+      for (const def of node.eventDefinitions ?? []) {
+        if (SUPPORTED_EVENT_DEFINITIONS.has(def.$type)) continue;
+        reporter.report(
+          node.id,
+          `Event definition <${def.$type}> is not supported by this project's runtime -- allowed event definitions are: ${[...SUPPORTED_EVENT_DEFINITIONS].sort().join(", ")}`,
+        );
+      }
     },
   };
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { onlySupportedElements, SUPPORTED_ELEMENT_TYPES } from "./supported-bpmn-elements";
+import { onlySupportedElements, SUPPORTED_ELEMENT_TYPES, SUPPORTED_EVENT_DEFINITIONS } from "./supported-bpmn-elements";
 
 // bpmnlint always hands rules real moddle elements, which implement
 // `$instanceOf` across the whole BPMN type hierarchy (a `bpmn:ServiceTask` is
@@ -13,16 +13,19 @@ const FLOW_ELEMENT_TYPES = new Set([
   "bpmn:UserTask",
   "bpmn:ExclusiveGateway",
   "bpmn:InclusiveGateway",
+  "bpmn:ParallelGateway",
   "bpmn:CallActivity",
   "bpmn:SubProcess",
   "bpmn:SequenceFlow",
+  "bpmn:BoundaryEvent",
 ]);
 
-function node(id: string, $type: string) {
+function node(id: string, $type: string, eventDefinitions?: { $type: string }[]) {
   return {
     id,
     $type,
     $instanceOf: (type: string) => type === $type || (type === "bpmn:FlowElement" && FLOW_ELEMENT_TYPES.has($type)),
+    ...(eventDefinitions ? { eventDefinitions } : {}),
   };
 }
 
@@ -64,18 +67,56 @@ describe("onlySupportedElements", () => {
     expect(reports).toHaveLength(1);
   });
 
-  it("SUPPORTED_ELEMENT_TYPES matches every element type used across workflows/*.bpmn", () => {
+  it("SUPPORTED_ELEMENT_TYPES covers every element type used across workflows/*.bpmn, plus fork/join and boundary events", () => {
     expect([...SUPPORTED_ELEMENT_TYPES].sort()).toEqual(
       [
         "bpmn:CallActivity",
         "bpmn:EndEvent",
         "bpmn:ExclusiveGateway",
+        "bpmn:ParallelGateway",
         "bpmn:SequenceFlow",
         "bpmn:ServiceTask",
         "bpmn:StartEvent",
         "bpmn:SubProcess",
         "bpmn:UserTask",
+        "bpmn:BoundaryEvent",
       ].sort(),
+    );
+  });
+
+  it("does not report an event with an allowed event definition", () => {
+    const reports: unknown[] = [];
+    const rule = onlySupportedElements();
+    rule.check(node("end1", "bpmn:EndEvent", [{ $type: "bpmn:TerminateEventDefinition" }]), {
+      report: (...args) => reports.push(args),
+    });
+    expect(reports).toEqual([]);
+  });
+
+  it("reports a disallowed event definition, naming the allowed set", () => {
+    const reports: [string, string][] = [];
+    const rule = onlySupportedElements();
+    rule.check(node("boundary1", "bpmn:BoundaryEvent", [{ $type: "bpmn:MessageEventDefinition" }]), {
+      report: (id, message) => reports.push([id, message]),
+    });
+    expect(reports).toHaveLength(1);
+    expect(reports[0]![0]).toBe("boundary1");
+    expect(reports[0]![1]).toContain("bpmn:MessageEventDefinition");
+    expect(reports[0]![1]).toContain("bpmn:TimerEventDefinition");
+  });
+
+  it("does not check event definitions on a disallowed element type -- the element-type report is enough", () => {
+    const reports: unknown[] = [];
+    const rule = onlySupportedElements();
+    rule.check(node("gw3", "bpmn:InclusiveGateway", [{ $type: "bpmn:MessageEventDefinition" }]), {
+      report: (...args) => reports.push(args),
+    });
+    expect(reports).toHaveLength(1);
+  });
+
+  it("SUPPORTED_EVENT_DEFINITIONS is scoped to Terminate/Timer/Error", () => {
+    expect([...SUPPORTED_EVENT_DEFINITIONS].sort()).toEqual(
+      ["bpmn:ErrorEventDefinition", "bpmn:TerminateEventDefinition", "bpmn:TimerEventDefinition"].sort(),
     );
   });
 });

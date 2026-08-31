@@ -13,7 +13,7 @@ import type { PiSession, ToolCallRequest } from "./pi-session.ts";
 import type { ToolExecutor } from "./tool-executor.ts";
 import { GraphRevisionConflictError, type SessionStore } from "./session-store.ts";
 import type { TurnRecord } from "../studio/types.ts";
-import { SUPPORTED_ELEMENT_TYPES } from "../js/lib/supported-bpmn-elements.ts";
+import { SUPPORTED_ELEMENT_TYPES, SUPPORTED_EVENT_DEFINITIONS } from "../js/lib/supported-bpmn-elements.ts";
 
 /** Matches craft-graph.bpmn's own `gw_lint` condition (`lint_attempts >= 3`). */
 const MAX_LINT_ATTEMPTS = 3;
@@ -65,10 +65,19 @@ const AGENT_ROLES: Record<string, string> = {
     '"inputs":[{"source":"=...","target":"..."}],"outputs":[{"source":"=...",' +
     '"target":"..."}]} -- wires zeebe:taskDefinition/taskHeaders/ioMapping ' +
     "onto a new task.\n" +
-    '  {"op":"setDocumentation","id":"<id>","text":"..."}\n\n' +
+    '  {"op":"setDocumentation","id":"<id>","text":"..."}\n' +
+    '  {"op":"attachBoundaryEvent","id":"...","attachedTo":"<existing activity ' +
+    'id>","eventDefinitionType":"bpmn:TimerEventDefinition"|"bpmn:ErrorEventDefinition",' +
+    '"timerDuration":"<ISO-8601 duration, timers only>","cancelActivity":true|false} -- ' +
+    "attaches a timeout or error handler to an existing activity (default " +
+    'cancelActivity true, interrupting). It has no incoming flow of its own -- ' +
+    'route where it goes next with a separate "connect" op naming it as "from".\n\n' +
     '`appendShape`/`insertShape` accept an optional "process":"<id>" ' +
-    '(defaults to the main process) and, when "type" is "bpmn:CallActivity", ' +
-    '"calledElement":"<a process id from an earlier createProcess op>".\n\n' +
+    '(defaults to the main process); when "type" is "bpmn:CallActivity", ' +
+    '"calledElement":"<a process id from an earlier createProcess op>"; and, ' +
+    'on a start or end event, an optional "eventDefinitionType" (one of the ' +
+    'event definitions listed below), with "timerDuration" required alongside ' +
+    'a timer one.\n\n' +
     "Prefer expressing new work as its own small called sub-process: " +
     "createProcess, build the new steps inside it (every op that belongs " +
     'there needs "process":"<that id>"), then insertShape (or appendShape) a ' +
@@ -82,13 +91,23 @@ const AGENT_ROLES: Record<string, string> = {
     "else has no tested behaviour here and will be rejected:\n" +
     [...SUPPORTED_ELEMENT_TYPES].sort().join(", ") +
     "\n\n" +
+    '"eventDefinitionType" (on a start/end event or attachBoundaryEvent) must ' +
+    "be exactly one of these:\n" +
+    [...SUPPORTED_EVENT_DEFINITIONS].sort().join(", ") +
+    "\n\n" +
     "Never insertShape or connect a second incoming flow into a plain task " +
     "or event -- that looks like a join but is not one, and bpmn-elements " +
     "re-triggers the activity once per arriving token instead of waiting for " +
-    "both. Where two paths need to reconverge (a loop-back alongside a fresh " +
-    "entry, say), appendShape a bpmn:ExclusiveGateway, connect both sources " +
-    "into it, and give it a single outgoing flow to the shared target " +
-    "instead.",
+    "both. Where two paths need to reconverge without actually waiting for " +
+    "both (a loop-back alongside a fresh entry, say), appendShape a " +
+    "bpmn:ExclusiveGateway, connect both sources into it, and give it a " +
+    "single outgoing flow to the shared target instead. For a genuine " +
+    "parallel fork/join -- run several branches at once and wait for all of " +
+    "them -- appendShape a bpmn:ParallelGateway for the fork (connect each " +
+    "branch's first step from it) and another bpmn:ParallelGateway for the " +
+    "join (connect every branch's last step into it, then one outgoing flow " +
+    "onward); a ParallelGateway with more than one incoming flow is a real " +
+    "join, not the fake-join mistake above.",
 };
 
 /**
@@ -504,6 +523,7 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
           new Set(Object.keys(registry)),
           harnessIOContract(),
           SUPPORTED_ELEMENT_TYPES,
+          SUPPORTED_EVENT_DEFINITIONS,
         );
         if (splice.ok) {
           settle(true);
@@ -546,6 +566,7 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
           new Set(Object.keys(registry)),
           harnessIOContract(),
           SUPPORTED_ELEMENT_TYPES,
+          SUPPORTED_EVENT_DEFINITIONS,
         );
         if (!splice.ok) return failed(splice.reason ?? "the fragment is not an additive splice");
         // An empty splice.added is a valid additive splice (the model

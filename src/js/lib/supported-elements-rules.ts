@@ -106,11 +106,18 @@ const ALLOWED_ACTION_NAMES = new Set([
   "service-task",
   "call-activity",
   "exclusive-gateway",
+  "parallel-gateway",
   "none-start-event",
   "none-end-event",
   "terminate-end",
   "collapsed-subprocess",
   "expanded-subprocess",
+  // Boundary events, scoped to Timer + Error -- see supported-bpmn-elements.ts's
+  // SUPPORTED_EVENT_DEFINITIONS for why. This package has no
+  // "non-interrupting-error-boundary" option at all (only an interrupting one).
+  "timer-boundary",
+  "non-interrupting-timer-boundary",
+  "error-boundary",
 ]);
 
 function filterEntries(entries: PopupMenuEntries, prefix: string): PopupMenuEntries {

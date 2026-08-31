@@ -10,7 +10,7 @@ import * as elements from "bpmn-elements";
 import { Serializer, TypeResolver } from "moddle-context-serializer";
 import zeebeDescriptor from "zeebe-bpmn-moddle/resources/zeebe.json" with { type: "json" };
 import { activityProperties, harnessOf, ioMapping, type ActivityLike } from "./zeebe.ts";
-import { SUPPORTED_ELEMENT_TYPES } from "../js/lib/supported-bpmn-elements.ts";
+import { SUPPORTED_ELEMENT_TYPES, SUPPORTED_EVENT_DEFINITIONS } from "../js/lib/supported-bpmn-elements.ts";
 
 export const MODDLE_OPTIONS = { zeebe: zeebeDescriptor };
 
@@ -198,6 +198,10 @@ export type GraphOp =
       process?: string;
       /** Only meaningful when `type` is `bpmn:CallActivity`. */
       calledElement?: string;
+      /** One of SUPPORTED_EVENT_DEFINITIONS -- only meaningful on a start/end event. */
+      eventDefinitionType?: string;
+      /** ISO-8601 duration; only meaningful with eventDefinitionType "bpmn:TimerEventDefinition". */
+      timerDuration?: string;
     }
   | {
       op: "insertShape";
@@ -207,6 +211,8 @@ export type GraphOp =
       name?: string;
       process?: string;
       calledElement?: string;
+      eventDefinitionType?: string;
+      timerDuration?: string;
     }
   | { op: "connect"; from: string; to: string; id?: string; condition?: string; process?: string }
   | {
@@ -217,7 +223,25 @@ export type GraphOp =
       inputs?: { source: string; target: string }[];
       outputs?: { source: string; target: string }[];
     }
-  | { op: "setDocumentation"; id: string; text: string };
+  | { op: "setDocumentation"; id: string; text: string }
+  | {
+      /**
+       * A boundary event doesn't fit appendShape (nothing "after" it -- it
+       * isn't reached by a sequence flow at all) or insertShape (nothing to
+       * split); it attaches to a host activity instead. Route where it goes
+       * next with a separate "connect" op naming it as `from` -- this op
+       * creates no sequence flow of its own.
+       */
+      op: "attachBoundaryEvent";
+      id: string;
+      attachedTo: string;
+      eventDefinitionType: "bpmn:TimerEventDefinition" | "bpmn:ErrorEventDefinition";
+      /** Required with eventDefinitionType "bpmn:TimerEventDefinition". */
+      timerDuration?: string;
+      /** Interrupting (the host activity is cancelled when this fires) -- default true. */
+      cancelActivity?: boolean;
+      process?: string;
+    };
 
 /** Builds a `zeebe:ExtensionElements` value list the same shape every workflows/*.bpmn hand-writes. */
 function zeebeTaskDefinitionValues(
@@ -243,6 +267,40 @@ function zeebeTaskDefinitionValues(
     );
   }
   return values;
+}
+
+/** A boundary event only ever makes sense with an actual timeout or error to catch. */
+const BOUNDARY_EVENT_DEFINITIONS: ReadonlySet<string> = new Set(["bpmn:TimerEventDefinition", "bpmn:ErrorEventDefinition"]);
+
+/**
+ * Builds a `bpmn:TerminateEventDefinition`/`bpmn:TimerEventDefinition`/
+ * `bpmn:ErrorEventDefinition` moddle object for an `eventDefinitionType`
+ * field on `appendShape`/`insertShape`/`attachBoundaryEvent`. `allowed`
+ * lets `attachBoundaryEvent` restrict to Timer/Error only (Terminate makes
+ * no sense on a boundary event) while `appendShape`/`insertShape` allow the
+ * full `SUPPORTED_EVENT_DEFINITIONS` set.
+ *
+ * Zeebe expresses a timer's duration the plain-BPMN way -- a
+ * `<bpmn:timeDuration>` child (`bpmn:FormalExpression`), not a `zeebe:`
+ * extension (confirmed against `bpmn-elements`' own `TimerEventDefinition`,
+ * which reads `behaviour.timeDuration` directly).
+ */
+function buildEventDefinition(
+  moddle: BpmnModdle,
+  type: string,
+  timerDuration: string | undefined,
+  opIndex: number,
+  allowed: ReadonlySet<string> = SUPPORTED_EVENT_DEFINITIONS,
+): unknown {
+  if (!allowed.has(type)) {
+    const valid = [...allowed].sort().join(", ");
+    throw new Error(`op ${opIndex}: event definition '${type}' is not supported here -- allowed: ${valid}`);
+  }
+  if (type === "bpmn:TimerEventDefinition") {
+    if (!timerDuration) throw new Error(`op ${opIndex}: 'bpmn:TimerEventDefinition' needs a 'timerDuration'`);
+    return moddle.create(type, { timeDuration: moddle.create("bpmn:FormalExpression", { body: timerDuration }) });
+  }
+  return moddle.create(type, {});
 }
 
 /**
@@ -351,6 +409,9 @@ export async function applyGraphOps(currentXml: string, ops: GraphOp[]): Promise
           id: raw.id,
           name: raw.name,
           ...(raw.calledElement ? { calledElement: raw.calledElement } : {}),
+          ...(raw.eventDefinitionType
+            ? { eventDefinitions: [buildEventDefinition(moddle, raw.eventDefinitionType, raw.timerDuration, opIndex)] }
+            : {}),
         });
         attach(process, shape);
         connectNodes(process, source, shape, undefined);
@@ -366,6 +427,9 @@ export async function applyGraphOps(currentXml: string, ops: GraphOp[]): Promise
           id: raw.id,
           name: raw.name,
           ...(raw.calledElement ? { calledElement: raw.calledElement } : {}),
+          ...(raw.eventDefinitionType
+            ? { eventDefinitions: [buildEventDefinition(moddle, raw.eventDefinitionType, raw.timerDuration, opIndex)] }
+            : {}),
         });
         attach(process, shape);
         const oldTarget = flow.targetRef as ModdleFlowElement;
@@ -404,6 +468,30 @@ export async function applyGraphOps(currentXml: string, ops: GraphOp[]): Promise
       case "setDocumentation": {
         const el = resolve(raw.id, opIndex);
         el.documentation = [create("bpmn:Documentation", { text: raw.text })];
+        break;
+      }
+      case "attachBoundaryEvent": {
+        requireSupportedType("bpmn:BoundaryEvent", opIndex);
+        requireNewId(raw.id, opIndex);
+        const process = processFor(raw.process, opIndex);
+        const host = resolve(raw.attachedTo, opIndex);
+        const eventDefinition = buildEventDefinition(
+          moddle,
+          raw.eventDefinitionType,
+          raw.timerDuration,
+          opIndex,
+          BOUNDARY_EVENT_DEFINITIONS,
+        );
+        const shape = create("bpmn:BoundaryEvent", {
+          id: raw.id,
+          attachedToRef: host,
+          cancelActivity: raw.cancelActivity ?? true,
+          eventDefinitions: [eventDefinition],
+        });
+        // No sequence flow: a boundary event has no incoming flow (it attaches
+        // via attachedToRef, not a flow) -- the model routes its outgoing path
+        // with a separate "connect" op naming it as `from`.
+        attach(process, shape);
         break;
       }
       default: {
@@ -587,6 +675,7 @@ async function checkElementTypes(
   nextXml: string,
   addedIds: ReadonlySet<string>,
   allowedTypes: ReadonlySet<string>,
+  allowedEventDefinitions?: ReadonlySet<string>,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   const moddle = new BpmnModdle(MODDLE_OPTIONS);
   const { rootElement } = await moddle.fromXML(nextXml.trim());
@@ -595,12 +684,23 @@ async function checkElementTypes(
   );
   const all = processes.flatMap((process) => flattenFlowElements(process.flowElements));
   for (const el of all) {
-    if (!addedIds.has(el.id) || allowedTypes.has(el.$type)) continue;
-    const valid = [...allowedTypes].sort().join(", ");
-    return {
-      ok: false,
-      reason: `${el.id} has type '${el.$type}', which is not supported -- allowed types are: ${valid}`,
-    };
+    if (!addedIds.has(el.id)) continue;
+    if (!allowedTypes.has(el.$type)) {
+      const valid = [...allowedTypes].sort().join(", ");
+      return {
+        ok: false,
+        reason: `${el.id} has type '${el.$type}', which is not supported -- allowed types are: ${valid}`,
+      };
+    }
+    if (!allowedEventDefinitions) continue;
+    for (const def of (el.eventDefinitions as ModdleFlowElement[] | undefined) ?? []) {
+      if (allowedEventDefinitions.has(def.$type)) continue;
+      const valid = [...allowedEventDefinitions].sort().join(", ");
+      return {
+        ok: false,
+        reason: `${el.id} has event definition '${def.$type}', which is not supported -- allowed event definitions are: ${valid}`,
+      };
+    }
   }
   return { ok: true };
 }
@@ -611,6 +711,7 @@ export async function checkSplice(
   knownJobTypes?: ReadonlySet<string>,
   harnessIO?: Record<string, HarnessIOContract>,
   allowedElementTypes?: ReadonlySet<string>,
+  allowedEventDefinitions?: ReadonlySet<string>,
 ): Promise<SpliceCheck> {
   const before = await elementIds(previousXml);
   const after = await elementIds(nextXml);
@@ -629,7 +730,7 @@ export async function checkSplice(
     if (!jobTypes.ok) return { ok: false, added, removed, reason: jobTypes.reason };
   }
   if (allowedElementTypes) {
-    const types = await checkElementTypes(nextXml, new Set(added), allowedElementTypes);
+    const types = await checkElementTypes(nextXml, new Set(added), allowedElementTypes, allowedEventDefinitions);
     if (!types.ok) return { ok: false, added, removed, reason: types.reason };
   }
   return { ok: true, added, removed };
@@ -710,6 +811,7 @@ export async function checkMigration(
   knownJobTypes?: ReadonlySet<string>,
   harnessIO?: Record<string, HarnessIOContract>,
   allowedElementTypes?: ReadonlySet<string>,
+  allowedEventDefinitions?: ReadonlySet<string>,
 ): Promise<MigrationCheck> {
   if ((await definitionsId(previousXml)) !== (await definitionsId(nextXml))) {
     return {
@@ -740,7 +842,7 @@ export async function checkMigration(
   }
 
   if (allowedElementTypes) {
-    const types = await checkElementTypes(nextXml, added, allowedElementTypes);
+    const types = await checkElementTypes(nextXml, added, allowedElementTypes, allowedEventDefinitions);
     if (!types.ok) return { ok: false, removed: [], reason: types.reason };
   }
 

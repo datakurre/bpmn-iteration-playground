@@ -532,13 +532,17 @@ for why both are true.
 `graph:lint` first merges the drafted ops into the current graph
 (`applyGraphOps`), then verifies the result is valid BPMN, an *additive*
 splice, that every new activity's job type names a harness that exists, and
-that every new element's type is one this project's runtime actually
-supports -- the same allowlist the editor's own palette is restricted to
+that every new element's type -- and, for a start/end/boundary event, its
+event definition -- is one this project's runtime actually supports -- the
+same allowlist the editor's own palette is restricted to
 (`src/js/lib/supported-bpmn-elements.ts`), so a drafted
 `{"op":"appendShape","type":"bpmn:InclusiveGateway",...}` is rejected the same
 way a human trying to drop one on the canvas is blocked from creating it in
-the first place. The drafting model is also given the real job-type
-vocabulary up front, so a run like the one above no longer invents a
+the first place. A real parallel fork/join (`bpmn:ParallelGateway`) and a
+timeout or business-error handler on an activity (`attachBoundaryEvent` with
+`bpmn:TimerEventDefinition`/`bpmn:ErrorEventDefinition`) are both supported;
+most other event types are not. The drafting model is also given the real
+job-type vocabulary up front, so a run like the one above no longer invents a
 plausible-looking type such as `shell:exec` -- lint rejects it and the
 redraft loop gets a chance to correct it
 ([#40](https://github.com/datakurre/graph-agent/issues/40)).
