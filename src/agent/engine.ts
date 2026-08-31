@@ -441,8 +441,12 @@ async function drive(
   // from "activity.wait" (issue #69): a resumed run re-announcing an
   // already-parked activity is real activity too, not silence.
   let dispatchedAnything = false;
-  listener.on("activity.start", () => {
+  listener.on("activity.start", (api?: { id?: string }) => {
     dispatchedAnything = true;
+    if (api?.id) visited.add(api.id);
+  });
+  listener.on("flow.take", (api?: { id?: string }) => {
+    if (api?.id) visited.add(api.id);
   });
 
   const waitingConditionals = new Map<string, { signal?: (message?: unknown) => void }>();

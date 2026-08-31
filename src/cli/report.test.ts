@@ -99,9 +99,9 @@ describe("CLI reporting and exporting", () => {
     expect(md).toContain("**Total Cost**: **$0.0073**");
     expect(md).toContain("Package the outline editor with Nix");
     expect(md).toContain("`opencode-go/gpt-5.6-luna`");
-    expect(md).toContain("| `implement_flake` | `agent:turn` | 1 |");
-    expect(md).toContain("| `verify_flake` | `shell` | 1 |");
-    expect(md).toContain("Turn 1: Implement Flake");
+    expect(md).toContain("| `implement_flake` | `T1` | `agent:turn` | 1 |");
+    expect(md).toContain("| `verify_flake` | `T2` | `shell` | 1 |");
+    expect(md).toContain("[T1] Turn 1: Implement Flake");
     expect(md).toContain("$0.0041");
     expect(md).toContain("spliced flake builder");
   });

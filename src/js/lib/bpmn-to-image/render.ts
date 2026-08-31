@@ -31,6 +31,21 @@ export async function renderToSvg(xml: string, options: RenderOptions = {}): Pro
   return tightenSvgViewBox(svg || '', elementRegistry.getAll(), undefined, options.background);
 }
 
+export function formatTurnRange(indices: number[]): string {
+  if (!indices || indices.length === 0) return "";
+  if (indices.length === 1) return `T${indices[0]}`;
+  const sorted = [...indices].sort((a, b) => a - b);
+  const min = sorted[0] ?? 0;
+  const max = sorted[sorted.length - 1] ?? 0;
+  if (max - min + 1 === sorted.length) {
+    return `T${min}..T${max}`;
+  }
+  if (sorted.length <= 3) {
+    return sorted.map((i) => `T${i}`).join(",");
+  }
+  return `T${min}..T${max} (${sorted.length}t)`;
+}
+
 export interface RenderedSessionDiagram {
   id?: string;
   processId: string;
@@ -44,7 +59,8 @@ export interface RenderedSessionDiagram {
 
 /**
  * Render all diagrams defined in a session's BPMN definitions (both root workflow and
- * called subprocesses like pi_default_loop) with visited markers and cost badges.
+ * called subprocesses like pi_default_loop) with visited markers, sequence flow highlights,
+ * turn badges, and cost badges.
  */
 export async function renderSessionDiagrams(
   detail: SessionDetail,
@@ -55,6 +71,7 @@ export async function renderSessionDiagrams(
   const diagrams = defs?.diagrams || [];
 
   const activityCosts = new Map<string, { cost: number; turns: number; durationMs: number }>();
+  const activityTurns = new Map<string, number[]>();
   let totalSessionTurns = 0;
   let totalSessionCost = 0;
   if (detail.turns?.length) {
@@ -67,9 +84,14 @@ export async function renderSessionDiagrams(
       totalSessionCost += turnCost;
       if (turn.startedAt && turn.endedAt) prev.durationMs += turn.endedAt - turn.startedAt;
       activityCosts.set(turn.activityId, prev);
+
+      const tList = activityTurns.get(turn.activityId) || [];
+      tList.push(turn.index);
+      activityTurns.set(turn.activityId, tList);
     }
   }
 
+  const visitedSet = new Set(detail.visited || []);
   const results: RenderedSessionDiagram[] = [];
   const diagramList = diagrams.length > 0 ? diagrams : [undefined];
 
@@ -90,11 +112,25 @@ export async function renderSessionDiagrams(
     const isRoot = d ? (d.plane?.bpmnElement?.isExecutable === true || i === 0) : true;
 
     // Mark visited elements present in this diagram
-    for (const id of detail.visited || []) {
+    for (const id of visitedSet) {
       if (elementRegistry.get(id)) {
         try {
           canvas.addMarker(id, 'ga-visited');
         } catch {}
+      }
+    }
+
+    // Also mark visited sequence flows if both source and target were visited
+    const allElements = elementRegistry.getAll();
+    for (const shape of allElements) {
+      if (shape && shape.type === 'bpmn:SequenceFlow') {
+        const sourceId = shape.source?.id;
+        const targetId = shape.target?.id;
+        if (sourceId && targetId && visitedSet.has(sourceId) && visitedSet.has(targetId)) {
+          try {
+            canvas.addMarker(shape.id, 'ga-visited');
+          } catch {}
+        }
       }
     }
 
@@ -111,50 +147,96 @@ export async function renderSessionDiagrams(
     let diagramTurns = 0;
     let diagramCost = 0;
 
-    if (options.showCostBadges !== false && svg) {
+    if (svg) {
+      const injectedStyles = `
+        <style>
+          .ga-visited:not(.djs-connection) .djs-visual > :nth-child(1) {
+            stroke: #0284c7 !important;
+            stroke-width: 2.5px !important;
+            fill: #f0f9ff !important;
+          }
+          .ga-visited.djs-connection .djs-visual > :nth-child(1),
+          .ga-visited.djs-connection .djs-visual path {
+            stroke: #0284c7 !important;
+            stroke-width: 2.5px !important;
+          }
+          .ga-token:not(.djs-connection) .djs-visual > :nth-child(1) {
+            stroke: #0f766e !important;
+            stroke-width: 3.5px !important;
+            fill: #ccfbf1 !important;
+          }
+          .ga-token.djs-connection .djs-visual > :nth-child(1),
+          .ga-token.djs-connection .djs-visual path {
+            stroke: #0f766e !important;
+            stroke-width: 3.5px !important;
+          }
+          .ga-cost-badge rect, .ga-turn-badge rect {
+            rx: 3px;
+          }
+          .ga-cost-badge text, .ga-turn-badge text {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          }
+        </style>
+      `;
+
       const badges: string[] = [];
-      const allElements = elementRegistry.getAll();
 
-      for (const shape of allElements) {
-        if (!shape || typeof shape.x !== 'number' || typeof shape.y !== 'number' || !shape.width) continue;
+      if (options.showCostBadges !== false) {
+        for (const shape of allElements) {
+          if (!shape || typeof shape.x !== 'number' || typeof shape.y !== 'number' || !shape.width) continue;
 
-        let cost = 0;
-        let turns = 0;
+          let cost = 0;
+          let turns = 0;
+          const turnList = activityTurns.get(shape.id);
 
-        if (activityCosts.has(shape.id)) {
-          const stat = activityCosts.get(shape.id)!;
-          cost = stat.cost;
-          turns = stat.turns;
-          diagramCost += cost;
-          diagramTurns += turns;
-        } else if (shape.type === 'bpmn:CallActivity' || shape.businessObject?.$type === 'bpmn:CallActivity') {
-          // Aggregate subprocess costs onto callActivity node if root
-          const calledElement = shape.businessObject?.calledElement;
-          if (calledElement && totalSessionTurns > 0) {
-            cost = totalSessionCost;
-            turns = totalSessionTurns;
+          if (activityCosts.has(shape.id)) {
+            const stat = activityCosts.get(shape.id)!;
+            cost = stat.cost;
+            turns = stat.turns;
+            diagramCost += cost;
+            diagramTurns += turns;
+          } else if (shape.type === 'bpmn:CallActivity' || shape.businessObject?.$type === 'bpmn:CallActivity') {
+            // Aggregate subprocess costs onto callActivity node if root
+            const calledElement = shape.businessObject?.calledElement;
+            if (calledElement && totalSessionTurns > 0) {
+              cost = totalSessionCost;
+              turns = totalSessionTurns;
+            }
+          }
+
+          // 1. Turn Symbol badge on top-left of activity (e.g. [T1..T11])
+          if (turnList && turnList.length > 0) {
+            const turnRangeStr = formatTurnRange(turnList);
+            const tWidth = Math.max(28, turnRangeStr.length * 6.5 + 8);
+            const tx = shape.x;
+            const ty = Math.max(0, shape.y - 12);
+            badges.push(
+              `<g class="ga-turn-badge" transform="translate(${tx}, ${ty})">` +
+              `<rect x="0" y="0" width="${tWidth}" height="14" rx="3" fill="#4338ca" fill-opacity="0.95"/>` +
+              `<text x="${tWidth / 2}" y="10" fill="#ffffff" font-family="monospace" font-size="9" text-anchor="middle" font-weight="bold">${turnRangeStr}</text>` +
+              `</g>`
+            );
+          }
+
+          // 2. Cost badge on bottom-right of activity (e.g. $0.0051)
+          if (cost > 0 || turns > 0) {
+            const costFormatted = cost > 0
+              ? (cost < 0.01 ? `$${cost.toFixed(4)}` : `$${cost.toFixed(2)}`)
+              : `${turns} turn${turns === 1 ? '' : 's'}`;
+            const badgeWidth = Math.max(46, costFormatted.length * 6.5 + 8);
+            const bx = shape.x + shape.width - badgeWidth;
+            const by = shape.y + shape.height - 14;
+            badges.push(
+              `<g class="ga-cost-badge" transform="translate(${bx}, ${by})">` +
+              `<rect x="0" y="0" width="${badgeWidth}" height="14" rx="3" fill="#0f766e" fill-opacity="0.95"/>` +
+              `<text x="${badgeWidth / 2}" y="10" fill="#ffffff" font-family="monospace" font-size="9" text-anchor="middle" font-weight="bold">${costFormatted}</text>` +
+              `</g>`
+            );
           }
         }
-
-        if (cost > 0 || turns > 0) {
-          const costFormatted = cost > 0
-            ? (cost < 0.01 ? `$${cost.toFixed(4)}` : `$${cost.toFixed(2)}`)
-            : `${turns} turn${turns === 1 ? '' : 's'}`;
-          const badgeWidth = Math.max(46, costFormatted.length * 6.5 + 8);
-          const bx = shape.x + shape.width - badgeWidth;
-          const by = shape.y + shape.height - 14;
-          badges.push(
-            `<g class="ga-cost-badge" transform="translate(${bx}, ${by})">` +
-            `<rect x="0" y="0" width="${badgeWidth}" height="14" rx="3" fill="#0f766e" fill-opacity="0.95"/>` +
-            `<text x="${badgeWidth / 2}" y="10" fill="#ffffff" font-family="monospace" font-size="9" text-anchor="middle" font-weight="bold">${costFormatted}</text>` +
-            `</g>`
-          );
-        }
       }
 
-      if (badges.length > 0) {
-        svg = svg.replace('</svg>', `${badges.join('')}</svg>`);
-      }
+      svg = svg.replace('</svg>', `${injectedStyles}${badges.join('')}</svg>`);
     }
 
     const tightenedSvg = tightenSvgViewBox(svg || '', elementRegistry.getAll(), undefined, options.background);

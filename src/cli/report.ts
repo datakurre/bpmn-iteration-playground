@@ -2,6 +2,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import type { SessionDetail, TurnRecord } from "../studio/types.ts";
 import {
+  formatTurnRange,
   renderSessionDiagrams,
   renderSessionSvg,
   renderToSvg,
@@ -20,6 +21,7 @@ export interface ActivitySummary {
   activityName: string;
   harness: string;
   turns: number;
+  turnIndices: number[];
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -36,6 +38,7 @@ export function computeActivitySummaries(turns: TurnRecord[]): ActivitySummary[]
       activityName: turn.activityName || turn.activityId,
       harness: turn.harness || "-",
       turns: 0,
+      turnIndices: [],
       inputTokens: 0,
       outputTokens: 0,
       cacheReadTokens: 0,
@@ -44,6 +47,7 @@ export function computeActivitySummaries(turns: TurnRecord[]): ActivitySummary[]
       durationMs: 0,
     };
     existing.turns += 1;
+    existing.turnIndices.push(turn.index);
     if (turn.usage) {
       existing.inputTokens += turn.usage.input || 0;
       existing.outputTokens += turn.usage.output || 0;
@@ -130,12 +134,13 @@ export async function generateMarkdownReport(
     }
   }
 
-  let activityTable = "| Activity | Harness | Turns | In / Out / Cache | Reasoning | Cost ($ USD) | Duration |\n";
-  activityTable += "| :--- | :--- | :---: | :---: | :---: | :---: | :---: |\n";
+  let activityTable = "| Activity | Symbol | Harness | Turns | In / Out / Cache | Reasoning | Cost ($ USD) | Duration |\n";
+  activityTable += "| :--- | :---: | :--- | :---: | :---: | :---: | :---: | :---: |\n";
   for (const act of activities) {
+    const symbol = formatTurnRange(act.turnIndices) || "-";
     const tokens = `${formatTokens(act.inputTokens)} / ${formatTokens(act.outputTokens)} / ${formatTokens(act.cacheReadTokens)}`;
     const dur = act.durationMs > 0 ? `${(act.durationMs / 1000).toFixed(1)}s` : "-";
-    activityTable += `| \`${act.activityId}\` | \`${act.harness}\` | ${act.turns} | ${tokens} | ${formatTokens(act.reasoningTokens)} | ${formatCost(act.costUSD)} | ${dur} |\n`;
+    activityTable += `| \`${act.activityId}\` | \`${symbol}\` | \`${act.harness}\` | ${act.turns} | ${tokens} | ${formatTokens(act.reasoningTokens)} | ${formatCost(act.costUSD)} | ${dur} |\n`;
   }
 
   let turnLog = "\n## Chronological Turn Log\n\n";
@@ -150,7 +155,7 @@ export async function generateMarkdownReport(
       const cost = turn.usage?.cost?.total ? formatCost(turn.usage.cost.total) : "$0.00";
       const stopReason = turn.stopReason ? ` (${turn.stopReason})` : "";
 
-      turnLog += `### Turn ${turn.index}: ${turn.activityName || turn.activityId}${stopReason}\n\n`;
+      turnLog += `### [T${turn.index}] Turn ${turn.index}: ${turn.activityName || turn.activityId}${stopReason}\n\n`;
       turnLog += `- **Activity**: \`${turn.activityId}\` (\`${turn.harness || "-"}\`)\n`;
       turnLog += `- **Tokens & Cost**: ${tokens} · **${cost}**\n`;
       turnLog += `- **Tools Called**: ${toolList}\n`;
@@ -214,7 +219,7 @@ export async function generateHtmlReport(
       diagramCardsHtml = `<p class="text-muted">Diagram preview unavailable.</p>`;
     } else {
       diagramCardsHtml = rendered
-        .map((diag) => {
+        .map((diag, idx) => {
           const title = diag.isRoot ? `${escapeHtml(diag.name)} (Root Process)` : `Subprocess: ${escapeHtml(diag.name)}`;
           const badge = diag.turnCount > 0
             ? `<span class="badge badge-accent">${diag.turnCount} turn(s) · ${formatCost(diag.totalCostUSD)}</span>`
@@ -222,22 +227,33 @@ export async function generateHtmlReport(
 
           let imgTag = "";
           if (format === "png" && diag.pngDataUri) {
-            imgTag = `<img src="${diag.pngDataUri}" alt="${escapeHtml(diag.name)}" style="max-width: 100%; height: auto; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);" />`;
+            imgTag = `<img src="${diag.pngDataUri}" alt="${escapeHtml(diag.name)}" style="display: block;" />`;
           } else if (format === "raw-svg") {
             imgTag = diag.svg;
           } else {
             const svgDataUri = `data:image/svg+xml;base64,${Buffer.from(diag.svg).toString("base64")}`;
-            imgTag = `<img src="${svgDataUri}" alt="${escapeHtml(diag.name)}" style="max-width: 100%; height: auto; border-radius: 4px;" />`;
+            imgTag = `<img src="${svgDataUri}" alt="${escapeHtml(diag.name)}" style="display: block;" />`;
           }
 
           return `
-            <div class="diagram-box">
-              <div class="diagram-header">
-                <h3>${title}</h3>
-                ${badge}
+            <div class="diagram-viewer" id="viewer-diagram-${idx}">
+              <div class="diagram-toolbar">
+                <div class="diagram-info">
+                  <span>${title}</span>
+                  ${badge}
+                </div>
+                <div class="diagram-actions">
+                  <button type="button" class="btn-tool" data-action="zoom-in" title="Zoom In (+)">➕ Zoom In</button>
+                  <button type="button" class="btn-tool" data-action="zoom-out" title="Zoom Out (-)">➖ Zoom Out</button>
+                  <button type="button" class="btn-tool" data-action="reset" title="Reset View (100%)">⟲ 100%</button>
+                  <button type="button" class="btn-tool" data-action="fit" title="Fit to Viewport">⛶ Fit</button>
+                  <span class="zoom-pill" data-zoom-label>100%</span>
+                </div>
               </div>
-              <div class="diagram-container">
-                ${imgTag}
+              <div class="diagram-viewport" data-viewport tabindex="0" title="Scroll to zoom, click and drag to pan">
+                <div class="diagram-canvas" data-canvas>
+                  ${imgTag}
+                </div>
               </div>
             </div>
           `;
@@ -295,9 +311,10 @@ export async function generateHtmlReport(
             : "";
 
           return `
-            <div class="turn-item">
+            <div class="turn-item" id="turn-${t.index}" data-activity="${escapeHtml(t.activityId)}">
               <div class="turn-header">
                 <div>
+                  <span class="badge badge-turn" style="margin-right: 0.35rem; font-size: 0.8rem;">T${t.index}</span>
                   <span class="turn-index">Turn ${t.index}</span>
                   <span class="turn-title">${escapeHtml(t.activityName || t.activityId)}</span>
                   <span class="turn-harness"><code>${escapeHtml(t.activityId)}</code> &middot; <code>${escapeHtml(t.harness || "-")}</code></span>
@@ -353,17 +370,28 @@ export async function generateHtmlReport(
     .metric-val { font-size: 1.5rem; font-weight: 800; color: #0f766e; }
     .metric-lbl { font-size: 0.75rem; text-transform: uppercase; color: #64748b; font-weight: 600; margin-top: 0.25rem; }
     .prompt-box { margin: 0; padding: 1rem 1.25rem; background: #f1f5f9; border-left: 4px solid #0f766e; border-radius: 4px; font-size: 0.95rem; color: #334155; white-space: pre-wrap; word-break: break-word; }
-    .diagram-box { margin-bottom: 1.5rem; }
-    .diagram-box:last-child { margin-bottom: 0; }
-    .diagram-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
-    .diagram-header h3 { font-size: 1rem; font-weight: 600; color: #334155; margin: 0; }
-    .diagram-container { overflow-x: auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1.5rem; text-align: center; }
+    
+    /* Diagram Viewer with Pan & Zoom */
+    .diagram-viewer { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 1.5rem; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.03); }
+    .diagram-viewer:last-child { margin-bottom: 0; }
+    .diagram-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background: #f8fafc; border-bottom: 1px solid #e2e8f0; flex-wrap: wrap; gap: 0.5rem; }
+    .diagram-info { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; font-size: 0.95rem; color: #1e293b; }
+    .diagram-actions { display: flex; align-items: center; gap: 0.35rem; }
+    .btn-tool { background: white; border: 1px solid #cbd5e1; border-radius: 4px; padding: 0.25rem 0.5rem; font-size: 0.8rem; font-weight: 600; color: #334155; cursor: pointer; transition: all 0.15s ease; user-select: none; }
+    .btn-tool:hover { background: #f1f5f9; border-color: #94a3b8; color: #0f172a; }
+    .zoom-pill { font-size: 0.75rem; font-family: ui-monospace, monospace; color: #64748b; min-width: 42px; text-align: center; font-weight: 600; }
+    .diagram-viewport { position: relative; width: 100%; height: 460px; overflow: hidden; background: #ffffff; cursor: grab; user-select: none; }
+    .diagram-viewport:active { cursor: grabbing; }
+    .diagram-canvas { position: absolute; transform-origin: 0 0; display: inline-block; }
+    .diagram-canvas img, .diagram-canvas svg { display: block; max-width: none; user-select: none; -webkit-user-drag: none; }
+
     table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.875rem; }
     th, td { text-align: left; padding: 0.65rem 0.75rem; border-bottom: 1px solid #e2e8f0; }
     th { background: #f8fafc; font-weight: 600; color: #475569; }
     code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; background: #f1f5f9; padding: 0.15em 0.35em; border-radius: 4px; }
     .badge { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 0.2em 0.5em; border-radius: 4px; font-family: ui-monospace, monospace; }
     .badge-accent { background: #0f766e; color: white; }
+    .badge-turn { background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; }
     .badge-cache { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; }
     .badge-cost { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
     .badge-stop { background: #f1f5f9; color: #475569; }
@@ -421,12 +449,13 @@ export async function generateHtmlReport(
     <h2>📈 Activity Breakdown</h2>
     <table>
       <thead>
-        <tr><th>Activity</th><th>Harness</th><th>Turns</th><th>Tokens (In / Out / Cache)</th><th>Reasoning</th><th>Cost ($ USD)</th><th>Duration</th></tr>
+        <tr><th>Activity</th><th>Symbol</th><th>Harness</th><th>Turns</th><th>Tokens (In / Out / Cache)</th><th>Reasoning</th><th>Cost ($ USD)</th><th>Duration</th></tr>
       </thead>
       <tbody>
         ${computeActivitySummaries(detail.turns).map(a => `
           <tr>
             <td><code>${escapeHtml(a.activityId)}</code></td>
+            <td><span class="badge badge-turn">${formatTurnRange(a.turnIndices) || "-"}</span></td>
             <td><code>${escapeHtml(a.harness)}</code></td>
             <td>${a.turns}</td>
             <td>${formatTokens(a.inputTokens)} / ${formatTokens(a.outputTokens)} / ${formatTokens(a.cacheReadTokens)}</td>
@@ -445,6 +474,120 @@ export async function generateHtmlReport(
   </div>
 
   ${revisionsHtml}
+
+  <script>
+    document.querySelectorAll('.diagram-viewer').forEach((viewer) => {
+      const viewport = viewer.querySelector('[data-viewport]');
+      const canvas = viewer.querySelector('[data-canvas]');
+      const zoomLabel = viewer.querySelector('[data-zoom-label]');
+      if (!viewport || !canvas) return;
+
+      let scale = 1;
+      let translateX = 0;
+      let translateY = 0;
+      let isPanning = false;
+      let startX = 0;
+      let startY = 0;
+
+      function updateTransform() {
+        canvas.style.transform = "translate(" + translateX + "px, " + translateY + "px) scale(" + scale + ")";
+        if (zoomLabel) zoomLabel.textContent = Math.round(scale * 100) + "%";
+      }
+
+      function fitDiagram() {
+        const vRect = viewport.getBoundingClientRect();
+        const img = canvas.querySelector('img, svg');
+        if (!img) return;
+        const iWidth = img.naturalWidth || img.clientWidth || 800;
+        const iHeight = img.naturalHeight || img.clientHeight || 400;
+        if (iWidth === 0 || iHeight === 0) return;
+        const scaleX = (vRect.width - 32) / iWidth;
+        const scaleY = (vRect.height - 32) / iHeight;
+        scale = Math.min(scaleX, scaleY, 1.2);
+        translateX = Math.max(16, (vRect.width - iWidth * scale) / 2);
+        translateY = Math.max(16, (vRect.height - iHeight * scale) / 2);
+        updateTransform();
+      }
+
+      // Initial fit after image load
+      const img = canvas.querySelector('img');
+      if (img) {
+        if (img.complete) {
+          fitDiagram();
+        } else {
+          img.addEventListener('load', fitDiagram);
+        }
+      } else {
+        fitDiagram();
+      }
+
+      // Mouse wheel zoom
+      viewport.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const rect = viewport.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        const delta = e.deltaY < 0 ? 1.15 : 0.87;
+        const newScale = Math.min(Math.max(scale * delta, 0.15), 6.0);
+        translateX = mouseX - (mouseX - translateX) * (newScale / scale);
+        translateY = mouseY - (mouseY - translateY) * (newScale / scale);
+        scale = newScale;
+        updateTransform();
+      }, { passive: false });
+
+      // Pan by dragging
+      viewport.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        isPanning = true;
+        startX = e.clientX - translateX;
+        startY = e.clientY - translateY;
+        viewport.style.cursor = 'grabbing';
+      });
+
+      window.addEventListener('mousemove', (e) => {
+        if (!isPanning) return;
+        translateX = e.clientX - startX;
+        translateY = e.clientY - startY;
+        updateTransform();
+      });
+
+      window.addEventListener('mouseup', () => {
+        if (isPanning) {
+          isPanning = false;
+          viewport.style.cursor = 'grab';
+        }
+      });
+
+      // Double-click to toggle fit / 100%
+      viewport.addEventListener('dblclick', () => {
+        if (Math.abs(scale - 1) < 0.1) {
+          fitDiagram();
+        } else {
+          scale = 1;
+          translateX = 20;
+          translateY = 20;
+          updateTransform();
+        }
+      });
+
+      // Controls
+      viewer.querySelector('[data-action="zoom-in"]')?.addEventListener('click', () => {
+        scale = Math.min(scale * 1.25, 6.0);
+        updateTransform();
+      });
+      viewer.querySelector('[data-action="zoom-out"]')?.addEventListener('click', () => {
+        scale = Math.max(scale / 1.25, 0.15);
+        updateTransform();
+      });
+      viewer.querySelector('[data-action="reset"]')?.addEventListener('click', () => {
+        scale = 1;
+        translateX = 20;
+        translateY = 20;
+        updateTransform();
+      });
+      viewer.querySelector('[data-action="fit"]')?.addEventListener('click', fitDiagram);
+    });
+  </script>
 </body>
 </html>`;
 }
