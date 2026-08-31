@@ -158,13 +158,14 @@ plain Pi ([#47](https://github.com/datakurre/graph-agent/issues/47)) --
 `graph-agent run --dry-run` with no `--graph` prints `graph
 session-default` but otherwise the same transcript as running
 `pi-default-loop` directly. `pi-default-loop` and `shell-demo` drive tool
-calls, parallel ones included. `craft-graph` drafts a fragment and splices it
-into the live session, and `session-skeleton` calls it after a `resume
---answer` gate. The
-whole self-extension path is verified end to end against real Haiku: draft ->
-layout -> lint -> approval gate -> `graph:extend spliced in 2 element(s)`, with
-`show` reporting two graph revisions. #21, #22, #30, #31, #34, #36 and #37 are
-all closed and re-verified on a clean clone.
+calls, parallel ones included. `craft-graph` drafts a small ops list
+(`GraphOp[]`, not a whole document) and splices the elements it describes into
+the live session, and `session-skeleton` calls it after a `resume --answer`
+gate. The whole self-extension path is verified end to end against real
+Haiku: draft -> lint (merges the ops into a real document) -> layout ->
+approval gate -> `graph:extend spliced in 2 element(s)`, with `show` reporting
+two graph revisions. #21, #22, #30, #31, #34, #36 and #37 are all closed and
+re-verified on a clean clone.
 
 **#40 is fixed: a splice is checked against the harness registry.**
 `checkSplice` takes a `knownJobTypes` set and rejects a new service task whose

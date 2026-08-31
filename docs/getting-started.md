@@ -374,22 +374,24 @@ as it resumes.
 | `session-default` | the default -- a callActivity into `pi-default-loop`, so OOTB behaviour matches plain Pi while still being a diagram you can re-wire ([#47](https://github.com/datakurre/graph-agent/issues/47)) |
 | `pi-default-loop` | Pi's loop drawn, tool calls included -- what `session-default` calls |
 | `shell-demo` | one Pi turn paired with a deterministic `shell` step |
-| `craft-graph` | drafts a BPMN fragment and splices it into the running session |
+| `craft-graph` | drafts a small ops list and splices the elements it describes into the running session |
 | `session-skeleton` | asks for an intent, then calls `craft-graph` |
 | `session-craft` | the vision's own sentence as one graph: a prompt goes straight into `craft-graph`, which builds the steps that follow and runs them in the same invocation, falling back to `pi-default-loop` when nothing was crafted ([#66](https://github.com/datakurre/graph-agent/issues/66)) -- opt-in via `--graph session-craft`, not (yet) the default |
 
 ### Extending a graph from inside a session
 
 This is the thing the project is for, and it works end to end against a real
-model. `craft-graph` drafts a fragment, lays it out, checks the splice, and
-parks for a human to approve:
+model. `craft-graph` drafts a small list of operations describing the new
+elements (not a whole document -- see [the harness reference](harnesses.html)
+for the op vocabulary), merges and lints them, lays the result out, and parks
+for a human to approve:
 
 ```
 $ graph-agent run "Add a service task that runs 'npm test' after the LLM turn" \
     --graph craft-graph --model anthropic/claude-haiku-4-5
-  draft_fragment  agent:turn  ```xml <?xml version="1.0" ...
-  layout_fragment  graph:layout  laid out
+  draft_fragment  agent:turn  [{"op":"appendShape","type":"bpmn:ServiceTask", ...
   lint_fragment  graph:lint  adds 2 element(s)
+  layout_fragment  graph:layout  laid out
 
 session 61801712  stopped  1 turn(s)
 waiting on lint_fragment, gw_lint, review_fragment
@@ -465,9 +467,9 @@ prompt goes straight into `craft-graph` with no gate in front of it at all:
 ```
 $ graph-agent run "Add a shell task that echoes hello after the start event" \
     --graph session-craft --model anthropic/claude-haiku-4-5
-  draft_fragment  agent:turn  ```xml <?xml version="1.0" ...
-  layout_fragment  graph:layout  laid out
+  draft_fragment  agent:turn  [{"op":"appendShape","type":"bpmn:ServiceTask", ...
   lint_fragment  graph:lint  adds 2 element(s)
+  layout_fragment  graph:layout  laid out
 
 session 31b2d5d0  stopped  1 turn(s)
 waiting on craft, lint_fragment, gw_lint, review_fragment
@@ -498,7 +500,7 @@ than the plain end-to-end draft/lint/review loop above:
 $ graph-agent resume 31b2d5d0 \
     --answer await_intent:intent="Add a service task that logs a message" \
     --answer await_intent:session_done=false --model anthropic/claude-haiku-4-5
-  draft_fragment  agent:turn  ```xml <?xml version="1.0" ...
+  draft_fragment  agent:turn  [{"op":"appendShape","type":"bpmn:ServiceTask", ...
   ...
 session 31b2d5d0  stopped  2 turn(s)
 waiting on craft, back_to_craft, lint_fragment, gw_lint, review_fragment
@@ -527,29 +529,37 @@ for why both are true.
 
 ### What lint checks, and what review is still for
 
-`graph:lint` verifies that a fragment is valid BPMN, an *additive* splice, and
-that every new activity's `zeebe:taskDefinition type` names a harness that
-exists. The drafting model is also given the real job-type vocabulary up
-front, so a run like the one above no longer invents a plausible-looking type
-such as `shell:exec` -- lint rejects it and the redraft loop gets a chance to
-correct it ([#40](https://github.com/datakurre/graph-agent/issues/40)).
+`graph:lint` first merges the drafted ops into the current graph
+(`applyGraphOps`), then verifies the result is valid BPMN, an *additive*
+splice, that every new activity's job type names a harness that exists, and
+that every new element's type is one this project's runtime actually
+supports -- the same allowlist the editor's own palette is restricted to
+(`src/js/lib/supported-bpmn-elements.ts`), so a drafted
+`{"op":"appendShape","type":"bpmn:InclusiveGateway",...}` is rejected the same
+way a human trying to drop one on the canvas is blocked from creating it in
+the first place. The drafting model is also given the real job-type
+vocabulary up front, so a run like the one above no longer invents a
+plausible-looking type such as `shell:exec` -- lint rejects it and the
+redraft loop gets a chance to correct it
+([#40](https://github.com/datakurre/graph-agent/issues/40)).
 
-Lint now also checks a *real* job type wired to the wrong inputs, outputs or
+Lint also checks a *real* job type wired to the wrong inputs, outputs or
 headers ([#65](https://github.com/datakurre/graph-agent/issues/65)). A model
-that writes
+that drafts
 
-```xml
-<zeebe:taskDefinition type="shell" />
-<zeebe:input source="=&quot;npm test&quot;" target="command" />
-<zeebe:output source="=exitCode" target="test_exit_code" />
+```json
+{"op": "setTaskDefinition", "id": "run_tests", "jobType": "shell",
+ "inputs": [{"source": "=\"npm test\"", "target": "command"}],
+ "outputs": [{"source": "=exitCode", "target": "test_exit_code"}]}
 ```
 
 is rejected before it ever applies: `shell` is a real, registered job type,
-but it takes its command from `zeebe:taskHeaders`, not `ioMapping`, and its
-output is `exit_code`, not `exitCode` -- lint's rejection names both mistakes,
-by the exact wrong spelling used, so the redraft loop's `lint_feedback` has
-something concrete to fix. Read [the harness reference](harnesses.html) for
-each job type's real inputs, outputs and headers.
+but it takes its command from `setTaskDefinition`'s `headers`, not `inputs`,
+and its output is `exit_code`, not `exitCode` -- lint's rejection names both
+mistakes, by the exact wrong spelling used, so the redraft loop's
+`lint_feedback` has something concrete to fix. Read
+[the harness reference](harnesses.html) for each job type's real inputs,
+outputs and headers.
 
 What lint still cannot check -- and what review at the `review_fragment` gate
 is for -- is whether the splice does the *right thing*: a correctly wired

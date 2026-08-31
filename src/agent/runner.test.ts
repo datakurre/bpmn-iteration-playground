@@ -420,7 +420,20 @@ describe("a splice executes in the same run that drafted it (issue #45)", () => 
       <bpmn:incoming>f2</bpmn:incoming><bpmn:outgoing>loop</bpmn:outgoing>
     </bpmn:serviceTask>
     <bpmn:sequenceFlow id="loop" sourceRef="extend" targetRef="draft" />
-    ${Array.from({ length: n }, (_, i) => `<bpmn:task id="marker_${i}" />`).join("\n    ")}
+    ${Array.from(
+      { length: n },
+      // A plain <bpmn:task> used to work as a throwaway "something new" marker,
+      // but checkSplice now also rejects an element type this project's
+      // runtime doesn't support (src/js/lib/supported-bpmn-elements.ts) --
+      // graph:extend applies that check too, so an unsupported marker would
+      // fail every splice here and this test would never see the bounded
+      // re-entry behaviour it exists to check at all. A bare bpmn:serviceTask
+      // naming a real, registered job type satisfies every layer of
+      // checkSplice (element type, job type, and the I/O contract, trivially,
+      // since it maps no zeebe:input/taskHeaders/output at all).
+      (_, i) =>
+        `<bpmn:serviceTask id="marker_${i}"><bpmn:extensionElements><zeebe:taskDefinition type="shell" /></bpmn:extensionElements></bpmn:serviceTask>`,
+    ).join("\n    ")}
   </bpmn:process>
 </bpmn:definitions>`;
 
