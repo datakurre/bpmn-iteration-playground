@@ -241,6 +241,15 @@ describe("CLI reporting and exporting", () => {
     expect(html).toContain("Applied 1 replacement.");
   });
 
+  it("renderMarkdownToHtml formats fenced code blocks, inline code, and formatting", async () => {
+    const { renderMarkdownToHtml } = await import("./report.ts");
+    const formatted = renderMarkdownToHtml("Fixed `flake.nix` with:\n\n```bash\nnix run . -- --help\n```\n\nDone.");
+    expect(formatted).toContain("<code>flake.nix</code>");
+    expect(formatted).toContain("class=\"terminal-card\"");
+    expect(formatted).toContain("nix run . -- --help");
+    expect(formatted).toContain("Done.");
+  });
+
   it("generateHtmlReport produces valid HTML document with raw SVG if requested", async () => {
     const html = await generateHtmlReport(sampleDetail, { imageFormat: "raw-svg" });
     expect(html).toContain("<!doctype html>");

@@ -281,9 +281,26 @@ export interface HarnessDeps {
   cwd?: string;
 }
 
-/** Turn index, so each recorded turn is numbered in execution order. */
-function nextTurnIndex(store?: SessionStore): number {
-  return (store && typeof store.readMeta === "function" ? store.readMeta().turns.length : 0) + 1;
+function recordStep(
+  store: SessionStore | undefined,
+  record: Omit<TurnRecord, "index">,
+  isTurn: boolean = false,
+): void {
+  if (store && typeof store.update === "function") {
+    store.update((meta) => {
+      if (!meta.steps) meta.steps = [];
+      meta.steps.push({
+        index: meta.steps.length + 1,
+        ...record,
+      });
+      if (isTurn) {
+        meta.turns.push({
+          index: meta.turns.length + 1,
+          ...record,
+        });
+      }
+    });
+  }
 }
 
 export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
@@ -342,37 +359,37 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
     const outcome = await pi.beginTurn(text);
     currentToolCalls = outcome.toolCalls;
 
-    const record: TurnRecord = {
-      index: nextTurnIndex(store),
-      activityId: context.activityId,
-      ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
-      harness: context.harness,
-      stopReason: outcome.stopReason,
-      toolCalls: outcome.toolCalls.map((call) => call.name),
-      toolCallDetails: outcome.toolCalls.map((call) => ({
-        id: call.id,
-        name: call.name,
-        arguments: call.arguments,
-      })),
-      prompt: text ?? raw,
-      response: outcome.text,
-      inputs: { ...context.input },
-      outputs: {
-        stop_reason: outcome.stopReason,
-        text: outcome.text,
+    recordStep(
+      store,
+      {
+        activityId: context.activityId,
+        ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
+        harness: context.harness,
+        stopReason: outcome.stopReason,
+        toolCalls: outcome.toolCalls.map((call) => call.name),
+        toolCallDetails: outcome.toolCalls.map((call) => ({
+          id: call.id,
+          name: call.name,
+          arguments: call.arguments,
+        })),
+        prompt: text ?? raw,
+        response: outcome.text,
+        ...(outcome.thinking ? { thinking: outcome.thinking } : {}),
+        inputs: { ...context.input },
+        outputs: {
+          stop_reason: outcome.stopReason,
+          text: outcome.text,
+          usage: outcome.usage,
+          ...(outcome.thinking ? { thinking: outcome.thinking } : {}),
+        },
+        ...(outcome.text ? { summary: outcome.text.slice(0, 400) } : {}),
+        ...(outcome.errorMessage === undefined ? {} : { error: outcome.errorMessage }),
         usage: outcome.usage,
+        startedAt,
+        endedAt: Date.now(),
       },
-      ...(outcome.text ? { summary: outcome.text.slice(0, 400) } : {}),
-      ...(outcome.errorMessage === undefined ? {} : { error: outcome.errorMessage }),
-      usage: outcome.usage,
-      startedAt,
-      endedAt: Date.now(),
-    };
-    if (store && typeof store.update === "function") {
-      store.update((meta) => {
-        meta.turns.push(record);
-      });
-    }
+      true,
+    );
 
     const summary =
       outcome.stopReason === "error" && outcome.errorMessage
@@ -421,6 +438,16 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
             detail.durationMs = durationMs;
           }
         }
+        if (meta.steps) {
+          const lastStep = meta.steps.slice().reverse().find((s) => s.toolCallDetails && s.toolCallDetails.length > 0);
+          if (lastStep?.toolCallDetails) {
+            const detail = lastStep.toolCallDetails.find((d) => d.id === call.id || (d.name === call.name && !d.result));
+            if (detail) {
+              detail.result = { content: outcome.content, isError: outcome.isError };
+              detail.durationMs = durationMs;
+            }
+          }
+        }
       });
     }
 
@@ -448,29 +475,84 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
     "agent:turn": agentTurn,
     "agent:tool": agentTool,
 
-    "agent:collect-tools": async () => finishTurn("tool results recorded"),
+    "agent:collect-tools": async (context) => {
+      const startedAt = Date.now();
+      const end = await pi.endTurn();
+      currentToolCalls = [];
+      const count = typeof end.toolResults === "number" ? end.toolResults : (Array.isArray(end.toolResults) ? (end.toolResults as any[]).length : 0);
+      const summary = `Recorded ${count} tool result(s) into transcript`;
+      const extra = { batch_terminate: end.terminate, tool_results: end.toolResults };
+      recordStep(store, {
+        activityId: context.activityId,
+        ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
+        harness: "agent:collect-tools",
+        inputs: { ...context.input },
+        outputs: extra,
+        summary,
+        startedAt,
+        endedAt: Date.now(),
+      });
+      return ok(summary, extra);
+    },
 
     // A response cut off by the output token limit has every tool call failed
     // without execution; Pi does that itself, so this only has to settle the run.
-    "agent:fail-truncated-tools": async () => {
+    "agent:fail-truncated-tools": async (context) => {
+      const startedAt = Date.now();
       currentToolCalls = [];
-      return finishTurn("truncated response: tool calls failed unexecuted");
+      const end = await pi.endTurn();
+      const summary = "Truncated response: tool calls failed unexecuted";
+      const extra = { batch_terminate: end.terminate, tool_results: end.toolResults };
+      recordStep(store, {
+        activityId: context.activityId,
+        ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
+        harness: "agent:fail-truncated-tools",
+        inputs: { ...context.input },
+        outputs: extra,
+        summary,
+        error: summary,
+        startedAt,
+        endedAt: Date.now(),
+      });
+      return ok(summary, extra);
     },
 
-    "agent:steer": async () => {
+    "agent:steer": async (context) => {
+      const startedAt = Date.now();
       const messages = deps.takeSteering();
       for (const text of messages) pi.steer(text);
-      return ok(messages.length ? `queued ${messages.length} steering message(s)` : "nothing queued", {
-        injected: messages.length,
+      const summary = messages.length ? `Injected ${messages.length} steering message(s)` : "No steering messages pending";
+      const extra = { injected: messages.length, ...(messages.length ? { messages } : {}) };
+      recordStep(store, {
+        activityId: context.activityId,
+        ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
+        harness: "agent:steer",
+        inputs: { ...context.input },
+        outputs: extra,
+        summary,
+        startedAt,
+        endedAt: Date.now(),
       });
+      return ok(summary, { injected: messages.length });
     },
 
-    "agent:follow-up": async () => {
+    "agent:follow-up": async (context) => {
+      const startedAt = Date.now();
       const messages = deps.takeFollowUp();
       for (const text of messages) pi.followUp(text);
-      return ok(messages.length ? `queued ${messages.length} follow-up(s)` : "no follow-up", {
-        has_followup: messages.length > 0,
+      const summary = messages.length ? `Drained ${messages.length} follow-up(s)` : "No follow-up queued";
+      const extra = { has_followup: messages.length > 0, ...(messages.length ? { messages } : {}) };
+      recordStep(store, {
+        activityId: context.activityId,
+        ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
+        harness: "agent:follow-up",
+        inputs: { ...context.input },
+        outputs: extra,
+        summary,
+        startedAt,
+        endedAt: Date.now(),
       });
+      return ok(summary, { has_followup: messages.length > 0 });
     },
 
     /**
@@ -480,17 +562,52 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
      * iteration. See docs/research/05-pi-loops-and-token-cache.md.
      */
     "agent:prepare-next-turn": async (context) => {
+      const startedAt = Date.now();
       const stopReason = String(context.variables.stop_reason ?? "");
       const shouldStop = stopReason === "stop" || stopReason === "";
+      const summary = shouldStop ? "Agent has finished (stop condition met)" : "Preparing next turn in loop";
+      const extra = { should_stop: shouldStop, stop_reason: stopReason };
+      recordStep(store, {
+        activityId: context.activityId,
+        ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
+        harness: "agent:prepare-next-turn",
+        inputs: { stop_reason: stopReason },
+        outputs: extra,
+        summary,
+        startedAt,
+        endedAt: Date.now(),
+      });
       return ok(shouldStop ? "agent has finished" : "another turn", { should_stop: shouldStop });
     },
 
     "graph:layout": async (context) => {
+      const startedAt = Date.now();
       const source = stripCodeFence(String(context.input.fragment ?? deps.getGraph()));
       try {
-        return ok("laid out", { fragment: await layoutProcess(source) });
+        const layouted = await layoutProcess(source);
+        recordStep(store, {
+          activityId: context.activityId,
+          ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
+          harness: "graph:layout",
+          inputs: { fragment_chars: source.length },
+          outputs: { fragment_chars: layouted.length },
+          summary: "Auto-layout BPMN process diagram",
+          startedAt,
+          endedAt: Date.now(),
+        });
+        return ok("laid out", { fragment: layouted });
       } catch (error) {
-        return failed(`auto-layout failed: ${message(error)}`);
+        const errSummary = `auto-layout failed: ${message(error)}`;
+        recordStep(store, {
+          activityId: context.activityId,
+          ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
+          harness: "graph:layout",
+          summary: errSummary,
+          error: errSummary,
+          startedAt,
+          endedAt: Date.now(),
+        });
+        return failed(errSummary);
       }
     },
 
@@ -500,6 +617,7 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
      * spending a turn each time round.
      */
     "graph:lint": async (context) => {
+      const startedAt = Date.now();
       const attempt = (lintAttempts.get(context.activityId) ?? 0) + 1;
       const exhausted = attempt >= MAX_LINT_ATTEMPTS;
       // A terminal result (accepted, or exhausted) starts the next, unrelated
@@ -520,16 +638,18 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
       const giveUp = (reason: string): never => {
         settle(true);
         const summary = `${context.activityId}: gave up after ${attempt} attempts -- ${reason}`;
-        // bpmn-elements re-wraps a thrown error at every callActivity boundary
-        // it crosses, and craft-graph always crosses at least one (the session
-        // that spliced it in); by the time it reaches the CLI, the original
-        // message is not reliably reachable off `error.message` -- it can end
-        // up on a differently-shaped, arbitrarily-nested property instead.
-        // meta.harnessError is a channel this project actually controls, so
-        // `drive()`'s fallback (and `graph-agent show`) can report it
-        // regardless of how deep that wrapping goes.
         store.update((meta) => {
           meta.harnessError = summary;
+        });
+        recordStep(store, {
+          activityId: context.activityId,
+          ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
+          harness: "graph:lint",
+          inputs: { attempt },
+          summary,
+          error: summary,
+          startedAt,
+          endedAt: Date.now(),
         });
         throw new Error(summary);
       };
@@ -538,6 +658,17 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
       if (!raw) {
         if (exhausted) giveUp("nothing to lint");
         settle(false);
+        recordStep(store, {
+          activityId: context.activityId,
+          ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
+          harness: "graph:lint",
+          inputs: { fragment: "" },
+          outputs: { attempt },
+          summary: "Nothing to lint",
+          error: "nothing to lint",
+          startedAt,
+          endedAt: Date.now(),
+        });
         return failed("nothing to lint", { attempt });
       }
       try {
@@ -557,19 +688,48 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
         );
         if (splice.ok) {
           settle(true);
-          // Published back onto `fragment` so layout_fragment (graph:layout)
-          // and apply_extension (graph:extend) downstream see the real merged
-          // document, not the ops list that produced it.
-          return ok(`adds ${splice.added.length} element(s)`, { added: splice.added, attempt, fragment: merged });
+          const summary = `adds ${splice.added.length} element(s)`;
+          recordStep(store, {
+            activityId: context.activityId,
+            ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
+            harness: "graph:lint",
+            inputs: { ops_count: ops.length },
+            outputs: { added: splice.added, attempt },
+            summary: `Lint passed: ${summary}`,
+            startedAt,
+            endedAt: Date.now(),
+          });
+          return ok(summary, { added: splice.added, attempt, fragment: merged });
         }
         const reason = splice.reason ?? "the fragment is not an additive splice";
         if (exhausted) giveUp(reason);
         settle(false);
+        recordStep(store, {
+          activityId: context.activityId,
+          ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
+          harness: "graph:lint",
+          inputs: { ops_count: ops.length },
+          outputs: { attempt, reason },
+          summary: `Lint failed: ${reason}`,
+          error: reason,
+          startedAt,
+          endedAt: Date.now(),
+        });
         return failed(reason, { attempt });
       } catch (error) {
         const reason = `the patch could not be applied: ${message(error)}`;
         if (exhausted) giveUp(reason);
         settle(false);
+        recordStep(store, {
+          activityId: context.activityId,
+          ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
+          harness: "graph:lint",
+          outputs: { attempt, reason },
+          summary: `Lint error: ${reason}`,
+          error: reason,
+          startedAt,
+          endedAt: Date.now(),
+        });
         return failed(reason, { attempt });
       }
     },
@@ -580,6 +740,7 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
      * replays child state by element id.
      */
     "graph:extend": async (context) => {
+      const startedAt = Date.now();
       const fragment = String(context.input.fragment ?? "");
       if (!fragment) return failed("no fragment to apply");
       try {
@@ -598,25 +759,69 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
           SUPPORTED_ELEMENT_TYPES,
           SUPPORTED_EVENT_DEFINITIONS,
         );
-        if (!splice.ok) return failed(splice.reason ?? "the fragment is not an additive splice");
-        // An empty splice.added is a valid additive splice (the model
-        // returned the graph it was shown, unchanged) -- but setGraph writes
-        // a new revision and forces a stop/resume re-entry regardless of
-        // whether anything actually changed (issue #45's mechanism). Applying
-        // that for a no-op churns the engine and inflates the revision
-        // history without ever giving the redraft loop anything new to run
-        // (issue #60), so this is the one case setGraph is deliberately not
-        // called for.
-        if (splice.added.length === 0) return ok("no new elements; graph unchanged", { added: [] });
+        if (!splice.ok) {
+          const reason = splice.reason ?? "the fragment is not an additive splice";
+          recordStep(store, {
+            activityId: context.activityId,
+            ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
+            harness: "graph:extend",
+            summary: `Extend rejected: ${reason}`,
+            error: reason,
+            startedAt,
+            endedAt: Date.now(),
+          });
+          return failed(reason);
+        }
+        if (splice.added.length === 0) {
+          const summary = "no new elements; graph unchanged";
+          recordStep(store, {
+            activityId: context.activityId,
+            ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
+            harness: "graph:extend",
+            outputs: { added: [] },
+            summary,
+            startedAt,
+            endedAt: Date.now(),
+          });
+          return ok(summary, { added: [] });
+        }
         deps.setGraph(fragment, "graph:extend", splice.added, expectedIndex);
-        return ok(`spliced in ${splice.added.length} element(s)`, { added: splice.added });
+        const summary = `spliced in ${splice.added.length} element(s)`;
+        recordStep(store, {
+          activityId: context.activityId,
+          ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
+          harness: "graph:extend",
+          outputs: { added: splice.added },
+          summary: `Graph extended: ${summary}`,
+          startedAt,
+          endedAt: Date.now(),
+        });
+        return ok(summary, { added: splice.added });
       } catch (error) {
         if (error instanceof GraphRevisionConflictError) {
-          return failed(
-            `the graph changed to revision ${error.currentIndex} while this splice was being validated; retry against the new graph`,
-          );
+          const reason = `the graph changed to revision ${error.currentIndex} while this splice was being validated; retry against the new graph`;
+          recordStep(store, {
+            activityId: context.activityId,
+            ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
+            harness: "graph:extend",
+            summary: reason,
+            error: reason,
+            startedAt,
+            endedAt: Date.now(),
+          });
+          return failed(reason);
         }
-        return failed(`could not apply the fragment: ${message(error)}`);
+        const reason = `could not apply the fragment: ${message(error)}`;
+        recordStep(store, {
+          activityId: context.activityId,
+          ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
+          harness: "graph:extend",
+          summary: reason,
+          error: reason,
+          startedAt,
+          endedAt: Date.now(),
+        });
+        return failed(reason);
       }
     },
 
@@ -637,23 +842,22 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
       // "success" | "failed", and zeebe:output reads this object by field name.
       const extra = { exit_code, stdout, stderr };
 
-      if (store && typeof store.update === "function") {
-        store.update((meta) => {
-          meta.turns.push({
-            index: nextTurnIndex(store),
-            activityId: context.activityId,
-            ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
-            harness: "shell",
-            stopReason: exit_code === 0 ? "stop" : "error",
-            inputs: { command, fail_on_error: context.properties.fail_on_error },
-            outputs: extra,
-            summary,
-            startedAt,
-            endedAt,
-            ...(exit_code !== 0 ? { error: `exited ${exit_code}: ${stderr || stdout || "command failed"}` } : {}),
-          });
-        });
-      }
+      recordStep(
+        store,
+        {
+          activityId: context.activityId,
+          ...(context.activityName === undefined ? {} : { activityName: context.activityName }),
+          harness: "shell",
+          stopReason: exit_code === 0 ? "stop" : "error",
+          inputs: { command, fail_on_error: context.properties.fail_on_error },
+          outputs: extra,
+          summary,
+          startedAt,
+          endedAt,
+          ...(exit_code !== 0 ? { error: `exited ${exit_code}: ${stderr || stdout || "command failed"}` } : {}),
+        },
+        true,
+      );
 
       if (exit_code !== 0 && failOnError) return failed(summary, extra);
       return ok(summary, extra);

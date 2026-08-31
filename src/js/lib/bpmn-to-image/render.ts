@@ -38,12 +38,12 @@ export function formatTurnRange(indices: number[]): string {
   const min = sorted[0] ?? 0;
   const max = sorted[sorted.length - 1] ?? 0;
   if (max - min + 1 === sorted.length) {
-    return `T${min}..T${max}`;
+    return `T${min}..T${max} (${sorted.length}×)`;
   }
   if (sorted.length <= 3) {
-    return sorted.map((i) => `T${i}`).join(",");
+    return sorted.map((i) => `T${i}`).join(",") + ` (${sorted.length}×)`;
   }
-  return `T${min}..T${max} (${sorted.length}t)`;
+  return `T${min}..T${max} (${sorted.length}×)`;
 }
 
 export interface RenderedSessionDiagram {
@@ -95,6 +95,41 @@ export async function renderSessionDiagrams(
   const results: RenderedSessionDiagram[] = [];
   const diagramList = diagrams.length > 0 ? diagrams : [undefined];
 
+  // Element execution count calculation for heatmap and iteration indicators
+  const totalTurns = detail.turns?.length || 0;
+  const toolCallTurns = (detail.turns || []).filter(t => (t.toolCallDetails?.length || t.toolCalls?.length || 0) > 0).length;
+  const elementExecutionCount = new Map<string, number>();
+
+  for (const [actId, stats] of activityCosts.entries()) {
+    elementExecutionCount.set(actId, stats.turns);
+  }
+
+  // Flow & loop heuristics for default loop activities
+  if (visitedSet.has('inject_pending') && !elementExecutionCount.has('inject_pending')) {
+    elementExecutionCount.set('inject_pending', totalTurns);
+  }
+  if (visitedSet.has('gw_inject_entry')) elementExecutionCount.set('gw_inject_entry', totalTurns);
+  if (visitedSet.has('gw_failed')) elementExecutionCount.set('gw_failed', totalTurns);
+  if (visitedSet.has('gw_tools')) elementExecutionCount.set('gw_tools', totalTurns);
+  if (visitedSet.has('gw_truncated')) elementExecutionCount.set('gw_truncated', toolCallTurns);
+  if (visitedSet.has('tool_batch')) elementExecutionCount.set('tool_batch', toolCallTurns);
+  if (visitedSet.has('collect_tools')) elementExecutionCount.set('collect_tools', toolCallTurns);
+  if (visitedSet.has('gw_settled')) elementExecutionCount.set('gw_settled', toolCallTurns);
+  if (visitedSet.has('prepare_next')) elementExecutionCount.set('prepare_next', toolCallTurns);
+  if (visitedSet.has('next_turn')) elementExecutionCount.set('next_turn', toolCallTurns);
+  if (visitedSet.has('drain_followup')) elementExecutionCount.set('drain_followup', 1);
+  if (visitedSet.has('gw_followup')) elementExecutionCount.set('gw_followup', 1);
+  if (visitedSet.has('agent_done')) elementExecutionCount.set('agent_done', 1);
+  if (visitedSet.has('loop_start')) elementExecutionCount.set('loop_start', 1);
+  if (visitedSet.has('session_start')) elementExecutionCount.set('session_start', 1);
+  if (visitedSet.has('agent_loop')) elementExecutionCount.set('agent_loop', totalTurns || 1);
+
+  function getVisitedMarkerClass(count: number): string {
+    if (count >= 5) return 'ga-visited-high';
+    if (count >= 2) return 'ga-visited-mid';
+    return 'ga-visited';
+  }
+
   for (let i = 0; i < diagramList.length; i++) {
     const d = diagramList[i];
     if (d) {
@@ -111,11 +146,12 @@ export async function renderSessionDiagrams(
     const name = d?.plane?.bpmnElement?.name || processId || (i === 0 ? 'Main Process' : `Diagram ${i + 1}`);
     const isRoot = d ? (d.plane?.bpmnElement?.isExecutable === true || i === 0) : true;
 
-    // Mark visited elements present in this diagram
+    // Mark visited elements present in this diagram with tiered execution classes
     for (const id of visitedSet) {
       if (elementRegistry.get(id)) {
         try {
-          canvas.addMarker(id, 'ga-visited');
+          const count = elementExecutionCount.get(id) ?? 1;
+          canvas.addMarker(id, getVisitedMarkerClass(count));
         } catch {}
       }
     }
@@ -142,7 +178,10 @@ export async function renderSessionDiagrams(
         const targetId = shape.target?.id;
         if (sourceId && targetId && visitedSet.has(sourceId) && visitedSet.has(targetId)) {
           try {
-            canvas.addMarker(shape.id, 'ga-visited');
+            const sCount = elementExecutionCount.get(sourceId) ?? 1;
+            const tCount = elementExecutionCount.get(targetId) ?? 1;
+            const flowCount = Math.min(sCount, tCount);
+            canvas.addMarker(shape.id, getVisitedMarkerClass(flowCount));
           } catch {}
         }
       } else if (shape && (shape.type === 'bpmn:Lane' || shape.type === 'bpmn:Participant')) {
@@ -170,12 +209,20 @@ export async function renderSessionDiagrams(
 
     if (svg) {
       // Direct SVG attribute replacement so resvg / rasterizers & all browsers render highlights reliably
-      svg = svg.replace(/<g class="([^"]*\bga-(visited|error|token|visited-lane)\b[^"]*)"([^>]*)>([\s\S]*?)<\/g>/g, (_match: string, classAttr: string, _markerType: string, restAttrs: string, innerContent: string) => {
+      svg = svg.replace(/<g class="([^"]*\bga-(visited-high|visited-mid|visited|error|token|visited-lane)\b[^"]*)"([^>]*)>([\s\S]*?)<\/g>/g, (_match: string, classAttr: string, _markerType: string, restAttrs: string, innerContent: string) => {
         let stroke = '#059669';
         let fill = '#ecfdf5';
         let strokeWidth = '2.5px';
 
-        if (classAttr.includes('ga-error')) {
+        if (classAttr.includes('ga-visited-high')) {
+          stroke = '#047857';
+          fill = '#a7f3d0';
+          strokeWidth = '3.5px';
+        } else if (classAttr.includes('ga-visited-mid')) {
+          stroke = '#0d9488';
+          fill = '#ccfbf1';
+          strokeWidth = '3.0px';
+        } else if (classAttr.includes('ga-error')) {
           stroke = '#dc2626';
           fill = '#fef2f2';
           strokeWidth = '3px';
@@ -193,9 +240,22 @@ export async function renderSessionDiagrams(
 
         let updatedInner = innerContent;
         if (isConnection) {
-          updatedInner = updatedInner.replace(/<path([^>]*?)(\/?>)/g, (_m: string, p1: string, p2: string) => {
-            let p = p1.replace(/\s*style="[^"]*"/g, '').replace(/\s*stroke="[^"]*"/g, '').replace(/\s*fill="[^"]*"/g, '').replace(/\s*stroke-width="[^"]*"/g, '');
-            return `<path${p} stroke="${stroke}" stroke-width="${strokeWidth}" fill="none" style="stroke: ${stroke} !important; stroke-width: ${strokeWidth} !important; fill: none !important;"${p2}`;
+          // Color the arrowhead marker path inside <defs><marker>
+          updatedInner = updatedInner.replace(/<marker([\s\S]*?)<\/marker>/g, (_m: string, markerContent: string) => {
+            const styledMarker = markerContent.replace(/<path([^>]*?)(\/?>)/g, (_pm: string, p1: string, p2: string) => {
+              let p = p1.replace(/\s*style="[^"]*"/g, '').replace(/\s*stroke="[^"]*"/g, '').replace(/\s*fill="[^"]*"/g, '').replace(/\s*stroke-width="[^"]*"/g, '');
+              return `<path${p} stroke="${stroke}" fill="${stroke}" stroke-width="1px" style="stroke: ${stroke} !important; fill: ${stroke} !important; stroke-width: 1px !important;"${p2}`;
+            });
+            return `<marker${styledMarker}</marker>`;
+          });
+          // Color the main connection line path (after </defs> or inside <g class="djs-visual">) AND preserve marker-end
+          updatedInner = updatedInner.replace(/(<\/defs>\s*|<g class="djs-visual">\s*)<path([^>]*?)(\/?>)/g, (_m: string, prefix: string, p1: string, p2: string) => {
+            const markerMatch = p1.match(/marker-end:\s*url\(#?([^)]+)\)/) || p1.match(/marker-end="url\(#?([^)]+)\)"/);
+            const markerId = markerMatch?.[1] ? markerMatch[1].replace(/['"#]/g, '') : '';
+            let p = p1.replace(/\s*style="[^"]*"/g, '').replace(/\s*stroke="[^"]*"/g, '').replace(/\s*fill="[^"]*"/g, '').replace(/\s*stroke-width="[^"]*"/g, '').replace(/\s*marker-end="[^"]*"/g, '');
+            const markerAttr = markerId ? ` marker-end="url(#${markerId})"` : '';
+            const markerCss = markerId ? ` marker-end: url(#${markerId}) !important;` : '';
+            return `${prefix}<path${p}${markerAttr} stroke="${stroke}" stroke-width="${strokeWidth}" fill="none" style="stroke: ${stroke} !important; stroke-width: ${strokeWidth} !important; fill: none !important;${markerCss}"${p2}`;
           });
           updatedInner = updatedInner.replace(/<(polygon|polyline)([^>]*?)(\/?>)/g, (_m: string, tag: string, p1: string, p2: string) => {
             let p = p1.replace(/\s*style="[^"]*"/g, '').replace(/\s*stroke="[^"]*"/g, '').replace(/\s*fill="[^"]*"/g, '').replace(/\s*stroke-width="[^"]*"/g, '');
@@ -220,6 +280,28 @@ export async function renderSessionDiagrams(
 
       const injectedStyles = `
         <style>
+          .ga-visited-high.djs-shape .djs-visual rect,
+          .ga-visited-high.djs-shape .djs-visual circle,
+          .ga-visited-high.djs-shape .djs-visual polygon {
+            stroke: #047857 !important;
+            stroke-width: 3.5px !important;
+            fill: #a7f3d0 !important;
+          }
+          .ga-visited-high.djs-connection .djs-visual path {
+            stroke: #047857 !important;
+            stroke-width: 3.5px !important;
+          }
+          .ga-visited-mid.djs-shape .djs-visual rect,
+          .ga-visited-mid.djs-shape .djs-visual circle,
+          .ga-visited-mid.djs-shape .djs-visual polygon {
+            stroke: #0d9488 !important;
+            stroke-width: 3.0px !important;
+            fill: #ccfbf1 !important;
+          }
+          .ga-visited-mid.djs-connection .djs-visual path {
+            stroke: #0d9488 !important;
+            stroke-width: 3.0px !important;
+          }
           .ga-visited.djs-shape .djs-visual rect,
           .ga-visited.djs-shape .djs-visual circle,
           .ga-visited.djs-shape .djs-visual polygon {
@@ -237,11 +319,20 @@ export async function renderSessionDiagrams(
             stroke-width: 3px !important;
             fill: #fef2f2 !important;
           }
+          .ga-error.djs-connection .djs-visual path {
+            stroke: #dc2626 !important;
+            stroke-width: 3px !important;
+          }
           .ga-token.djs-shape .djs-visual rect,
           .ga-token.djs-shape .djs-visual circle {
             stroke: #d97706 !important;
             stroke-width: 3.5px !important;
             fill: #fef3c7 !important;
+          }
+          .ga-visited-lane.djs-shape .djs-visual rect {
+            stroke: #059669 !important;
+            stroke-width: 2px !important;
+            stroke-dasharray: 6 3 !important;
           }
           .ga-cost-badge rect, .ga-turn-badge rect {
             rx: 2px;
@@ -277,7 +368,7 @@ export async function renderSessionDiagrams(
             }
           }
 
-          // 1. Turn Symbol badge on top-left of activity (e.g. [T1..T11])
+          // 1. Turn Symbol badge on top-left of activity (e.g. [T1..T7 (7×)])
           if (turnList && turnList.length > 0) {
             const turnRangeStr = formatTurnRange(turnList);
             const tWidth = Math.max(28, turnRangeStr.length * 6.5 + 8);
@@ -289,6 +380,20 @@ export async function renderSessionDiagrams(
               `<text x="${tWidth / 2}" y="10" fill="#ffffff" font-family="monospace" font-size="9" text-anchor="middle" font-weight="bold">${turnRangeStr}</text>` +
               `</g>`
             );
+          } else {
+            const execCount = elementExecutionCount.get(shape.id);
+            if (execCount && execCount > 1 && (shape.type?.includes('Task') || shape.type?.includes('Activity'))) {
+              const countStr = `${execCount}×`;
+              const tWidth = Math.max(24, countStr.length * 7 + 8);
+              const tx = shape.x;
+              const ty = Math.max(0, shape.y - 12);
+              badges.push(
+                `<g class="ga-turn-badge" transform="translate(${tx}, ${ty})">` +
+                `<rect x="0" y="0" width="${tWidth}" height="14" rx="2" fill="#0d9488" fill-opacity="0.95"/>` +
+                `<text x="${tWidth / 2}" y="10" fill="#ffffff" font-family="monospace" font-size="9" text-anchor="middle" font-weight="bold">${countStr}</text>` +
+                `</g>`
+              );
+            }
           }
 
           // 2. Cost badge on bottom-right of activity (e.g. $0.0051)

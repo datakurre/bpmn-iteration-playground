@@ -41,6 +41,8 @@ export interface TurnRecord {
   prompt?: string;
   /** Full assistant text response received from the model. */
   response?: string;
+  /** Assistant reasoning/thinking content if the model uses extended thinking. */
+  thinking?: string;
   /** Mapped input parameters for this activity. */
   inputs?: Record<string, unknown>;
   /** Output results produced by this activity. */
@@ -52,6 +54,8 @@ export interface TurnRecord {
   /** Token usage for the turn, so cache behaviour is visible per step. */
   usage?: TurnUsage;
 }
+
+export type StepRecord = TurnRecord;
 
 /** Financial cost breakdown for an LLM turn. */
 export interface CostDetail {
@@ -124,6 +128,7 @@ export interface SessionDetail extends SessionSummary {
   /** Activity ids already executed at least once. */
   visited: string[];
   turns: TurnRecord[];
+  steps?: StepRecord[];
   revisions: GraphRevision[];
   /** Set by a harness that gave up and deliberately ended the run outside the ordinary turn path. */
   harnessError?: string;

@@ -40,6 +40,7 @@ export interface SessionMeta {
   createdAt: number;
   updatedAt: number;
   turns: TurnRecord[];
+  steps?: TurnRecord[];
   revisions: GraphRevision[];
   /** Activity ids the token currently rests on. */
   tokens: string[];
@@ -220,6 +221,7 @@ export class SessionStore {
       createdAt: now,
       updatedAt: now,
       turns: [],
+      steps: [],
       revisions: [],
       tokens: [],
       visited: [],
@@ -351,6 +353,7 @@ export class SessionStore {
       tokens: meta.tokens,
       visited: meta.visited,
       turns: meta.turns,
+      steps: meta.steps || [],
       revisions: meta.revisions,
       ...(meta.harnessError === undefined ? {} : { harnessError: meta.harnessError }),
     };

@@ -84,6 +84,32 @@ function escapeHtml(str: string): string {
     .replace(/'/g, "&#039;");
 }
 
+export function renderMarkdownToHtml(md: string): string {
+  if (!md) return "";
+  const codeBlocks: string[] = [];
+  let text = md.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)\n```/g, (_m, lang, code) => {
+    const idx = codeBlocks.length;
+    codeBlocks.push(
+      `<div class="terminal-card" style="margin: 0.5rem 0;">` +
+      (lang ? `<div class="terminal-bar"><span class="terminal-title">${escapeHtml(lang)}</span></div>` : "") +
+      `<pre class="code-block" style="margin: 0;"><code>${escapeHtml(code.trim())}</code></pre></div>`
+    );
+    return `___CODE_BLOCK_${idx}___`;
+  });
+
+  text = escapeHtml(text);
+  text = text.replace(/`([^`]+)`/g, (_m, code) => `<code>${code}</code>`);
+  text = text.replace(/\*\*([^*]+)\*\*/g, (_m, bold) => `<strong>${bold}</strong>`);
+  text = text.replace(/\*([^*]+)\*/g, (_m, it) => `<em>${it}</em>`);
+
+  const paragraphs = text.split(/\n\n+/).map(p => {
+    p = p.replace(/\n/g, "<br>");
+    return `<div class="md-para">${p}</div>`;
+  }).join("");
+
+  return paragraphs.replace(/___CODE_BLOCK_(\d+)___/g, (_m, idx) => codeBlocks[Number(idx)] || "");
+}
+
 function formatToolCallMarkdown(tc: { id: string; name: string; arguments?: Record<string, unknown>; result?: { content: string; isError?: boolean } }): string {
   const status = tc.result ? (tc.result.isError ? "failed" : "ok") : "pending";
   let md = `<details>\n<summary>Tool: <code>${tc.name}</code> (${tc.id}) — ${status}</summary>\n\n`;
@@ -215,19 +241,20 @@ export async function generateMarkdownReport(
   } = {}
 ): Promise<string> {
   const stats = detail.stats;
-  const activities = computeActivitySummaries(detail.turns);
+  const itemsToReport = detail.steps && detail.steps.length > 0 ? detail.steps : detail.turns;
+  const activities = computeActivitySummaries(itemsToReport);
   const totalCost = stats?.totalCostUSD ? formatCost(stats.totalCostUSD) : "$0.00";
   const totalTokens = stats?.totalTokens ? formatTokens(stats.totalTokens) : "0";
   const cacheHit = stats?.cacheHitRatio !== undefined ? `${Math.round(stats.cacheHitRatio * 100)}%` : "0%";
 
   let totalDurationMs = 0;
-  for (const t of detail.turns) {
+  for (const t of itemsToReport) {
     if (t.startedAt && t.endedAt) totalDurationMs += t.endedAt - t.startedAt;
   }
   const durationStr = totalDurationMs > 0 ? `${(totalDurationMs / 1000).toFixed(1)}s` : "-";
 
   let totalToolCalls = 0;
-  for (const t of detail.turns) {
+  for (const t of itemsToReport) {
     totalToolCalls += t.toolCallDetails?.length || t.toolCalls?.length || 0;
   }
 
@@ -275,10 +302,10 @@ export async function generateMarkdownReport(
   }
 
   let turnLog = "\n## Chronological Turn Log\n\n";
-  if (detail.turns.length === 0) {
+  if (itemsToReport.length === 0) {
     turnLog += "_No turns executed._\n";
   } else {
-    for (const turn of detail.turns) {
+    for (const turn of itemsToReport) {
       const toolList = turn.toolCalls?.length ? turn.toolCalls.map((t) => `\`${t}\``).join(", ") : "-";
       const tokens = turn.usage
         ? `in: ${turn.usage.input}, out: ${turn.usage.output}, cacheRead: ${turn.usage.cacheRead}`
@@ -297,7 +324,6 @@ export async function generateMarkdownReport(
       if (turn.error) {
         turnLog += `\n> **Error**: ${turn.error}\n\n`;
       }
-
       if (options.verbose) {
         if (turn.prompt) {
           turnLog += `<details>\n<summary>Input Prompt (${turn.prompt.length} chars)</summary>\n\n\`\`\`text\n${turn.prompt}\n\`\`\`\n</details>\n\n`;
@@ -305,17 +331,21 @@ export async function generateMarkdownReport(
           turnLog += `<details>\n<summary>Inputs</summary>\n\n\`\`\`json\n${JSON.stringify(turn.inputs, null, 2)}\n\`\`\`\n</details>\n\n`;
         }
 
+        if (turn.thinking) {
+          turnLog += `<details>\n<summary>Thinking / Reasoning (${turn.thinking.length} chars)</summary>\n\n\`\`\`text\n${turn.thinking}\n\`\`\`\n</details>\n\n`;
+        }
+
         if (turn.response && turn.response !== turn.summary) {
           turnLog += `<details>\n<summary>Model Response (${turn.response.length} chars)</summary>\n\n\`\`\`text\n${turn.response}\n\`\`\`\n</details>\n\n`;
         } else if (turn.outputs && Object.keys(turn.outputs).length > 0 && !turn.response) {
           turnLog += `<details>\n<summary>Outputs</summary>\n\n\`\`\`json\n${JSON.stringify(turn.outputs, null, 2)}\n\`\`\`\n</details>\n\n`;
         }
+      }
 
-        if (turn.toolCallDetails && turn.toolCallDetails.length > 0) {
-          turnLog += `**Tool Call Details**:\n\n`;
-          for (const tc of turn.toolCallDetails) {
-            turnLog += formatToolCallMarkdown(tc);
-          }
+      if (turn.toolCallDetails && turn.toolCallDetails.length > 0) {
+        turnLog += `**Tool Call Details**:\n\n`;
+        for (const tc of turn.toolCallDetails) {
+          turnLog += formatToolCallMarkdown(tc);
         }
       }
     }
@@ -412,22 +442,27 @@ export async function generateHtmlReport(
         return `
           <div class="diagram-tab-pane ${idx === 0 ? 'active' : ''}" id="pane-diag-${idx}" style="${idx === 0 ? '' : 'display: none;'}">
             <div class="diagram-viewer" id="viewer-diagram-${idx}">
-              <div class="diagram-toolbar">
-                <div class="diagram-info">
+              <div class="diagram-viewport" data-viewport tabindex="0" title="Scroll to zoom, click and drag to pan">
+                <div class="diagram-floating-info">
                   <span>${title}</span>
                   ${badge}
                 </div>
-                <div class="diagram-actions">
+                <div class="diagram-floating-controls">
                   <button type="button" class="btn-tool" data-action="zoom-in" title="Zoom In (+)">Zoom In</button>
                   <button type="button" class="btn-tool" data-action="zoom-out" title="Zoom Out (-)">Zoom Out</button>
                   <button type="button" class="btn-tool" data-action="reset" title="Reset View (100%)">100%</button>
                   <button type="button" class="btn-tool" data-action="fit" title="Fit to Viewport">Fit</button>
                   <span class="zoom-pill" data-zoom-label>100%</span>
                 </div>
-              </div>
-              <div class="diagram-viewport" data-viewport tabindex="0" title="Scroll to zoom, click and drag to pan">
                 <div class="diagram-canvas" data-canvas>
                   ${imgTag}
+                </div>
+                <div class="diagram-floating-legend">
+                  <span class="legend-item"><span class="legend-dot dot-1x"></span> 1× Pass</span>
+                  <span class="legend-item"><span class="legend-dot dot-mid"></span> 2–4× Loop</span>
+                  <span class="legend-item"><span class="legend-dot dot-high"></span> 5+× Hot Path</span>
+                  <span class="legend-item"><span class="legend-dot dot-error"></span> Failed / Error</span>
+                  <span class="legend-item"><span class="legend-dot dot-unvisited"></span> Unvisited</span>
                 </div>
               </div>
             </div>
@@ -447,11 +482,12 @@ export async function generateHtmlReport(
     diagramSectionHtml = `<p class="text-muted">Diagram preview unavailable.</p>`;
   }
 
+  const itemsToReport = detail.steps && detail.steps.length > 0 ? detail.steps : detail.turns;
   let totalDurationMs = 0;
   let totalToolCallsCount = 0;
   let errorCount = 0;
 
-  for (const t of detail.turns) {
+  for (const t of itemsToReport) {
     if (t.startedAt && t.endedAt) totalDurationMs += t.endedAt - t.startedAt;
     totalToolCallsCount += t.toolCallDetails?.length || t.toolCalls?.length || 0;
     if (t.error || t.stopReason === "error" || t.toolCallDetails?.some(tc => tc.result?.isError)) {
@@ -479,9 +515,9 @@ export async function generateHtmlReport(
 
   const isVerbose = options.verbose === true;
 
-  const turnLogHtml = detail.turns.length === 0
+  const turnLogHtml = itemsToReport.length === 0
     ? `<p class="text-muted">No turns executed.</p>`
-    : detail.turns
+    : itemsToReport
         .map((t) => {
           const hasToolCalls = (t.toolCallDetails?.length || 0) > 0 || (t.toolCalls?.length || 0) > 0;
           const hasError = Boolean(t.error || t.stopReason === "error" || t.toolCallDetails?.some(tc => tc.result?.isError));
@@ -522,6 +558,20 @@ export async function generateHtmlReport(
             `
             : "";
 
+          const thinkingBlock = t.thinking
+            ? `
+              <details class="detail-box thinking-box" ${isVerbose ? "open" : ""}>
+                <summary class="detail-summary">
+                  <span><strong>Thinking / Reasoning</strong> (${t.thinking.length} chars)</span>
+                  <button type="button" class="btn-copy" data-copy="${escapeHtml(t.thinking)}" title="Copy Thinking">Copy</button>
+                </summary>
+                <div class="detail-body">
+                  <pre class="code-block" style="color: #cbd5e1; font-style: italic;">${escapeHtml(t.thinking)}</pre>
+                </div>
+              </details>
+            `
+            : "";
+
           const responseBlock = t.response && t.response !== t.summary
             ? `
               <details class="detail-box" ${isVerbose ? "open" : ""}>
@@ -556,7 +606,7 @@ export async function generateHtmlReport(
           const turnDur = t.startedAt && t.endedAt ? `<span class="badge badge-dur">${((t.endedAt - t.startedAt) / 1000).toFixed(1)}s</span>` : "";
 
           const summaryBlock = t.summary
-            ? `<div class="turn-summary">${escapeHtml(t.summary)}</div>`
+            ? `<div class="turn-summary">${renderMarkdownToHtml(t.summary)}</div>`
             : "";
           const errBlock = t.error
             ? `<div class="turn-error">${escapeHtml(t.error)}</div>`
@@ -580,6 +630,7 @@ export async function generateHtmlReport(
               </div>
               ${summaryBlock}
               ${promptBlock}
+              ${thinkingBlock}
               ${responseBlock}
               ${tools}
               ${errBlock}
@@ -634,18 +685,29 @@ export async function generateHtmlReport(
     .diagram-tab-btn.active { color: #0f766e; border-bottom-color: #0f766e; font-weight: 600; background: transparent; }
     .diagram-tab-pane { width: 100%; }
 
-    /* Diagram Viewer with Pan & Zoom */
-    .diagram-viewer { background: #ffffff; overflow: hidden; }
-    .diagram-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 0.4rem 0.75rem; background: #ffffff; border-bottom: 1px solid #f1f5f9; flex-wrap: wrap; gap: 0.5rem; }
-    .diagram-info { display: flex; align-items: center; gap: 0.4rem; font-weight: 600; font-size: 12px; color: #1e293b; }
-    .diagram-actions { display: flex; align-items: center; gap: 0.25rem; }
+    /* Diagram Viewer with Pan & Zoom (Floating Camunda-style Controls) */
+    .diagram-viewer { background: #ffffff; overflow: hidden; position: relative; }
     .btn-tool { background: white; border: 1px solid #cbd5e1; border-radius: 3px; padding: 0.2rem 0.45rem; font-size: 11px; font-weight: 600; color: #475569; cursor: pointer; transition: all 0.15s ease; user-select: none; }
     .btn-tool:hover { background: #f1f5f9; border-color: #94a3b8; color: #0f172a; }
     .zoom-pill { font-size: 11px; font-family: ui-monospace, monospace; color: #64748b; min-width: 36px; text-align: center; font-weight: 600; }
-    .diagram-viewport { position: relative; width: 100%; height: 420px; overflow: hidden; background: #ffffff; cursor: grab; user-select: none; touch-action: none; }
+    .diagram-viewport { position: relative; width: 100%; height: 460px; overflow: hidden; background: #ffffff; cursor: grab; user-select: none; touch-action: none; }
     .diagram-viewport:active { cursor: grabbing; }
+    .diagram-floating-info { position: absolute; top: 10px; left: 10px; z-index: 10; display: flex; align-items: center; gap: 6px; background: rgba(255, 255, 255, 0.94); backdrop-filter: blur(4px); border: 1px solid #e2e8f0; border-radius: 3px; padding: 3px 8px; font-size: 11.5px; font-weight: 600; color: #1e293b; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05); pointer-events: none; }
+    .diagram-floating-controls { position: absolute; top: 10px; right: 10px; z-index: 10; display: flex; align-items: center; gap: 3px; background: rgba(255, 255, 255, 0.94); backdrop-filter: blur(4px); border: 1px solid #e2e8f0; border-radius: 3px; padding: 3px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05); }
+    .diagram-floating-legend { position: absolute; bottom: 10px; left: 10px; z-index: 10; display: flex; align-items: center; gap: 10px; background: rgba(255, 255, 255, 0.94); backdrop-filter: blur(4px); border: 1px solid #e2e8f0; border-radius: 3px; padding: 3px 8px; font-size: 11px; color: #475569; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05); pointer-events: none; }
+    .legend-item { display: inline-flex; align-items: center; gap: 4px; font-weight: 500; }
+    .legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+    .dot-1x { background: #059669; }
+    .dot-mid { background: #0d9488; }
+    .dot-high { background: #047857; }
+    .dot-error { background: #dc2626; }
+    .dot-token { background: #d97706; }
+    .dot-unvisited { background: #cbd5e1; }
     .diagram-canvas { position: absolute; transform-origin: 0 0; display: inline-block; pointer-events: none; }
     .diagram-canvas img, .diagram-canvas svg { display: block; max-width: none; user-select: none; -webkit-user-drag: none; pointer-events: none; }
+    .md-para { margin: 0.3rem 0; line-height: 1.45; }
+    .md-para:first-child { margin-top: 0; }
+    .md-para:last-child { margin-bottom: 0; }
 
     /* Table & Badges */
     table { width: 100%; border-collapse: collapse; margin-top: 0.25rem; font-size: 12px; }
@@ -696,6 +758,7 @@ export async function generateHtmlReport(
     .detail-body { padding: 0.5rem 0.75rem; border-top: 1px solid #f1f5f9; background: #ffffff; }
     .detail-subheading { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b; margin-bottom: 0.25rem; margin-top: 0.35rem; }
     .code-block { margin: 0 0 0.4rem 0; padding: 0.5rem 0.65rem; background: #0f172a; color: #f8fafc; border-radius: 2px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; line-height: 1.4; white-space: pre-wrap; word-break: break-all; max-height: 350px; overflow-y: auto; }
+    .code-block code { background: transparent; color: inherit; padding: 0; font-size: inherit; font-family: inherit; }
     .code-block:last-child { margin-bottom: 0; }
     .code-error { background: #450a0a; color: #fecaca; }
     .btn-copy { background: transparent; border: 1px solid #cbd5e1; border-radius: 2px; padding: 0.1rem 0.35rem; font-size: 11px; cursor: pointer; color: #475569; transition: all 0.15s; }
@@ -707,9 +770,11 @@ export async function generateHtmlReport(
     .tool-name-badge { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; font-family: monospace; font-size: 11px; padding: 0.1rem 0.35rem; border-radius: 2px; font-weight: bold; }
     .tool-id-label { font-family: monospace; font-size: 11px; color: #64748b; }
     .tool-dur { font-size: 11px; color: #64748b; font-family: monospace; }
-    .terminal-card { background: #0f172a; border-radius: 3px; overflow: hidden; margin-bottom: 0.4rem; }
+    .terminal-card { background: #0f172a; border-radius: 3px; overflow: hidden; margin-bottom: 0.4rem; border: 1px solid #1e293b; }
     .terminal-bar { display: flex; align-items: center; justify-content: space-between; padding: 0.25rem 0.6rem; background: #1e293b; border-bottom: 1px solid #334155; font-size: 11px; color: #94a3b8; font-family: monospace; }
-    .terminal-title { font-size: 11px; }
+    .terminal-title { font-size: 11px; font-weight: 600; text-transform: uppercase; }
+    .terminal-card .code-block { background: #0f172a; color: #38bdf8; margin: 0; padding: 0.5rem 0.75rem; }
+    .terminal-card .code-block code { color: #38bdf8; background: transparent; padding: 0; }
     .terminal-cmd { margin: 0; padding: 0.5rem 0.75rem; color: #38bdf8; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
     .file-path-badge { font-size: 12px; font-weight: 600; color: #1e293b; margin-bottom: 0.35rem; }
     .diff-container { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 3px; margin-bottom: 0.4rem; overflow: hidden; }
@@ -766,7 +831,7 @@ export async function generateHtmlReport(
         <tr><th>Activity</th><th>Symbol</th><th>Harness</th><th>Turns</th><th>Tokens (In / Out / Cache)</th><th>Reasoning</th><th>Cost ($ USD)</th><th>Duration</th></tr>
       </thead>
       <tbody>
-        ${computeActivitySummaries(detail.turns).map(a => `
+        ${computeActivitySummaries(itemsToReport).map(a => `
           <tr class="clickable-row" onclick="scrollToTurn(${a.turnIndices[0]})" title="Click to view turn in log">
             <td><code>${escapeHtml(a.activityId)}</code></td>
             <td><span class="badge badge-turn">${formatTurnRange(a.turnIndices) || "-"}</span></td>
@@ -783,12 +848,12 @@ export async function generateHtmlReport(
   </div>
 
   <div class="card">
-    <h2 style="margin-top: 0; margin-bottom: 0.75rem;">Chronological Turn Log & Transcript</h2>
+    <h2 style="margin-top: 0; margin-bottom: 0.75rem;">Chronological Execution Log & Transcript</h2>
     
     <div class="turn-filter-bar">
       <div class="filter-btn-group">
-        <button type="button" class="filter-btn active" data-filter="all">All (${detail.turns.length})</button>
-        <button type="button" class="filter-btn" data-filter="tools">Tool Calls (${detail.turns.filter(t => (t.toolCallDetails?.length || t.toolCalls?.length || 0) > 0).length})</button>
+        <button type="button" class="filter-btn active" data-filter="all">All (${itemsToReport.length})</button>
+        <button type="button" class="filter-btn" data-filter="tools">Tool Calls (${itemsToReport.filter(t => (t.toolCallDetails?.length || t.toolCalls?.length || 0) > 0).length})</button>
         <button type="button" class="filter-btn" data-filter="errors">Errors (${errorCount})</button>
       </div>
       <div class="search-wrapper">

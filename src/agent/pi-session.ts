@@ -41,6 +41,8 @@ export interface TurnOutcome {
   usage: TurnUsage;
   /** Assistant text, for the session log. */
   text: string;
+  /** Assistant reasoning/thinking text, when the model uses extended thinking. */
+  thinking?: string;
   errorMessage?: string;
 }
 
@@ -216,6 +218,12 @@ export class PiSession {
       });
     }
 
+    const thinking = message.content
+      .filter((block): block is Extract<typeof block, { type: "thinking" }> => (block as any).type === "thinking")
+      .map((block) => (block as any).thinking)
+      .filter(Boolean)
+      .join("\n\n");
+
     return {
       stopReason,
       toolCalls,
@@ -224,6 +232,7 @@ export class PiSession {
         .filter((block): block is Extract<typeof block, { type: "text" }> => block.type === "text")
         .map((block) => block.text)
         .join(""),
+      ...(thinking ? { thinking } : {}),
       ...(message.errorMessage === undefined ? {} : { errorMessage: message.errorMessage }),
     };
   }
