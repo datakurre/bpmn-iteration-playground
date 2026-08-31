@@ -132,6 +132,7 @@ async function init(): Promise<void> {
       window.ElementTemplateChooserModule,
       window.ElementTemplateIconRendererModule,
       window.ElementTemplatesExtendModule,
+      window.SupportedElementsRulesModule,
     ].filter(Boolean),
     moddleExtensions: { zeebe: window.zeebeModdleDescriptor || {} },
     linting: window.BpmnlintRecommendedConfig

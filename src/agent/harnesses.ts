@@ -7,12 +7,13 @@
  */
 import { spawn } from "node:child_process";
 import { layoutProcess } from "bpmn-auto-layout";
-import { checkSplice, type HarnessIOContract } from "./graph.ts";
+import { applyGraphOps, checkSplice, type GraphOp, type HarnessIOContract } from "./graph.ts";
 import { failed, HARNESS_RESULT_BASE_FIELDS, ok, type Harness, type HarnessRegistry, type HarnessResult } from "./harness.ts";
 import type { PiSession, ToolCallRequest } from "./pi-session.ts";
 import type { ToolExecutor } from "./tool-executor.ts";
 import { GraphRevisionConflictError, type SessionStore } from "./session-store.ts";
 import type { TurnRecord } from "../studio/types.ts";
+import { SUPPORTED_ELEMENT_TYPES } from "../js/lib/supported-bpmn-elements.ts";
 
 /** Matches craft-graph.bpmn's own `gw_lint` condition (`lint_attempts >= 3`). */
 const MAX_LINT_ATTEMPTS = 3;
@@ -22,48 +23,79 @@ const MAX_LINT_ATTEMPTS = 3;
  * front of whatever the graph maps as the turn's own `prompt`. draft_fragment
  * has always carried `agent_role="graph_architect"`, but nothing ever read it
  * (issue #37): the model drafting a splice got only the generic session
- * prompt, with no hint that the output must be a complete, parseable
- * `<bpmn:definitions>` document, that ids must be additive and stable, or
- * that prose and markdown fences are not acceptable -- so the first attempt,
+ * prompt, with no hint of the output format at all -- so the first attempt,
  * and every attempt after it, was a blind guess.
+ *
+ * `graph_architect` used to be asked for a complete replacement `<bpmn:definitions>`
+ * document -- the current graph's own content in full, verbatim, with new
+ * elements woven in. That failed for any graph of realistic size: the model
+ * either garbled a multi-thousand-character echo (rejected as "removed or
+ * renamed") or reproduced it exactly and added nothing, which `graph:extend`
+ * treats as a no-op splice with nothing for the review gate to approve. It now
+ * drafts a small ops list instead -- see `GraphOp` (`src/agent/graph.ts`) and
+ * `applyGraphOps`'s own header comment for how each op mirrors a real bpmn-js
+ * `Modeling` method (`createShape`/`appendShape`/`insertShape`/`connect`).
+ * There is nothing left to echo, so "added 0 elements" cannot recur.
  */
 const AGENT_ROLES: Record<string, string> = {
   graph_architect:
-    "You are drafting a replacement for the session graph below. " +
-    "Do not call any tool for this response, even if one is offered to you -- " +
-    "nothing in this drafting step can run a tool call, and one left " +
-    "unanswered wedges the rest of this session. Read the current graph from " +
-    "the block below; there is nothing to inspect on disk. " +
-    "Respond with ONLY a complete, valid <bpmn:definitions> XML document -- " +
-    "no markdown code fences, no prose before or after, nothing but the XML. " +
-    "Define exactly one <bpmn:process> in it. What you return REPLACES the " +
-    "current graph outright, so it must be the current graph's own content " +
-    "in full, verbatim, with your new elements woven in -- do not return only " +
-    "the new or changed pieces, and do not reference an existing element (by " +
-    "id, sourceRef, or targetRef) without also copying its own full " +
-    "definition into your output. Everything currently in the graph keeps " +
-    "its exact id and its <bpmn:definitions id>; give every new element a " +
-    "brand-new id -- nothing existing may be renamed or removed. Auto-layout " +
-    "adds visual positioning afterward, so omit the <bpmndi:BPMNDiagram> " +
-    "section entirely; do not invent one. Never give a plain activity or " +
-    "event more than one incoming <bpmn:sequenceFlow> -- that looks like a " +
-    "join but is not one, and bpmnlint's fake-join rule (an error) rejects a " +
-    "graph promoted to the shared library with one still in it. Where two " +
-    "paths need to reconverge (a loop-back alongside a fresh entry, say), " +
-    "route both into an <bpmn:exclusiveGateway> with a single outgoing flow " +
-    "to the shared target instead.\n\n" +
-    "The <bpmn:definitions> root must declare exactly these namespaces, " +
-    "copied verbatim -- inventing a different BPMN namespace URI is the most " +
-    "common way this fails:\n" +
-    '<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" ' +
-    'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" ' +
-    'xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="..." targetNamespace="http://graph-agent/bpmn">',
+    "You are drafting a small patch for the session graph below, not a " +
+    "replacement for it. Do not call any tool for this response, even if one " +
+    "is offered to you -- nothing in this drafting step can run a tool call, " +
+    "and one left unanswered wedges the rest of this session. Read the " +
+    "current graph from the block below; there is nothing to inspect on " +
+    "disk. Respond with ONLY a JSON array of operations -- no markdown code " +
+    "fences, no prose before or after, nothing but the JSON. Every id you " +
+    "invent must be brand-new; an id already in the current graph may be " +
+    "*referenced* by an operation but never redefined, renamed, or removed.\n\n" +
+    "Operations:\n" +
+    '  {"op":"createProcess","id":"...","name":"..."} -- starts a new, ' +
+    'separate sub-process (not the main one); later operations build inside ' +
+    'it via "process":"<that id>".\n' +
+    '  {"op":"appendShape","type":"bpmn:...","id":"...","after":"<existing id>"} ' +
+    "-- a new node plus one new flow from an existing node into it.\n" +
+    '  {"op":"insertShape","type":"bpmn:...","id":"...","into":"<an existing ' +
+    'sequenceFlow id>"} -- splices a new node into the middle of an existing ' +
+    "path: that flow keeps its own id but now points at the new node, and a " +
+    "brand-new flow carries on from the new node to the flow's old target.\n" +
+    '  {"op":"connect","from":"<id>","to":"<id>","condition":"<FEEL, ' +
+    'optional>"} -- a new sequence flow between two already-named nodes.\n' +
+    '  {"op":"setTaskDefinition","id":"<a service/user task named earlier in ' +
+    'this same list>","jobType":"...","headers":{"key":"value"},' +
+    '"inputs":[{"source":"=...","target":"..."}],"outputs":[{"source":"=...",' +
+    '"target":"..."}]} -- wires zeebe:taskDefinition/taskHeaders/ioMapping ' +
+    "onto a new task.\n" +
+    '  {"op":"setDocumentation","id":"<id>","text":"..."}\n\n' +
+    '`appendShape`/`insertShape` accept an optional "process":"<id>" ' +
+    '(defaults to the main process) and, when "type" is "bpmn:CallActivity", ' +
+    '"calledElement":"<a process id from an earlier createProcess op>".\n\n' +
+    "Prefer expressing new work as its own small called sub-process: " +
+    "createProcess, build the new steps inside it (every op that belongs " +
+    'there needs "process":"<that id>"), then insertShape (or appendShape) a ' +
+    "single bpmn:CallActivity into the main process naming it as " +
+    "calledElement. That is the default for anything beyond a one- or " +
+    "two-step tweak -- it keeps the main graph small and the new logic " +
+    "independently reviewable. Reserve a direct appendShape/insertShape/" +
+    "connect into the main process for a genuinely small, local change (one " +
+    "extra gateway branch, one inserted step).\n\n" +
+    'Every new element\'s "type" must be exactly one of these -- anything ' +
+    "else has no tested behaviour here and will be rejected:\n" +
+    [...SUPPORTED_ELEMENT_TYPES].sort().join(", ") +
+    "\n\n" +
+    "Never insertShape or connect a second incoming flow into a plain task " +
+    "or event -- that looks like a join but is not one, and bpmn-elements " +
+    "re-triggers the activity once per arriving token instead of waiting for " +
+    "both. Where two paths need to reconverge (a loop-back alongside a fresh " +
+    "entry, say), appendShape a bpmn:ExclusiveGateway, connect both sources " +
+    "into it, and give it a single outgoing flow to the shared target " +
+    "instead.",
 };
 
 /**
  * Strips a single wrapping markdown code fence, if there is one -- models
- * fence XML by default even when told not to, and neither bpmn-auto-layout
- * nor the BPMN parser tolerates the fence markers.
+ * fence XML or JSON by default even when told not to, and neither
+ * `JSON.parse`, bpmn-auto-layout, nor the BPMN parser tolerates the fence
+ * markers.
  */
 function stripCodeFence(text: string): string {
   const match = /^```[a-zA-Z0-9_-]*\r?\n([\s\S]*?)\r?\n?```\s*$/.exec(text.trim());
@@ -71,26 +103,21 @@ function stripCodeFence(text: string): string {
 }
 
 /**
- * Roles whose prompt must also carry the session's current graph -- a
- * real-model run showed `graph_architect` cannot draft an *additive*
- * fragment (checkSplice's core requirement) without knowing which element
- * ids already exist to preserve; every attempt reused nothing and got
- * rejected as "removed or renamed" everything. Capped well under a typical
- * context window: the graph a splice targets is a single session graph, not
- * the whole shared library, so this is a safety margin against a pathological
+ * Roles whose prompt must also carry the session's current graph. Now that
+ * `graph_architect` drafts an ops list rather than a full-document echo, this
+ * is no longer about being able to reproduce the graph -- it is about giving
+ * the model real, existing ids to hook `after`/`into`/`from`/`to` onto (and
+ * to avoid, when inventing new ones). Capped well under a typical context
+ * window: the graph a splice targets is a single session graph, not the
+ * whole shared library, so this is a safety margin against a pathological
  * one, not an expected truncation.
  *
  * 20,000 was that margin until session-craft.bpmn (issue #66): a session
  * graph that links two called graphs at once -- craft_graph and
  * pi_default_loop, rather than session-skeleton's one -- runs to over 41,000
- * characters even before anything is spliced in. A real Haiku run against
- * that truncated document reliably "reproduced" only the visible half,
- * dropping pi_default_loop's own later activities wholesale and getting
- * rejected as "removed or renamed" everything checkSplice never actually
- * saw removed -- the redraft loop then burns its whole attempt budget
- * against a fragment it was never physically shown enough of to preserve.
- * Raised well past what composing two of today's bundled graphs needs, with
- * headroom for a third, and still small next to Haiku's own context window.
+ * characters even before anything is spliced in. Raised well past what
+ * composing two of today's bundled graphs needs, with headroom for a third,
+ * and still small next to Haiku's own context window.
  */
 const ROLES_NEEDING_CURRENT_GRAPH = new Set(["graph_architect"]);
 const MAX_CURRENT_GRAPH_CHARS = 100_000;
@@ -122,17 +149,18 @@ const ROLES_NEEDING_JOB_TYPES = ROLES_NEEDING_CURRENT_GRAPH;
 
 function jobTypesBlock(jobTypes: Iterable<string>): string {
   return (
-    "A new <bpmn:serviceTask>'s <zeebe:taskDefinition type=\"...\"> must be exactly one of these -- " +
-    "anything else has no harness to run it and will be rejected:\n" +
+    '`setTaskDefinition`\'s "jobType" must be exactly one of these -- anything ' +
+    "else has no harness to run it and will be rejected:\n" +
     [...jobTypes].sort().join(", ") +
     "\n\n" +
     // checkSplice only catches an unregistered type, not a right type wired
     // wrong -- issue #40's own repro used the real `shell` type but still
-    // passed `command` through zeebe:ioMapping, where the harness never looks.
-    "'shell' reads its command from zeebe:taskHeaders, not zeebe:ioMapping " +
-    "input, because the command is a fixed part of what the activity is, not " +
-    "something a previous activity computes; route on the result with " +
-    "zeebe:output source=\"=exit_code\" (or =stdout/=stderr)."
+    // passed `command` through zeebe:ioMapping (setTaskDefinition's "inputs"),
+    // where the harness never looks.
+    "'shell' reads its command from setTaskDefinition's \"headers\", not " +
+    '"inputs", because the command is a fixed part of what the activity is, ' +
+    "not something a previous activity computes; route on the result with an " +
+    "output like {\"source\":\"=exit_code\",\"target\":\"...\"} (or =stdout/=stderr)."
   );
 }
 
@@ -185,7 +213,7 @@ export const HARNESS_IO: Record<string, { inputs?: string[]; headers?: string[];
   },
   "graph:lint": {
     inputs: ["fragment"],
-    outputs: ["added", "attempt"],
+    outputs: ["added", "attempt", "fragment"],
   },
   "graph:extend": {
     inputs: ["fragment"],
@@ -457,24 +485,39 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
         throw new Error(summary);
       };
 
-      const fragment = stripCodeFence(String(context.input.fragment ?? ""));
-      if (!fragment) {
+      const raw = stripCodeFence(String(context.input.fragment ?? ""));
+      if (!raw) {
         if (exhausted) giveUp("nothing to lint");
         settle(false);
         return failed("nothing to lint", { attempt });
       }
       try {
-        const splice = await checkSplice(deps.getGraph(), fragment, new Set(Object.keys(registry)), harnessIOContract());
+        // `graph_architect` drafts an ops list (GraphOp[]), not a full document
+        // -- applyGraphOps materializes it into a complete graph before the
+        // same additive/job-type/element-type checks run against that, exactly
+        // as they always have against a full nextXml.
+        const ops = JSON.parse(raw) as GraphOp[];
+        const merged = await applyGraphOps(deps.getGraph(), ops);
+        const splice = await checkSplice(
+          deps.getGraph(),
+          merged,
+          new Set(Object.keys(registry)),
+          harnessIOContract(),
+          SUPPORTED_ELEMENT_TYPES,
+        );
         if (splice.ok) {
           settle(true);
-          return ok(`adds ${splice.added.length} element(s)`, { added: splice.added, attempt });
+          // Published back onto `fragment` so layout_fragment (graph:layout)
+          // and apply_extension (graph:extend) downstream see the real merged
+          // document, not the ops list that produced it.
+          return ok(`adds ${splice.added.length} element(s)`, { added: splice.added, attempt, fragment: merged });
         }
         const reason = splice.reason ?? "the fragment is not an additive splice";
         if (exhausted) giveUp(reason);
         settle(false);
         return failed(reason, { attempt });
       } catch (error) {
-        const reason = `the fragment is not valid BPMN: ${message(error)}`;
+        const reason = `the patch could not be applied: ${message(error)}`;
         if (exhausted) giveUp(reason);
         settle(false);
         return failed(reason, { attempt });
@@ -497,7 +540,13 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
         // `await`, so nothing else in this handler can observe a newer graph
         // in between.
         const expectedIndex = store.readMeta().revisions.length;
-        const splice = await checkSplice(deps.getGraph(), fragment, new Set(Object.keys(registry)), harnessIOContract());
+        const splice = await checkSplice(
+          deps.getGraph(),
+          fragment,
+          new Set(Object.keys(registry)),
+          harnessIOContract(),
+          SUPPORTED_ELEMENT_TYPES,
+        );
         if (!splice.ok) return failed(splice.reason ?? "the fragment is not an additive splice");
         // An empty splice.added is a valid additive splice (the model
         // returned the graph it was shown, unchanged) -- but setGraph writes

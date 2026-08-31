@@ -16,6 +16,7 @@ import { CloudElementTemplatesPropertiesProviderModule } from "bpmn-js-element-t
 import ElementTemplateChooserModule from "@bpmn-io/element-template-chooser";
 import ElementTemplateIconRendererModule from "@bpmn-io/element-template-icon-renderer";
 import { ElementTemplatesExtendModule } from "./lib/element-templates-extend";
+import { SupportedElementsRulesModule } from "./lib/supported-elements-rules";
 
 window.BpmnModeler = BpmnModeler;
 window.BpmnJS = BpmnModeler;
@@ -33,3 +34,4 @@ window.ElementTemplatesPropertiesProviderModule = CloudElementTemplatesPropertie
 window.ElementTemplateChooserModule = ElementTemplateChooserModule;
 window.ElementTemplateIconRendererModule = ElementTemplateIconRendererModule;
 window.ElementTemplatesExtendModule = ElementTemplatesExtendModule;
+window.SupportedElementsRulesModule = SupportedElementsRulesModule;

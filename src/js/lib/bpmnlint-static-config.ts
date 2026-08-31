@@ -34,6 +34,8 @@ import subProcessBlankStartEvent from "bpmnlint/rules/sub-process-blank-start-ev
 import superfluousGateway from "bpmnlint/rules/superfluous-gateway";
 import superfluousTermination from "bpmnlint/rules/superfluous-termination";
 
+import { onlySupportedElements } from "./supported-bpmn-elements";
+
 // bpmnlint resolves bare (unprefixed) rule names, as used by
 // `config/recommended`, against the `bpmnlint` package itself, so the
 // StaticResolver cache keys are `rule:bpmnlint/<rule-name>`.
@@ -63,6 +65,13 @@ const resolver = new StaticResolver({
   "rule:bpmnlint/sub-process-blank-start-event": subProcessBlankStartEvent,
   "rule:bpmnlint/superfluous-gateway": superfluousGateway,
   "rule:bpmnlint/superfluous-termination": superfluousTermination,
+  // Not one of bpmnlint's own bundled rules -- see supported-bpmn-elements.ts.
+  // bpmnlint's `Linter.parseRuleName` rewrites a bare "local/x" rule-config
+  // name to pkg "bpmnlint-plugin-local" before asking the resolver for it
+  // (mirroring a real `bpmnlint-plugin-local` npm package), so that's the
+  // cache key it actually looks up here too -- verified directly against a
+  // real editor run; the naive "rule:local/..." key silently never resolves.
+  "rule:bpmnlint-plugin-local/only-supported-elements": onlySupportedElements,
 });
 
 // Shape expected by `bpmn-js-bpmnlint`'s `linting.bpmnlint` option.
@@ -77,6 +86,9 @@ export const recommendedLintConfig = {
       // for why, and any workflows/*.bpmn's gw_*_entry gateways for the
       // merging-exclusive-gateway pattern to use instead.
       "fake-join": "error",
+      // Restricts creatable/importable elements to what this project's runtime
+      // actually supports -- see supported-bpmn-elements.ts.
+      "local/only-supported-elements": "error",
     },
   },
   resolver,

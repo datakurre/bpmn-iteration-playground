@@ -40,8 +40,56 @@ const CONFIG = {
     "fake-join": "error",
     "no-inclusive-gateway": "warn",
     "superfluous-gateway": "warn",
+    // Restricts creatable/importable elements to what this project's runtime
+    // actually supports -- keep in sync with src/js/lib/supported-bpmn-elements.ts
+    // (this script deliberately doesn't import from src/, see the file header).
+    "local/only-supported-elements": "error",
   },
 };
+
+// Mirrors src/js/lib/supported-bpmn-elements.ts's SUPPORTED_ELEMENT_TYPES and
+// onlySupportedElements -- see that file for why the allowlist is what it is.
+const SUPPORTED_ELEMENT_TYPES = new Set([
+  "bpmn:StartEvent",
+  "bpmn:EndEvent",
+  "bpmn:SequenceFlow",
+  "bpmn:ServiceTask",
+  "bpmn:UserTask",
+  "bpmn:ExclusiveGateway",
+  "bpmn:CallActivity",
+  "bpmn:SubProcess",
+]);
+
+function isAny(node, types) {
+  return types.some((type) => (typeof node.$instanceOf === "function" ? node.$instanceOf(type) : node.$type === type));
+}
+
+function onlySupportedElements() {
+  return {
+    check(node, reporter) {
+      if (!isAny(node, ["bpmn:FlowElement", "bpmn:Artifact"])) return;
+      if (SUPPORTED_ELEMENT_TYPES.has(node.$type)) return;
+      reporter.report(
+        node.id,
+        `Element type <${node.$type}> is not supported by this project's runtime -- allowed types are: ${[...SUPPORTED_ELEMENT_TYPES].sort().join(", ")}`,
+      );
+    },
+  };
+}
+
+// See src/agent/bpmn-lint.ts's own withLocalRules for why this wrapper exists:
+// NodeResolver can't resolve a rule that isn't a real npm plugin package.
+function withLocalRules(resolver) {
+  return {
+    resolveRule(pkg, ruleName) {
+      if (pkg === "bpmnlint-plugin-local" && ruleName === "only-supported-elements") return onlySupportedElements;
+      return resolver.resolveRule(pkg, ruleName);
+    },
+    resolveConfig(pkg, configName) {
+      return resolver.resolveConfig(pkg, configName);
+    },
+  };
+}
 
 async function layout(file) {
   const xml = readFileSync(file, "utf8");
@@ -52,7 +100,7 @@ async function layout(file) {
 async function lint(file) {
   const moddle = new BpmnModdle({ zeebe });
   const { rootElement } = await moddle.fromXML(readFileSync(file, "utf8"));
-  const linter = new Linter({ config: CONFIG, resolver: new NodeResolver() });
+  const linter = new Linter({ config: CONFIG, resolver: withLocalRules(new NodeResolver()) });
   const reports = await linter.lint(rootElement);
 
   const lines = [];

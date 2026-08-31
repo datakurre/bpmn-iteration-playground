@@ -109,7 +109,9 @@ describe("running the linked graph (mock harnesses, matching the real contract)"
 
     // lint_exhausted fires on attempt 3 without ever needing a human review --
     // the mock always reports "failed", so craft_rejected ends the callActivity.
-    expect(seen).toEqual(["agent:turn", "graph:layout", "graph:lint"]);
+    // graph:lint now runs before graph:layout (it merges the drafted ops into
+    // a real document first; layout needs a complete document to lay out).
+    expect(seen).toEqual(["agent:turn", "graph:lint", "graph:layout"]);
     expect(waited).toEqual(["await_intent", "await_intent"]);
     expect(result.outcome).toBe("completed");
     // await_intent's answer has to cross the callActivity boundary to reach
@@ -139,9 +141,11 @@ describe("running the linked graph (mock harnesses, matching the real contract)"
           seen.push("graph:layout");
           return ok("laid out", { fragment: context.input.fragment });
         },
-        "graph:lint": async () => {
+        "graph:lint": async (context) => {
           seen.push("graph:lint");
-          return ok("lint result", { status: "success", summary: "looks fine", attempt: 1 });
+          // Matches the real graph:lint harness: on success it republishes
+          // the (here, mock) merged document back onto "fragment".
+          return ok("lint result", { status: "success", summary: "looks fine", attempt: 1, fragment: context.input.fragment });
         },
         "graph:extend": async () => {
           seen.push("graph:extend");
@@ -159,7 +163,8 @@ describe("running the linked graph (mock harnesses, matching the real contract)"
       },
     });
 
-    expect(seen).toEqual(["agent:turn", "graph:layout", "graph:lint", "graph:extend"]);
+    // graph:lint now runs before graph:layout -- see the previous test's comment.
+    expect(seen).toEqual(["agent:turn", "graph:lint", "graph:layout", "graph:extend"]);
     expect(waited).toEqual(["await_intent", "review_fragment", "await_intent"]);
     expect(result.outcome).toBe("completed");
     expect(draftPrompts).toEqual(["add a shell step"]);
@@ -174,7 +179,7 @@ describe("running the linked graph (mock harnesses, matching the real contract)"
     const harnesses: RunnerOptions["harnesses"] = {
       "agent:turn": async (context) => ok("drafted", { text: `for: ${context.input.prompt}` }),
       "graph:layout": async (context) => ok("laid out", { fragment: context.input.fragment }),
-      "graph:lint": async () => ok("lint result", { status: "success", summary: "ok", attempt: 1 }),
+      "graph:lint": async (context) => ok("lint result", { status: "success", summary: "ok", attempt: 1, fragment: context.input.fragment }),
       "graph:extend": async () => ok("extended", { status: "success" }),
     };
     // Shared across both runGraph calls: the first ask (before this park)
@@ -229,7 +234,7 @@ describe("session-craft checks session_done before re-entering craft (issue #72)
           return ok("drafted", { text: `for: ${context.input.prompt}` });
         },
         "graph:layout": async (context) => ok("laid out", { fragment: context.input.fragment }),
-        "graph:lint": async () => ok("lint result", { status: "success", summary: "ok", attempt: 1 }),
+        "graph:lint": async (context) => ok("lint result", { status: "success", summary: "ok", attempt: 1, fragment: context.input.fragment }),
         "graph:extend": async () => ok("extended", { status: "success" }),
       },
       onWait: (activityId) => {
@@ -262,7 +267,7 @@ describe("running craft-graph standalone (issue #22)", () => {
           return ok("drafted", { text: "a fragment" });
         },
         "graph:layout": async (context) => ok("laid out", { fragment: context.input.fragment }),
-        "graph:lint": async () => ok("lint result", { status: "success", summary: "ok", attempt: 1 }),
+        "graph:lint": async (context) => ok("lint result", { status: "success", summary: "ok", attempt: 1, fragment: context.input.fragment }),
         "graph:extend": async () => ok("extended", { status: "success" }),
       },
       onWait: (activityId) => (activityId === "review_fragment" ? { approval: "apply", notes: "" } : undefined),

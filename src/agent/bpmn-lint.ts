@@ -11,6 +11,7 @@ import { BpmnModdle } from "bpmn-moddle";
 import { Linter } from "bpmnlint";
 import NodeResolver from "bpmnlint/lib/resolver/node-resolver.js";
 import { MODDLE_OPTIONS } from "./graph.ts";
+import { onlySupportedElements } from "../js/lib/supported-bpmn-elements.ts";
 
 const CONFIG = {
   extends: "bpmnlint:recommended",
@@ -34,8 +35,33 @@ const CONFIG = {
     "fake-join": "error",
     "no-inclusive-gateway": "warn",
     "superfluous-gateway": "warn",
+    // Restricts creatable/importable elements to what this project's runtime
+    // actually supports -- see supported-bpmn-elements.ts.
+    "local/only-supported-elements": "error",
   },
 };
+
+/**
+ * `NodeResolver` resolves bpmnlint's own bundled rules (and `bpmnlint:recommended`
+ * itself) by `require()`-ing real npm packages -- fine for everything `extends`
+ * pulls in, but our own `local/only-supported-elements` rule isn't a published
+ * plugin package, so `NodeResolver` can't find it (it'd look for a
+ * `bpmnlint-plugin-local` package on disk). Delegate everything else to a real
+ * `NodeResolver` and intercept only this one rule name -- `bpmnlint` resolves a
+ * "local/x" rule name to `pkg: "bpmnlint-plugin-local"` internally
+ * (`bpmnlint/lib/linter.js`'s `parseRuleName`), so that's the pkg this checks for.
+ */
+function withLocalRules(resolver: NodeResolver) {
+  return {
+    resolveRule(pkg: string, ruleName: string): unknown {
+      if (pkg === "bpmnlint-plugin-local" && ruleName === "only-supported-elements") return onlySupportedElements;
+      return resolver.resolveRule(pkg, ruleName);
+    },
+    resolveConfig(pkg: string, configName: string): unknown {
+      return resolver.resolveConfig(pkg, configName);
+    },
+  };
+}
 
 export interface LintReport {
   errors: number;
@@ -45,7 +71,7 @@ export interface LintReport {
 export async function lintBpmn(xml: string): Promise<LintReport> {
   const moddle = new BpmnModdle(MODDLE_OPTIONS);
   const { rootElement } = await moddle.fromXML(xml);
-  const linter = new Linter({ config: CONFIG, resolver: new NodeResolver() });
+  const linter = new Linter({ config: CONFIG, resolver: withLocalRules(new NodeResolver()) });
   const reports = await linter.lint(rootElement);
 
   const lines: string[] = [];

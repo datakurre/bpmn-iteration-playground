@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { Engine } from "bpmn-engine";
 import { EventEmitter } from "node:events";
 import {
+  applyGraphOps,
   checkMigration,
   checkSplice,
   definitionsId,
@@ -15,6 +16,7 @@ import {
   withDefinitionsId,
   type EngineConstructor,
   type EngineState,
+  type GraphOp,
 } from "./graph.ts";
 
 const EngineCtor = Engine as unknown as EngineConstructor;
@@ -449,6 +451,172 @@ describe("elementIds", () => {
 describe("toSourceContext", () => {
   it("keys the context on the definitions id, which recovery matches on", async () => {
     expect((await toSourceContext(v1)).id).toBe("Defs_session");
+  });
+});
+
+describe("checkSplice with an element-type allowlist", () => {
+  const base = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="start" />
+  </bpmn:process>
+</bpmn:definitions>`;
+  const allowed = new Set(["bpmn:StartEvent", "bpmn:SequenceFlow", "bpmn:ServiceTask", "bpmn:EndEvent"]);
+
+  function withGateway(): string {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="start" />
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="gw" />
+    <bpmn:inclusiveGateway id="gw" />
+  </bpmn:process>
+</bpmn:definitions>`;
+  }
+  function withServiceTask(): string {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="start" />
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="t" />
+    <bpmn:serviceTask id="t" />
+  </bpmn:process>
+</bpmn:definitions>`;
+  }
+
+  it("accepts a new element whose type is allowed", async () => {
+    const result = await checkSplice(base, withServiceTask(), undefined, undefined, allowed);
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects a new element whose type is not allowed, naming the allowed set", async () => {
+    const result = await checkSplice(base, withGateway(), undefined, undefined, allowed);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/bpmn:InclusiveGateway/);
+    expect(result.reason).toMatch(/bpmn:ServiceTask/);
+  });
+
+  it("does not check element types when no allowlist is given -- existing callers are unaffected", async () => {
+    const result = await checkSplice(base, withGateway());
+    expect(result.ok).toBe(true);
+  });
+
+  it("does not re-validate an existing element's type -- only newly added ones", async () => {
+    const already = withGateway();
+    const result = await checkSplice(already, already, undefined, undefined, allowed);
+    expect(result.ok).toBe(true);
+  });
+
+  it("checkMigration applies the same allowlist to a genuinely new element", async () => {
+    const result = await checkMigration(base, withGateway(), new Set(), undefined, undefined, allowed);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/bpmn:InclusiveGateway/);
+  });
+});
+
+describe("applyGraphOps", () => {
+  const NS = 'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"';
+  const base = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions ${NS} id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="start" />
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="gate" />
+    <bpmn:userTask id="gate" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+  it("appendShape adds a new node wired from an existing one, reported as additive by checkSplice", async () => {
+    const ops: GraphOp[] = [{ op: "appendShape", type: "bpmn:ServiceTask", id: "run_it", after: "gate" }];
+    const merged = await applyGraphOps(base, ops);
+    const result = await checkSplice(base, merged);
+    expect(result.ok).toBe(true);
+    expect(result.removed).toEqual([]);
+    expect(result.added.sort()).toEqual(["Flow_ops_1", "run_it"]);
+  });
+
+  it("setTaskDefinition wires zeebe:taskDefinition/ioMapping onto a node created earlier in the same batch", async () => {
+    const ops: GraphOp[] = [
+      { op: "appendShape", type: "bpmn:ServiceTask", id: "run_it", after: "gate" },
+      {
+        op: "setTaskDefinition",
+        id: "run_it",
+        jobType: "shell",
+        headers: { command: "npm test" },
+        outputs: [{ source: "=exit_code", target: "rc" }],
+      },
+    ];
+    const merged = await applyGraphOps(base, ops);
+    expect(merged).toContain('<zeebe:taskDefinition type="shell"');
+    expect(merged).toContain('key="command"');
+    expect(merged).toContain('target="rc"');
+    const result = await checkSplice(base, merged, new Set(["shell"]));
+    expect(result.ok).toBe(true);
+  });
+
+  it("insertShape splices a step into an existing flow, keeping the flow's own id", async () => {
+    const ops: GraphOp[] = [{ op: "insertShape", type: "bpmn:ServiceTask", id: "mid", into: "f1" }];
+    const merged = await applyGraphOps(base, ops);
+    const result = await checkSplice(base, merged);
+    expect(result.ok).toBe(true);
+    expect(result.removed).toEqual([]);
+    // f1 (start -> mid) keeps its id; only the new node and the new
+    // mid -> gate flow are genuinely additive.
+    expect(result.added.sort()).toEqual(["Flow_ops_1", "mid"]);
+    expect(merged).toMatch(/<bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="mid"/);
+  });
+
+  it("connect wires two nodes created earlier in the same op list", async () => {
+    const ops: GraphOp[] = [
+      { op: "appendShape", type: "bpmn:ExclusiveGateway", id: "gw", after: "gate" },
+      { op: "appendShape", type: "bpmn:EndEvent", id: "a_end", after: "gw" },
+      { op: "connect", from: "gw", to: "a_end", id: "extra_flow" },
+    ];
+    const merged = await applyGraphOps(base, ops);
+    const result = await checkSplice(base, merged);
+    expect(result.ok).toBe(true);
+    // appendShape wires its own connecting flow each time (Flow_ops_1 for gw,
+    // Flow_ops_2 for a_end); "connect" adds one more, explicitly-named, flow
+    // between the two on top of that.
+    expect(result.added.sort()).toEqual(["Flow_ops_1", "Flow_ops_2", "a_end", "extra_flow", "gw"]);
+  });
+
+  it("createProcess + insertShape(CallActivity) adds a sibling process reachable by calledElement", async () => {
+    const ops: GraphOp[] = [
+      { op: "createProcess", id: "sub_graph" },
+      { op: "insertShape", type: "bpmn:CallActivity", id: "call_sub", into: "f1", calledElement: "sub_graph" },
+    ];
+    const merged = await applyGraphOps(base, ops);
+    expect(merged).toContain('<bpmn:process id="sub_graph"');
+    expect(merged).toContain('isExecutable="false"');
+    expect(merged).toMatch(/<bpmn:callActivity id="call_sub"[^>]*calledElement="sub_graph"/);
+    const result = await checkSplice(base, merged);
+    expect(result.ok).toBe(true);
+    expect(result.added).toContain("sub_graph");
+    expect(result.added).toContain("call_sub");
+  });
+
+  it("throws a clear error for an unknown target id", async () => {
+    await expect(applyGraphOps(base, [{ op: "appendShape", type: "bpmn:ServiceTask", id: "x", after: "nope" }])).rejects.toThrow(
+      /unknown element id 'nope'/,
+    );
+  });
+
+  it("throws a clear error for an unsupported type", async () => {
+    await expect(
+      applyGraphOps(base, [{ op: "appendShape", type: "bpmn:InclusiveGateway", id: "x", after: "gate" }]),
+    ).rejects.toThrow(/not supported/);
+  });
+
+  it("throws a clear error when insertShape targets something other than a sequenceFlow", async () => {
+    await expect(applyGraphOps(base, [{ op: "insertShape", type: "bpmn:ServiceTask", id: "x", into: "gate" }])).rejects.toThrow(
+      /is not a sequenceFlow/,
+    );
+  });
+
+  it("throws a clear error for a duplicate id", async () => {
+    await expect(applyGraphOps(base, [{ op: "appendShape", type: "bpmn:ServiceTask", id: "gate", after: "start" }])).rejects.toThrow(
+      /already exists/,
+    );
   });
 });
 

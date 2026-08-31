@@ -10,6 +10,7 @@ import * as elements from "bpmn-elements";
 import { Serializer, TypeResolver } from "moddle-context-serializer";
 import zeebeDescriptor from "zeebe-bpmn-moddle/resources/zeebe.json" with { type: "json" };
 import { activityProperties, harnessOf, ioMapping, type ActivityLike } from "./zeebe.ts";
+import { SUPPORTED_ELEMENT_TYPES } from "../js/lib/supported-bpmn-elements.ts";
 
 export const MODDLE_OPTIONS = { zeebe: zeebeDescriptor };
 
@@ -179,6 +180,243 @@ export async function withProcessId(xml: string, id: string): Promise<string> {
   return serialized;
 }
 
+/**
+ * The op language `graph_architect` drafts instead of a whole document --
+ * see `AGENT_ROLES.graph_architect` (`src/agent/harnesses.ts`) for the
+ * prompt that documents these to the model, and the header comment on
+ * `applyGraphOps` below for how each one maps onto bpmn-js's own Modeling
+ * API primitives (`createShape`/`appendShape`/`insertShape`/`connect`).
+ */
+export type GraphOp =
+  | { op: "createProcess"; id: string; name?: string }
+  | {
+      op: "appendShape";
+      type: string;
+      id: string;
+      after: string;
+      name?: string;
+      process?: string;
+      /** Only meaningful when `type` is `bpmn:CallActivity`. */
+      calledElement?: string;
+    }
+  | {
+      op: "insertShape";
+      type: string;
+      id: string;
+      into: string;
+      name?: string;
+      process?: string;
+      calledElement?: string;
+    }
+  | { op: "connect"; from: string; to: string; id?: string; condition?: string; process?: string }
+  | {
+      op: "setTaskDefinition";
+      id: string;
+      jobType: string;
+      headers?: Record<string, string>;
+      inputs?: { source: string; target: string }[];
+      outputs?: { source: string; target: string }[];
+    }
+  | { op: "setDocumentation"; id: string; text: string };
+
+/** Builds a `zeebe:ExtensionElements` value list the same shape every workflows/*.bpmn hand-writes. */
+function zeebeTaskDefinitionValues(
+  moddle: BpmnModdle,
+  op: Extract<GraphOp, { op: "setTaskDefinition" }>,
+): unknown[] {
+  const values: unknown[] = [moddle.create("zeebe:TaskDefinition", { type: op.jobType })];
+  if (op.headers && Object.keys(op.headers).length > 0) {
+    values.push(
+      moddle.create("zeebe:TaskHeaders", {
+        values: Object.entries(op.headers).map(([key, value]) => moddle.create("zeebe:Header", { key, value })),
+      }),
+    );
+  }
+  if ((op.inputs?.length ?? 0) > 0 || (op.outputs?.length ?? 0) > 0) {
+    values.push(
+      moddle.create("zeebe:IoMapping", {
+        inputParameters: (op.inputs ?? []).map((i) => moddle.create("zeebe:Input", { source: i.source, target: i.target })),
+        outputParameters: (op.outputs ?? []).map((o) =>
+          moddle.create("zeebe:Output", { source: o.source, target: o.target }),
+        ),
+      }),
+    );
+  }
+  return values;
+}
+
+/**
+ * Applies a small ops list to the current graph and returns the resulting
+ * *complete* document -- headlessly mirroring what bpmn-js itself does live
+ * in the editor when a person uses the palette to append or insert a shape.
+ *
+ * bpmn-js's `BpmnFactory.create()` (`bpmn-js/lib/features/modeling/BpmnFactory.js`)
+ * is exactly `this._model.create(type, attrs)` -- a moddle object, nothing
+ * more -- and `BpmnUpdater.updateSemanticParent`/`updateConnection`
+ * (`bpmn-js/lib/features/modeling/BpmnUpdater.js`) wire it in by pushing that
+ * object into the parent's `flowElements` array and assigning
+ * `sourceRef`/`targetRef` by direct object reference, maintaining
+ * `incoming`/`outgoing` alongside. Every op below does the same thing against
+ * a parsed-but-not-live moddle tree instead of a rendered diagram.
+ *
+ * Every op only ever adds a moddle object, or (`insertShape`) retargets an
+ * *existing* sequence flow's `targetRef` while keeping its id -- so the
+ * "additive with stable ids" invariant `checkSplice` enforces holds by
+ * construction, and nothing about `checkSplice`/`checkMigration` needs to
+ * change to validate the result.
+ */
+export async function applyGraphOps(currentXml: string, ops: GraphOp[]): Promise<string> {
+  const moddle = new BpmnModdle(MODDLE_OPTIONS);
+  const { rootElement, elementsById } = await moddle.fromXML(currentXml.trim());
+  const mainProcess = executableProcess(rootElement) as unknown as ModdleFlowElement | undefined;
+  if (!mainProcess) throw new Error("current graph has no executable <bpmn:process>");
+
+  const create = (type: string, attrs: Record<string, unknown> = {}): ModdleFlowElement =>
+    moddle.create(type, attrs) as unknown as ModdleFlowElement;
+
+  const processesById = new Map<string, ModdleFlowElement>([[mainProcess.id, mainProcess]]);
+  const registry = new Map<string, ModdleFlowElement>(Object.entries(elementsById) as unknown as [string, ModdleFlowElement][]);
+
+  const resolve = (id: string, opIndex: number): ModdleFlowElement => {
+    const el = registry.get(id);
+    if (!el) throw new Error(`op ${opIndex}: unknown element id '${id}'`);
+    return el;
+  };
+  const processFor = (processId: string | undefined, opIndex: number): ModdleFlowElement => {
+    if (!processId) return mainProcess;
+    const process = processesById.get(processId);
+    if (!process) throw new Error(`op ${opIndex}: unknown process '${processId}' -- add it first with "createProcess"`);
+    return process;
+  };
+  const requireSupportedType = (type: string, opIndex: number): void => {
+    if (!SUPPORTED_ELEMENT_TYPES.has(type)) {
+      const valid = [...SUPPORTED_ELEMENT_TYPES].sort().join(", ");
+      throw new Error(`op ${opIndex}: type '${type}' is not supported -- allowed types are: ${valid}`);
+    }
+  };
+  const requireNewId = (id: string, opIndex: number): void => {
+    if (registry.has(id)) throw new Error(`op ${opIndex}: id '${id}' already exists`);
+  };
+  const attach = (process: ModdleFlowElement, el: ModdleFlowElement): void => {
+    const flowElements = (process.flowElements as ModdleFlowElement[] | undefined) ?? [];
+    flowElements.push(el);
+    process.flowElements = flowElements;
+    el.$parent = process;
+    registry.set(el.id, el);
+  };
+  let flowCounter = 0;
+  const freshFlowId = (): string => {
+    let id: string;
+    do {
+      flowCounter += 1;
+      id = `Flow_ops_${flowCounter}`;
+    } while (registry.has(id));
+    return id;
+  };
+  const connectNodes = (
+    process: ModdleFlowElement,
+    source: ModdleFlowElement,
+    target: ModdleFlowElement,
+    id: string | undefined,
+    extra: Record<string, unknown> = {},
+  ): ModdleFlowElement => {
+    const flow = create("bpmn:SequenceFlow", { id: id ?? freshFlowId(), sourceRef: source, targetRef: target, ...extra });
+    attach(process, flow);
+    const outgoing = (source.outgoing as ModdleFlowElement[] | undefined) ?? [];
+    outgoing.push(flow);
+    source.outgoing = outgoing;
+    const incoming = (target.incoming as ModdleFlowElement[] | undefined) ?? [];
+    incoming.push(flow);
+    target.incoming = incoming;
+    return flow;
+  };
+
+  ops.forEach((raw, opIndex) => {
+    switch (raw.op) {
+      case "createProcess": {
+        requireNewId(raw.id, opIndex);
+        const proc = create("bpmn:Process", { id: raw.id, name: raw.name, isExecutable: false, flowElements: [] });
+        proc.$parent = rootElement;
+        (rootElement.rootElements as unknown[]).push(proc);
+        processesById.set(raw.id, proc);
+        registry.set(raw.id, proc);
+        break;
+      }
+      case "appendShape": {
+        requireSupportedType(raw.type, opIndex);
+        requireNewId(raw.id, opIndex);
+        const process = processFor(raw.process, opIndex);
+        const source = resolve(raw.after, opIndex);
+        const shape = create(raw.type, {
+          id: raw.id,
+          name: raw.name,
+          ...(raw.calledElement ? { calledElement: raw.calledElement } : {}),
+        });
+        attach(process, shape);
+        connectNodes(process, source, shape, undefined);
+        break;
+      }
+      case "insertShape": {
+        requireSupportedType(raw.type, opIndex);
+        requireNewId(raw.id, opIndex);
+        const process = processFor(raw.process, opIndex);
+        const flow = resolve(raw.into, opIndex);
+        if (flow.$type !== "bpmn:SequenceFlow") throw new Error(`op ${opIndex}: '${raw.into}' is not a sequenceFlow`);
+        const shape = create(raw.type, {
+          id: raw.id,
+          name: raw.name,
+          ...(raw.calledElement ? { calledElement: raw.calledElement } : {}),
+        });
+        attach(process, shape);
+        const oldTarget = flow.targetRef as ModdleFlowElement;
+        flow.targetRef = shape;
+        const oldIncoming = (oldTarget.incoming as ModdleFlowElement[] | undefined) ?? [];
+        const flowIndex = oldIncoming.indexOf(flow);
+        if (flowIndex !== -1) oldIncoming.splice(flowIndex, 1);
+        const shapeIncoming = (shape.incoming as ModdleFlowElement[] | undefined) ?? [];
+        shapeIncoming.push(flow);
+        shape.incoming = shapeIncoming;
+        connectNodes(process, shape, oldTarget, undefined);
+        break;
+      }
+      case "connect": {
+        const process = processFor(raw.process, opIndex);
+        const source = resolve(raw.from, opIndex);
+        const target = resolve(raw.to, opIndex);
+        if (raw.id) requireNewId(raw.id, opIndex);
+        const extra: Record<string, unknown> = raw.condition
+          ? { conditionExpression: create("bpmn:FormalExpression", { body: raw.condition }) }
+          : {};
+        connectNodes(process, source, target, raw.id, extra);
+        break;
+      }
+      case "setTaskDefinition": {
+        const el = resolve(raw.id, opIndex);
+        const values = zeebeTaskDefinitionValues(moddle, raw);
+        const existing = el.extensionElements as { values?: unknown[] } | undefined;
+        if (existing) {
+          existing.values = [...(existing.values ?? []), ...values];
+        } else {
+          el.extensionElements = create("bpmn:ExtensionElements", { values });
+        }
+        break;
+      }
+      case "setDocumentation": {
+        const el = resolve(raw.id, opIndex);
+        el.documentation = [create("bpmn:Documentation", { text: raw.text })];
+        break;
+      }
+      default: {
+        const unknownOp = raw as unknown as { op: string };
+        throw new Error(`op ${opIndex}: unknown op '${unknownOp.op}'`);
+      }
+    }
+  });
+
+  const { xml } = await moddle.toXML(rootElement, { format: true });
+  return xml;
+}
+
 export interface SpliceCheck {
   ok: boolean;
   added: string[];
@@ -336,11 +574,43 @@ async function checkJobTypes(
   return { ok: true };
 }
 
+/**
+ * Rejects a *new* flow element (one in `addedIds`) whose `$type` isn't in
+ * `allowedTypes` -- the same "only check what's genuinely new" shape
+ * `checkJobTypes` already follows, applied to the element allowlist
+ * (`src/js/lib/supported-bpmn-elements.ts`'s `SUPPORTED_ELEMENT_TYPES`)
+ * instead of the job-type registry. Shared by `checkSplice`/`checkMigration`,
+ * both via an optional trailing parameter -- omitting it leaves existing
+ * callers unaffected, same convention as `knownJobTypes`/`harnessIO`.
+ */
+async function checkElementTypes(
+  nextXml: string,
+  addedIds: ReadonlySet<string>,
+  allowedTypes: ReadonlySet<string>,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const moddle = new BpmnModdle(MODDLE_OPTIONS);
+  const { rootElement } = await moddle.fromXML(nextXml.trim());
+  const processes = ((rootElement as unknown as { rootElements?: ModdleFlowElement[] }).rootElements ?? []).filter(
+    (node) => node.$type === "bpmn:Process",
+  );
+  const all = processes.flatMap((process) => flattenFlowElements(process.flowElements));
+  for (const el of all) {
+    if (!addedIds.has(el.id) || allowedTypes.has(el.$type)) continue;
+    const valid = [...allowedTypes].sort().join(", ");
+    return {
+      ok: false,
+      reason: `${el.id} has type '${el.$type}', which is not supported -- allowed types are: ${valid}`,
+    };
+  }
+  return { ok: true };
+}
+
 export async function checkSplice(
   previousXml: string,
   nextXml: string,
   knownJobTypes?: ReadonlySet<string>,
   harnessIO?: Record<string, HarnessIOContract>,
+  allowedElementTypes?: ReadonlySet<string>,
 ): Promise<SpliceCheck> {
   const before = await elementIds(previousXml);
   const after = await elementIds(nextXml);
@@ -357,6 +627,10 @@ export async function checkSplice(
   if (knownJobTypes) {
     const jobTypes = await checkJobTypes(nextXml, new Set(added), knownJobTypes, harnessIO);
     if (!jobTypes.ok) return { ok: false, added, removed, reason: jobTypes.reason };
+  }
+  if (allowedElementTypes) {
+    const types = await checkElementTypes(nextXml, new Set(added), allowedElementTypes);
+    if (!types.ok) return { ok: false, added, removed, reason: types.reason };
   }
   return { ok: true, added, removed };
 }
@@ -435,6 +709,7 @@ export async function checkMigration(
   live: ReadonlySet<string>,
   knownJobTypes?: ReadonlySet<string>,
   harnessIO?: Record<string, HarnessIOContract>,
+  allowedElementTypes?: ReadonlySet<string>,
 ): Promise<MigrationCheck> {
   if ((await definitionsId(previousXml)) !== (await definitionsId(nextXml))) {
     return {
@@ -457,10 +732,16 @@ export async function checkMigration(
     };
   }
 
+  const added = new Set([...after].filter((id) => !before.has(id)));
+
   if (knownJobTypes) {
-    const added = new Set([...after].filter((id) => !before.has(id)));
     const jobTypes = await checkJobTypes(nextXml, added, knownJobTypes, harnessIO);
     if (!jobTypes.ok) return { ok: false, removed: [], reason: jobTypes.reason };
+  }
+
+  if (allowedElementTypes) {
+    const types = await checkElementTypes(nextXml, added, allowedElementTypes);
+    if (!types.ok) return { ok: false, removed: [], reason: types.reason };
   }
 
   return { ok: true, removed: [] };
