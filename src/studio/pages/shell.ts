@@ -11,16 +11,25 @@ export async function mountShell(active: "project" | "session" | "graph"): Promi
   updateThemeIcons();
   initMobileMenu();
 
+  const links = ["project", "graph"].map((page) => {
+    const href = page === "project" ? "/" : "/graph";
+    const label = page === "project" ? "Sessions" : "Graphs";
+    const on = active === page || (active === "session" && page === "project");
+    return `<a href="${href}" class="nav-link${on ? " active" : ""}">${label}</a>`;
+  });
+
   const host = $("shell-nav");
   if (host) {
-    host.innerHTML = ["project", "graph"]
-      .map((page) => {
-        const href = page === "project" ? "/" : "/graph";
-        const label = page === "project" ? "Sessions" : "Graphs";
-        const on = active === page || (active === "session" && page === "project");
-        return `<a href="${href}" class="nav-link${on ? " active" : ""}">${label}</a>`;
-      })
-      .join("");
+    host.innerHTML = [
+      ...links,
+      `<button onclick="toggleTheme()" class="btn btn-secondary text-xs px-2 py-1 ml-1" title="Toggle light/dark theme"><span class="theme-toggle-icon">&#9728;</span></button>`,
+    ].join("");
+    updateThemeIcons();
+  }
+
+  const mobileHost = $("mobile-menu");
+  if (mobileHost) {
+    mobileHost.innerHTML = links.join("");
   }
 
   try {

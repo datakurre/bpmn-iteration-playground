@@ -117,13 +117,13 @@ try {
   if (consoleErrors.length) failures.push(`console errors: ${consoleErrors.join(" | ")}`);
   if (missingResources.length) failures.push(`unresolved resources: ${missingResources.join(" | ")}`);
 
-  // 6. the session page's editor (issue #46): a completed shell-demo run has
-  // both "turn" and "verify" as live (visited) elements; entering edit mode
-  // should lock them visually, and saving a mutation that removes one of them
+  // 6. the session page's editor (issue #46, issue #70): a parked session-skeleton run has
+  // live state on await_intent; entering edit mode
+  // should lock it visually, and saving a mutation that removes it
   // should be rejected by the server rather than silently accepted.
   const runOutput = spawnSync(
     process.execPath,
-    [join(import.meta.dirname, "..", "dist", "graph-agent.js"), "run", "--graph", "shell-demo", "--dry-run"],
+    [join(import.meta.dirname, "..", "dist", "graph-agent.js"), "run", "--graph", "session-skeleton", "--dry-run"],
     { cwd: root, env, encoding: "utf8" },
   ).stdout;
   const sessionId = /^session (\S+)/m.exec(runOutput ?? "")?.[1];
@@ -135,14 +135,15 @@ try {
     await page.click("#edit-btn");
     await page.waitForSelector("#editor .djs-container svg", { timeout: 20000 });
 
+    await page.waitForSelector("#editor .djs-element.ga-locked", { timeout: 20000 });
     const lockedCount = await page.locator("#editor .djs-element.ga-locked").count();
-    if (lockedCount < 2) failures.push(`expected both live elements marked ga-locked, saw ${lockedCount}`);
+    if (lockedCount < 1) failures.push(`expected live elements marked ga-locked, saw ${lockedCount}`);
 
     // Delete a live element and try to save -- the server must reject it.
     await page.evaluate(() => {
       const modeler = window.__modeler;
       const registry = modeler.get("elementRegistry");
-      modeler.get("modeling").removeElements([registry.get("turn")]);
+      modeler.get("modeling").removeElements([registry.get("await_intent")]);
     });
     await page.click("#save-btn");
     await page.waitForSelector("#edit-msg:not(.hidden)", { timeout: 10000 });

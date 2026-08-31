@@ -67,9 +67,9 @@ const AGENT_ROLES: Record<string, string> = {
     "onto a new task.\n" +
     '  {"op":"setDocumentation","id":"<id>","text":"..."}\n' +
     '  {"op":"attachBoundaryEvent","id":"...","attachedTo":"<existing activity ' +
-    'id>","eventDefinitionType":"bpmn:TimerEventDefinition"|"bpmn:ErrorEventDefinition",' +
-    '"timerDuration":"<ISO-8601 duration, timers only>","cancelActivity":true|false} -- ' +
-    "attaches a timeout or error handler to an existing activity (default " +
+    'id>","eventDefinitionType":"bpmn:TimerEventDefinition"|"bpmn:ErrorEventDefinition"|"bpmn:ConditionalEventDefinition",' +
+    '"timerDuration":"<ISO-8601 duration, timers only>","condition":"<Camunda 8 FEEL expression like =_session.total_cost >= 0.01, conditional events only>","cancelActivity":true|false} -- ' +
+    "attaches a timeout, condition (such as cost limit), or error handler to an existing activity (default " +
     'cancelActivity true, interrupting). It has no incoming flow of its own -- ' +
     'route where it goes next with a separate "connect" op naming it as "from".\n\n' +
     '`appendShape`/`insertShape` accept an optional "process":"<id>" ' +

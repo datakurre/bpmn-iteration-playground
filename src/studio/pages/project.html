@@ -20,13 +20,14 @@
       <p id="project-path" class="text-muted text-[11px] font-mono truncate hidden sm:block"></p>
     </div>
     <nav id="shell-nav" class="hidden md:flex items-center gap-1.5 shrink-0"></nav>
-    <div class="md:hidden flex items-center gap-2 shrink-0">
+    <div class="md:hidden flex items-center gap-2 shrink-0 relative">
       <button onclick="toggleTheme()" class="btn btn-secondary text-xs px-2 py-1" title="Toggle light/dark theme">
         <span class="theme-toggle-icon">&#9728;</span>
       </button>
       <button id="mobile-menu-btn" class="p-2 rounded-md bg-panel border border-line text-ink" aria-label="Toggle menu">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
       </button>
+      <div id="mobile-menu" class="hidden absolute right-0 top-full mt-2 w-40 bg-panel border border-line rounded-lg shadow-xl p-1.5 z-50 flex flex-col gap-1"></div>
     </div>
   </header>
 
