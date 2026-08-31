@@ -17,18 +17,18 @@
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in
     {
-      packages = forAllSystems (
-        pkgs:
+      overlays.default =
+        final: prev:
         let
-          inherit (pkgs) lib importNpmLock;
-          nodejs = pkgs.nodejs_22;
+          inherit (final) lib importNpmLock;
+          nodejs = final.nodejs_22;
 
           # `importNpmLock` resolves every dependency straight from package-lock.json
           # integrity hashes, so none of these derivations needs an `npmDepsHash`
           # that could only be produced by running Nix.
           mkNpm =
             args:
-            pkgs.buildNpmPackage (
+            final.buildNpmPackage (
               {
                 inherit nodejs;
                 npmDeps = importNpmLock { npmRoot = args.src; };
@@ -37,22 +37,23 @@
               }
               // args
             );
-
+        in
+        {
           graph-agent = mkNpm {
             pname = "graph-agent";
             version = "0.1.0";
             src = ./.;
             dontNpmInstall = false;
-            nativeBuildInputs = [ pkgs.makeWrapper ];
+            nativeBuildInputs = [ final.makeWrapper ];
 
             postInstall = ''
               wrapProgram $out/bin/graph-agent \
                 --prefix PATH : ${
                   lib.makeBinPath [
-                    pkgs.git
-                    pkgs.coreutils
-                    pkgs.jq
-                    pkgs.curl
+                    final.git
+                    final.coreutils
+                    final.jq
+                    final.curl
                   ]
                 }
             '';
@@ -63,21 +64,34 @@
               license = lib.licenses.mit;
             };
           };
+        };
+
+      packages = forAllSystems (
+        pkgs:
+        let
+          pkgs' = pkgs.extend self.overlays.default;
+        in
+        {
+          inherit (pkgs') graph-agent;
+          default = pkgs'.graph-agent;
+        }
+      );
+
+      # `nix run .` starts the agent; `nix run . -- studio` opens the BPMN studio.
+      # One CLI, studio is a subcommand.
+      apps = forAllSystems (
+        pkgs:
+        let
+          graph-agent = {
+            type = "app";
+            program = "${self.packages.${pkgs.stdenv.hostPlatform.system}.graph-agent}/bin/graph-agent";
+          };
         in
         {
           inherit graph-agent;
           default = graph-agent;
         }
       );
-
-      # `nix run .` starts the agent; `nix run . -- studio` opens the BPMN studio.
-      # One CLI, studio is a subcommand.
-      apps = forAllSystems (pkgs: {
-        default = {
-          type = "app";
-          program = "${self.packages.${pkgs.stdenv.hostPlatform.system}.graph-agent}/bin/graph-agent";
-        };
-      });
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
