@@ -99,27 +99,47 @@ describe("CLI reporting and exporting", () => {
     expect(md).toContain("spliced flake builder");
   });
 
-  it("generateHtmlReport produces valid HTML document with embedded SVG and metrics", async () => {
-    const html = await generateHtmlReport(sampleDetail);
+  it("generateHtmlReport produces valid HTML document with embedded PNG data URI", async () => {
+    const html = await generateHtmlReport(sampleDetail, { imageFormat: "png" });
     expect(html).toContain("<!doctype html>");
-    expect(html).toContain("<svg");
+    expect(html).toContain('src="data:image/png;base64,');
     expect(html).toContain("Total Cost");
     expect(html).toContain("$0.0073");
     expect(html).toContain("implement_flake");
   });
 
-  it("cmdExport exports a .bpmn file to SVG", async () => {
-    const outFile = resolve(__dirname, "../../scratch-test-export.svg");
+  it("generateHtmlReport produces valid HTML document with raw SVG if requested", async () => {
+    const html = await generateHtmlReport(sampleDetail, { imageFormat: "raw-svg" });
+    expect(html).toContain("<!doctype html>");
+    expect(html).toContain("<svg");
+    expect(html).toContain("Total Cost");
+  });
+
+  it("cmdExport exports a .bpmn file to SVG and PNG", async () => {
+    const outSvg = resolve(__dirname, "../../scratch-test-export.svg");
+    const outPng = resolve(__dirname, "../../scratch-test-export.png");
     const bpmnFile = resolve(__dirname, "../../workflows/shell-demo.bpmn");
     try {
-      const code = await cmdExport(bpmnFile, { out: outFile });
-      expect(code).toBe(0);
-      expect(existsSync(outFile)).toBe(true);
-      const svg = readFileSync(outFile, "utf-8");
+      const codeSvg = await cmdExport(bpmnFile, { out: outSvg });
+      expect(codeSvg).toBe(0);
+      expect(existsSync(outSvg)).toBe(true);
+      const svg = readFileSync(outSvg, "utf-8");
       expect(svg).toContain("<svg");
       expect(svg).toContain("turn");
+
+      const codePng = await cmdExport(bpmnFile, { out: outPng, format: "png" });
+      expect(codePng).toBe(0);
+      expect(existsSync(outPng)).toBe(true);
+      const png = readFileSync(outPng);
+      expect(png.length).toBeGreaterThan(100);
+      // PNG magic number check
+      expect(png[0]).toBe(0x89);
+      expect(png[1]).toBe(0x50);
+      expect(png[2]).toBe(0x4e);
+      expect(png[3]).toBe(0x47);
     } finally {
-      if (existsSync(outFile)) unlinkSync(outFile);
+      if (existsSync(outSvg)) unlinkSync(outSvg);
+      if (existsSync(outPng)) unlinkSync(outPng);
     }
   });
 });

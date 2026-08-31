@@ -135,6 +135,9 @@ export async function main(argv: string[]): Promise<number> {
           format: { type: "string" },
           out: { type: "string" },
           "embed-svg": { type: "boolean" },
+          "embed-data-uri": { type: "boolean" },
+          "image-format": { type: "string" },
+          scale: { type: "string" },
         },
         allowPositionals: true,
       });
@@ -143,20 +146,29 @@ export async function main(argv: string[]): Promise<number> {
         format: parsed.values.format,
         out: parsed.values.out,
         embedSvg: parsed.values["embed-svg"],
+        embedDataUri: parsed.values["embed-data-uri"],
+        imageFormat: parsed.values["image-format"] as "png" | "svg" | "raw-svg" | undefined,
+        scale: parsed.values.scale ? parseFloat(parsed.values.scale) : undefined,
       });
     }
     case "export": {
       const parsed = parseArgs({
         args: argv.slice(1),
         options: {
+          format: { type: "string" },
           out: { type: "string" },
+          "data-uri": { type: "boolean" },
+          scale: { type: "string" },
           background: { type: "string" },
         },
         allowPositionals: true,
       });
       const { cmdExport } = await import("./report.ts");
       return cmdExport(parsed.positionals[0], {
+        format: parsed.values.format as "png" | "svg" | undefined,
         out: parsed.values.out,
+        dataUri: parsed.values["data-uri"],
+        scale: parsed.values.scale ? parseFloat(parsed.values.scale) : undefined,
         background: parsed.values.background,
       });
     }

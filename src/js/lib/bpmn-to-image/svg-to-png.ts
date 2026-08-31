@@ -10,12 +10,15 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { createRequire } from 'node:module';
+
+const req = createRequire(import.meta.url);
 
 let ResvgClass: any = null;
 function getResvgClass() {
   if (ResvgClass) return ResvgClass;
   try {
-    const mod = require('@resvg/resvg-js');
+    const mod = req('@resvg/resvg-js');
     ResvgClass = mod.Resvg;
     return ResvgClass;
   } catch {
@@ -116,8 +119,8 @@ function collectFontFiles(dir: string): string[] {
  * properly installed package).
  */
 export function getBundledFontDir(): string | null {
-  // When running from source: __dirname is src/, fonts/ is a sibling
-  const fromSrc = path.resolve(__dirname, '..', 'fonts');
+  const dir = import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname);
+  const fromSrc = path.resolve(dir, '..', 'fonts');
   if (fs.existsSync(fromSrc) && fs.statSync(fromSrc).isDirectory()) return fromSrc;
 
   return null;

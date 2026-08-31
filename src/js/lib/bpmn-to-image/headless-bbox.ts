@@ -288,7 +288,7 @@ function parseTransformTranslation(attr: string | null): { tx: number; ty: numbe
   return { tx: 0, ty: 0 };
 }
 
-import { parseSvgPathBBox } from './headless-path';
+import { parseSvgPathBBox } from './headless-path.ts';
 
 // ── getBBox polyfill ───────────────────────────────────────────────────────
 

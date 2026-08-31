@@ -2,11 +2,18 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { renderToSvg, renderSessionSvg } from './render';
-import type { SessionDetail } from '../../../studio/types';
+import {
+  renderToSvg,
+  renderSessionSvg,
+  renderToPng,
+  renderSessionPng,
+  renderToPngDataUri,
+  renderSessionPngDataUri,
+} from './render.ts';
+import type { SessionDetail } from '../../../studio/types.ts';
 
 describe('bpmn-to-image headless rendering', () => {
-  it('renders a workflow diagram headlessly to clean SVG', async () => {
+  it('renders a workflow diagram headlessly to clean SVG and PNG', async () => {
     const xml = readFileSync(resolve(__dirname, '../../../../workflows/pi-default-loop.bpmn'), 'utf-8');
     const svg = await renderToSvg(xml);
 
@@ -15,9 +22,16 @@ describe('bpmn-to-image headless rendering', () => {
     expect(svg).toContain('viewBox=');
     expect(svg).toContain('</svg>');
     expect(svg).toContain('llm_turn');
+
+    const png = await renderToPng(xml);
+    expect(Buffer.isBuffer(png)).toBe(true);
+    expect(png.length).toBeGreaterThan(100);
+
+    const uri = await renderToPngDataUri(xml);
+    expect(uri.startsWith('data:image/png;base64,')).toBe(true);
   });
 
-  it('renders a session diagram with visited highlights and activity cost badges', async () => {
+  it('renders a session diagram with visited highlights and activity cost badges to PNG data URI', async () => {
     const xml = readFileSync(resolve(__dirname, '../../../../workflows/session-craft.bpmn'), 'utf-8');
     const mockDetail: SessionDetail = {
       id: 'test-session-123',
@@ -47,10 +61,12 @@ describe('bpmn-to-image headless rendering', () => {
     };
 
     const svg = await renderSessionSvg(mockDetail, { showCostBadges: true });
-
     expect(svg).toContain('<svg');
     expect(svg).toContain('ga-visited');
     expect(svg).toContain('$0.0031');
+
+    const pngUri = await renderSessionPngDataUri(mockDetail, { showCostBadges: true });
+    expect(pngUri.startsWith('data:image/png;base64,')).toBe(true);
   });
 
   it('renders session-default.bpmn and shell-demo.bpmn', async () => {

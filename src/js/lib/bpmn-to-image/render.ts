@@ -2,8 +2,8 @@
  * Public rendering API: BPMN 2.0 XML → SVG / PNG.
  */
 
-import { createModelerFromXml, type CreateModelerOptions } from './modeler';
-import { svgToPng, tightenSvgViewBox } from './svg-to-png';
+import { createModelerFromXml, type CreateModelerOptions } from './modeler.ts';
+import { svgToPng, tightenSvgViewBox } from './svg-to-png.ts';
 
 export interface RenderOptions extends CreateModelerOptions {
   /** Background color (CSS color string, e.g. "white", "#FFFFFF"). Default: undefined (transparent). */
@@ -15,7 +15,7 @@ export interface RenderToPngOptions extends RenderOptions {
   scale?: number;
 }
 
-import type { SessionDetail } from '../../../studio/types';
+import type { SessionDetail } from '../../../studio/types.ts';
 
 /**
  * Render BPMN 2.0 XML to an SVG string.
@@ -129,4 +129,53 @@ export async function renderSessionSvg(
 export async function renderToPng(xml: string, options: RenderToPngOptions = {}): Promise<Buffer> {
   const svg = await renderToSvg(xml, options);
   return svgToPng(svg, { scale: options.scale, background: options.background });
+}
+
+/**
+ * Render a session's execution diagram to a PNG buffer with highlights and cost badges.
+ */
+export async function renderSessionPng(
+  detail: SessionDetail,
+  options: RenderToPngOptions & { showCostBadges?: boolean } = {}
+): Promise<Buffer> {
+  const svg = await renderSessionSvg(detail, options);
+  return svgToPng(svg, { scale: options.scale ?? 2, background: options.background });
+}
+
+/**
+ * Render BPMN XML to a base64 PNG data URI (`data:image/png;base64,...`).
+ */
+export async function renderToPngDataUri(xml: string, options: RenderToPngOptions = {}): Promise<string> {
+  const png = await renderToPng(xml, options);
+  return `data:image/png;base64,${png.toString('base64')}`;
+}
+
+/**
+ * Render a session execution diagram to a base64 PNG data URI (`data:image/png;base64,...`).
+ */
+export async function renderSessionPngDataUri(
+  detail: SessionDetail,
+  options: RenderToPngOptions & { showCostBadges?: boolean } = {}
+): Promise<string> {
+  const png = await renderSessionPng(detail, options);
+  return `data:image/png;base64,${png.toString('base64')}`;
+}
+
+/**
+ * Render BPMN XML to a base64 SVG data URI (`data:image/svg+xml;base64,...`).
+ */
+export async function renderToSvgDataUri(xml: string, options: RenderOptions = {}): Promise<string> {
+  const svg = await renderToSvg(xml, options);
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
+}
+
+/**
+ * Render a session execution diagram to a base64 SVG data URI (`data:image/svg+xml;base64,...`).
+ */
+export async function renderSessionSvgDataUri(
+  detail: SessionDetail,
+  options: RenderOptions & { showCostBadges?: boolean } = {}
+): Promise<string> {
+  const svg = await renderSessionSvg(detail, options);
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
 }

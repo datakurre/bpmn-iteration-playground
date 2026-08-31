@@ -12,7 +12,7 @@
 import { JSDOM } from 'jsdom';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
-import { applyPolyfills } from './headless-polyfills';
+import { applyPolyfills } from './headless-polyfills.ts';
 
 const req = createRequire(import.meta.url);
 

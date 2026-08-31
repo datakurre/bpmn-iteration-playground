@@ -13,13 +13,13 @@
  * The getBBox/getComputedTextLength implementations live in `./headless-bbox.ts`.
  */
 
-import { polyfillGetBBox, polyfillGetComputedTextLength } from './headless-bbox';
-import { applyCanvasPolyfills } from './headless-canvas-2d';
+import { polyfillGetBBox, polyfillGetComputedTextLength } from './headless-bbox.ts';
+import { applyCanvasPolyfills } from './headless-canvas-2d.ts';
 import {
   getPointAtLengthOnPolyline,
   getPolylineLength,
   parseSvgPolylinePoints,
-} from './headless-path';
+} from './headless-path.ts';
 
 // ── SVGTransform polyfill ──────────────────────────────────────────────────
 

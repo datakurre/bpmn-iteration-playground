@@ -7,7 +7,7 @@
  */
 
 import camundaModdle from 'camunda-bpmn-moddle/resources/camunda.json' with { type: 'json' };
-import { createHeadlessCanvas, getBpmnModeler } from './headless-canvas';
+import { createHeadlessCanvas, getBpmnModeler } from './headless-canvas.ts';
 
 /** Moddle extensions registered on every modeler instance by default. */
 const DEFAULT_MODDLE_EXTENSIONS = { camunda: camundaModdle };

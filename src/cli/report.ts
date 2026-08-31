@@ -1,7 +1,16 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import type { SessionDetail, TurnRecord } from "../studio/types.ts";
-import { renderSessionSvg, renderToSvg } from "../js/lib/bpmn-to-image/render.ts";
+import {
+  renderSessionSvg,
+  renderToSvg,
+  renderSessionPng,
+  renderToPng,
+  renderSessionPngDataUri,
+  renderSessionSvgDataUri,
+  renderToPngDataUri,
+  renderToSvgDataUri,
+} from "../js/lib/bpmn-to-image/render.ts";
 import { SessionStore } from "../agent/session-store.ts";
 import { requirePaths } from "./main.ts";
 
@@ -63,7 +72,7 @@ function formatTokens(n: number): string {
 
 export async function generateMarkdownReport(
   detail: SessionDetail,
-  options: { embedSvg?: boolean } = {}
+  options: { embedSvg?: boolean; embedDataUri?: boolean; imageFormat?: "png" | "svg"; scale?: number } = {}
 ): Promise<string> {
   const stats = detail.stats;
   const activities = computeActivitySummaries(detail.turns);
@@ -71,11 +80,23 @@ export async function generateMarkdownReport(
   const totalTokens = stats?.totalTokens ? formatTokens(stats.totalTokens) : "0";
   const cacheHit = stats?.cacheHitRatio !== undefined ? `${Math.round(stats.cacheHitRatio * 100)}%` : "0%";
 
-  let svgSection = "";
-  if (options.embedSvg) {
+  let diagramSection = "";
+  if (options.embedDataUri) {
+    try {
+      if (options.imageFormat === "svg") {
+        const svgUri = await renderSessionSvgDataUri(detail, { showCostBadges: true, background: "#ffffff" });
+        diagramSection = `\n## Execution Diagram\n\n![Execution Diagram](${svgUri})\n`;
+      } else {
+        const pngUri = await renderSessionPngDataUri(detail, { scale: options.scale ?? 2, showCostBadges: true, background: "#ffffff" });
+        diagramSection = `\n## Execution Diagram\n\n![Execution Diagram](${pngUri})\n`;
+      }
+    } catch {
+      // Best effort fallback
+    }
+  } else if (options.embedSvg) {
     try {
       const svg = await renderSessionSvg(detail, { showCostBadges: true, background: "#ffffff" });
-      svgSection = `\n## Execution Diagram\n\n\`\`\`xml\n${svg}\n\`\`\`\n`;
+      diagramSection = `\n## Execution Diagram\n\n\`\`\`xml\n${svg}\n\`\`\`\n`;
     } catch {
       // Best effort
     }
@@ -115,7 +136,7 @@ export async function generateMarkdownReport(
 - **Turns**: ${detail.turnCount}
 - **Total Tokens**: ${totalTokens} (${cacheHit} cache hit)
 - **Project**: \`${detail.project}\`
-${svgSection}
+${diagramSection}
 ## Activity Breakdown
 
 ${activityTable}
@@ -125,17 +146,42 @@ ${turnLog}${revisionsLog}
 `;
 }
 
-export async function generateHtmlReport(detail: SessionDetail): Promise<string> {
-  const md = await generateMarkdownReport(detail, { embedSvg: false });
-  const svg = await renderSessionSvg(detail, { showCostBadges: true, background: "#ffffff" });
+export async function generateHtmlReport(
+  detail: SessionDetail,
+  options: { imageFormat?: "png" | "svg" | "raw-svg"; scale?: number } = {}
+): Promise<string> {
+  const format = options.imageFormat || "png";
+  let diagramHtml = "";
+
+  try {
+    if (format === "png") {
+      const pngDataUri = await renderSessionPngDataUri(detail, {
+        scale: options.scale ?? 2,
+        showCostBadges: true,
+        background: "#ffffff",
+      });
+      diagramHtml = `<img src="${pngDataUri}" alt="Execution Diagram" style="max-width: 100%; height: auto; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);" />`;
+    } else if (format === "svg") {
+      const svgDataUri = await renderSessionSvgDataUri(detail, {
+        showCostBadges: true,
+        background: "#ffffff",
+      });
+      diagramHtml = `<img src="${svgDataUri}" alt="Execution Diagram" style="max-width: 100%; height: auto; border-radius: 4px;" />`;
+    } else {
+      const svg = await renderSessionSvg(detail, { showCostBadges: true, background: "#ffffff" });
+      diagramHtml = svg;
+    }
+  } catch {
+    diagramHtml = `<p class="text-muted">Diagram preview unavailable.</p>`;
+  }
 
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Session Report - ${detail.id}</title>
+  <title>Session Report - ${detail.name || detail.id}</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 2rem; background: #fafafa; color: #1e293b; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 2rem; background: #fafafa; color: #1e293b; line-height: 1.5; }
     .card { background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
     .metrics { display: flex; gap: 1.5rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
     .metric-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 1rem 1.5rem; min-width: 140px; }
@@ -144,11 +190,12 @@ export async function generateHtmlReport(detail: SessionDetail): Promise<string>
     table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: 0.875rem; }
     th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #e2e8f0; }
     th { background: #f8fafc; font-weight: 600; color: #475569; }
-    .diagram-container { overflow-x: auto; background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem; text-align: center; }
+    .diagram-container { overflow-x: auto; background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1.5rem; text-align: center; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8em; background: #f1f5f9; padding: 0.15em 0.3em; border-radius: 3px; }
   </style>
 </head>
 <body>
-  <h1>Session Report: ${detail.id}</h1>
+  <h1>Session Report: ${detail.name || detail.id}</h1>
   <div class="metrics">
     <div class="metric-box"><div class="metric-val">${detail.status}</div><div class="metric-lbl">Status</div></div>
     <div class="metric-box"><div class="metric-val">${formatCost(detail.stats?.totalCostUSD || 0)}</div><div class="metric-lbl">Total Cost</div></div>
@@ -160,7 +207,7 @@ export async function generateHtmlReport(detail: SessionDetail): Promise<string>
   <div class="card">
     <h2>Execution Diagram</h2>
     <div class="diagram-container">
-      ${svg}
+      ${diagramHtml}
     </div>
   </div>
 
@@ -191,7 +238,14 @@ export async function generateHtmlReport(detail: SessionDetail): Promise<string>
 
 export async function cmdReport(
   id: string | undefined,
-  flags: { format?: string; out?: string; embedSvg?: boolean }
+  flags: {
+    format?: string;
+    out?: string;
+    embedSvg?: boolean;
+    embedDataUri?: boolean;
+    imageFormat?: "png" | "svg" | "raw-svg";
+    scale?: number;
+  }
 ): Promise<number> {
   const p = requirePaths();
   if (!p) return 1;
@@ -211,9 +265,17 @@ export async function cmdReport(
   if (format === "json") {
     output = JSON.stringify(detail, null, 2);
   } else if (format === "html") {
-    output = await generateHtmlReport(detail);
+    output = await generateHtmlReport(detail, {
+      imageFormat: flags.imageFormat || "png",
+      scale: flags.scale,
+    });
   } else {
-    output = await generateMarkdownReport(detail, { embedSvg: flags.embedSvg });
+    output = await generateMarkdownReport(detail, {
+      embedSvg: flags.embedSvg,
+      embedDataUri: flags.embedDataUri,
+      imageFormat: flags.imageFormat === "svg" ? "svg" : "png",
+      scale: flags.scale,
+    });
   }
 
   if (flags.out) {
@@ -229,35 +291,92 @@ export async function cmdReport(
 
 export async function cmdExport(
   target: string | undefined,
-  flags: { out?: string; background?: string }
+  flags: {
+    out?: string;
+    format?: "png" | "svg";
+    dataUri?: boolean;
+    scale?: number;
+    background?: string;
+  }
 ): Promise<number> {
   if (!target) {
     process.stderr.write("graph-agent: export requires a session id or .bpmn file path\n");
     return 2;
   }
 
-  let svg = "";
+  // Infer format from flags.format or file extension in flags.out
+  const format = flags.format || (flags.out?.endsWith(".png") ? "png" : "svg");
   const p = requirePaths();
-  if (p && new SessionStore(p, target).exists()) {
-    const detail = new SessionStore(p, target).detail();
-    svg = await renderSessionSvg(detail, { showCostBadges: true, background: flags.background });
-  } else {
-    const { readFileSync, existsSync } = await import("node:fs");
-    if (!existsSync(target)) {
-      process.stderr.write(`graph-agent: cannot find session or file '${target}'\n`);
-      return 1;
+  const isSession = p && new SessionStore(p, target).exists();
+
+  let dataBuffer: Buffer | string = "";
+  if (format === "png") {
+    if (flags.dataUri) {
+      dataBuffer = isSession
+        ? await renderSessionPngDataUri(new SessionStore(p!, target).detail(), {
+            scale: flags.scale ?? 2,
+            showCostBadges: true,
+            background: flags.background ?? "#ffffff",
+          })
+        : await renderToPngDataUri(
+            await (async () => {
+              const { readFileSync } = await import("node:fs");
+              return readFileSync(target, "utf-8");
+            })(),
+            { scale: flags.scale ?? 2, background: flags.background ?? "#ffffff" }
+          );
+    } else {
+      dataBuffer = isSession
+        ? await renderSessionPng(new SessionStore(p!, target).detail(), {
+            scale: flags.scale ?? 2,
+            showCostBadges: true,
+            background: flags.background ?? "#ffffff",
+          })
+        : await renderToPng(
+            await (async () => {
+              const { readFileSync } = await import("node:fs");
+              return readFileSync(target, "utf-8");
+            })(),
+            { scale: flags.scale ?? 2, background: flags.background ?? "#ffffff" }
+          );
     }
-    const xml = readFileSync(target, "utf-8");
-    svg = await renderToSvg(xml, { background: flags.background });
+  } else {
+    if (flags.dataUri) {
+      dataBuffer = isSession
+        ? await renderSessionSvgDataUri(new SessionStore(p!, target).detail(), {
+            showCostBadges: true,
+            background: flags.background,
+          })
+        : await renderToSvgDataUri(
+            await (async () => {
+              const { readFileSync } = await import("node:fs");
+              return readFileSync(target, "utf-8");
+            })(),
+            { background: flags.background }
+          );
+    } else {
+      dataBuffer = isSession
+        ? await renderSessionSvg(new SessionStore(p!, target).detail(), {
+            showCostBadges: true,
+            background: flags.background,
+          })
+        : await renderToSvg(
+            await (async () => {
+              const { readFileSync } = await import("node:fs");
+              return readFileSync(target, "utf-8");
+            })(),
+            { background: flags.background }
+          );
+    }
   }
 
   if (flags.out) {
     const targetPath = resolve(flags.out);
     mkdirSync(dirname(targetPath), { recursive: true });
-    writeFileSync(targetPath, svg);
+    writeFileSync(targetPath, dataBuffer);
     process.stdout.write(`exported diagram to ${flags.out}\n`);
   } else {
-    process.stdout.write(svg);
+    process.stdout.write(typeof dataBuffer === "string" ? dataBuffer : dataBuffer.toString("utf-8"));
   }
   return 0;
 }

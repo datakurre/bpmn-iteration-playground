@@ -21,7 +21,7 @@
  * upstream wrapping loop converges exactly as it would in a real browser.
  */
 
-import { measureTextWidth } from './headless-bbox';
+import { measureTextWidth } from './headless-bbox.ts';
 
 interface FakeTextMetrics {
   width: number;
