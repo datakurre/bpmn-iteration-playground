@@ -1,0 +1,45 @@
+[
+  {
+    "$schema": "https://unpkg.com/@camunda/zeebe-element-templates-json-schema/resources/schema.json",
+    "name": "Cost Limit Boundary Event",
+    "id": "graph-agent.cost-limit-boundary-event",
+    "version": 1,
+    "description": "Attaches to an activity or sub-process and interrupts execution when cumulative session cost exceeds a threshold.",
+    "category": {
+      "id": "graph-agent.events",
+      "name": "Boundary events"
+    },
+    "appliesTo": [
+      "bpmn:BoundaryEvent"
+    ],
+    "elementType": {
+      "value": "bpmn:BoundaryEvent",
+      "eventDefinitionType": "bpmn:ConditionalEventDefinition"
+    },
+    "properties": [
+      {
+        "label": "Interrupting",
+        "description": "Whether to cancel the host activity when the cost limit is reached.",
+        "type": "Boolean",
+        "value": true,
+        "binding": {
+          "type": "property",
+          "name": "cancelActivity"
+        }
+      },
+      {
+        "label": "Cost condition (FEEL)",
+        "description": "FEEL condition expression evaluated against _session.total_cost (e.g. =_session.total_cost >= 0.50).",
+        "type": "String",
+        "value": "=_session.total_cost >= 0.50",
+        "constraints": {
+          "notEmpty": true
+        },
+        "binding": {
+          "type": "property",
+          "name": "condition"
+        }
+      }
+    ]
+  }
+]

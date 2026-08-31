@@ -114,9 +114,14 @@ describe("onlySupportedElements", () => {
     expect(reports).toHaveLength(1);
   });
 
-  it("SUPPORTED_EVENT_DEFINITIONS is scoped to Terminate/Timer/Error", () => {
+  it("SUPPORTED_EVENT_DEFINITIONS is scoped to Terminate/Timer/Error/Conditional", () => {
     expect([...SUPPORTED_EVENT_DEFINITIONS].sort()).toEqual(
-      ["bpmn:ErrorEventDefinition", "bpmn:TerminateEventDefinition", "bpmn:TimerEventDefinition"].sort(),
+      [
+        "bpmn:ConditionalEventDefinition",
+        "bpmn:ErrorEventDefinition",
+        "bpmn:TerminateEventDefinition",
+        "bpmn:TimerEventDefinition",
+      ].sort(),
     );
   });
 });

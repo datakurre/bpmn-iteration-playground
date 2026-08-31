@@ -466,4 +466,93 @@ describe("a callActivity's own zeebe:output (issue #66)", () => {
     expect((result.variables._session as any).total_cost).toBe(0.06);
     expect((result.variables._session as any).turn_count).toBe(1);
   });
+
+  it("interrupts a host subprocess when cost limit is breached", async () => {
+    const costBoundaryXml = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions ${DEFS}>
+  <process id="p_boundary" isExecutable="true">
+    <startEvent id="start" />
+    <sequenceFlow id="f1" sourceRef="start" targetRef="sub" />
+    <subProcess id="sub">
+      <startEvent id="sub_start" />
+      <sequenceFlow id="sf1" sourceRef="sub_start" targetRef="gate" />
+      <userTask id="gate" name="Human Gate" />
+      <sequenceFlow id="sf2" sourceRef="gate" targetRef="sub_end" />
+      <endEvent id="sub_end" />
+    </subProcess>
+    <boundaryEvent id="cost_breach" attachedToRef="sub" cancelActivity="true">
+      <conditionalEventDefinition>
+        <condition xsi:type="tFormalExpression">=_session.total_cost &gt;= 0.05</condition>
+      </conditionalEventDefinition>
+    </boundaryEvent>
+    <sequenceFlow id="f_normal" sourceRef="sub" targetRef="end_normal" />
+    <sequenceFlow id="f_breach" sourceRef="cost_breach" targetRef="end_breach" />
+    <endEvent id="end_normal" />
+    <endEvent id="end_breach" />
+  </process>
+</definitions>`;
+
+    const visited = new Set<string>();
+    const result = await runGraph(costBoundaryXml, {
+      harnesses: {},
+      variables: { _session: { total_cost: 0.10 } },
+      onTokens: (_tokens, v) => v.forEach((id) => visited.add(id)),
+    });
+
+    expect(result.outcome).toBe("completed");
+    expect(visited.has("cost_breach")).toBe(true);
+    expect(visited.has("end_breach")).toBe(true);
+    expect(visited.has("gate")).toBe(false);
+    expect(visited.has("end_normal")).toBe(false);
+  });
+
+  it("remains dormant on a host subprocess when cost is under limit", async () => {
+    const costBoundaryXml = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions ${DEFS}>
+  <process id="p_boundary" isExecutable="true">
+    <startEvent id="start" />
+    <sequenceFlow id="f1" sourceRef="start" targetRef="sub" />
+    <subProcess id="sub">
+      <startEvent id="sub_start" />
+      <sequenceFlow id="sf1" sourceRef="sub_start" targetRef="turn" />
+      <serviceTask id="turn">
+        <extensionElements>
+          <zeebe:taskDefinition type="agent:turn" />
+        </extensionElements>
+      </serviceTask>
+      <sequenceFlow id="sf2" sourceRef="turn" targetRef="sub_end" />
+      <endEvent id="sub_end" />
+    </subProcess>
+    <boundaryEvent id="cost_breach" attachedToRef="sub" cancelActivity="true">
+      <conditionalEventDefinition>
+        <condition xsi:type="tFormalExpression">=_session.total_cost &gt;= 0.05</condition>
+      </conditionalEventDefinition>
+    </boundaryEvent>
+    <sequenceFlow id="f_normal" sourceRef="sub" targetRef="end_normal" />
+    <sequenceFlow id="f_breach" sourceRef="cost_breach" targetRef="end_breach" />
+    <endEvent id="end_normal" />
+    <endEvent id="end_breach" />
+  </process>
+</definitions>`;
+
+    const visited = new Set<string>();
+    const harness: Harness = async () =>
+      ok("done turn", {
+        usage: {
+          input: 100,
+          output: 50,
+          cost: { input: 0.001, output: 0.001, cacheRead: 0, cacheWrite: 0, total: 0.002 },
+        },
+      });
+
+    const result = await runGraph(costBoundaryXml, {
+      harnesses: { "agent:turn": harness },
+      onTokens: (_tokens, v) => v.forEach((id) => visited.add(id)),
+    });
+
+    expect(result.outcome).toBe("completed");
+    expect(visited.has("turn")).toBe(true);
+    expect(visited.has("end_normal")).toBe(true);
+    expect(visited.has("end_breach")).toBe(false);
+  });
 });

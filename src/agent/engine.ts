@@ -212,6 +212,7 @@ function makeExtension(
       .environment;
 
     environment.output._session = { ...sessionStats };
+    environment.variables._session = { ...sessionStats };
 
     activity.behaviour.Service = function HarnessService() {
       return {
@@ -278,6 +279,7 @@ function makeExtension(
                   }
                   environment.output._session = { ...sessionStats };
                   sharedOutput._session = { ...sessionStats };
+                  environment.variables._session = { ...sessionStats };
                 }
               }
 
@@ -443,18 +445,28 @@ async function drive(
     dispatchedAnything = true;
   });
 
+  const waitingConditionals = new Map<string, { signal?: (message?: unknown) => void }>();
+
   let stoppedForSplice = false;
   listener.on("activity.end", (api: { id: string; content?: { output?: unknown } }) => {
     visited.add(api.id);
     waiting.delete(api.id);
+    waitingConditionals.delete(api.id);
     applyUnharnessedOutput(byId.get(api.id), api.content?.output, sharedOutput);
+    for (const [, condApi] of waitingConditionals) {
+      try {
+        condApi.signal?.();
+      } catch {
+        // Best effort
+      }
+    }
     void options.onTokens?.(currentTokens(), [...visited]);
     if (options.checkStopAfterActivity?.()) {
       stoppedForSplice = true;
       void engine.stop();
     }
   });
-  listener.on("activity.wait", (api: { id: string; signal?: (message?: unknown) => void }) => {
+  listener.on("activity.wait", (api: { id: string; type?: string; signal?: (message?: unknown) => void }) => {
     // A resumed run can reach this without ever firing "activity.start" first
     // -- bpmn-elements re-announces an activity that was already parked when
     // the snapshot was taken, rather than starting it again -- so relying on
@@ -466,6 +478,15 @@ async function drive(
     dispatchedAnything = true;
     waiting.add(api.id);
     void options.onTokens?.(currentTokens(), [...visited]);
+
+    // Background event definitions (conditional/timer) wait for their condition or timer to fire,
+    // rather than parking for an interactive human answer.
+    if (api.type === "bpmn:ConditionalEventDefinition" || api.type === "bpmn:TimerEventDefinition") {
+      if (api.type === "bpmn:ConditionalEventDefinition") {
+        waitingConditionals.set(api.id, api);
+      }
+      return;
+    }
 
     const answer = options.onWait?.(api.id);
     if (answer === undefined) {

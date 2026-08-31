@@ -202,6 +202,8 @@ export type GraphOp =
       eventDefinitionType?: string;
       /** ISO-8601 duration; only meaningful with eventDefinitionType "bpmn:TimerEventDefinition". */
       timerDuration?: string;
+      /** Condition expression; meaningful with eventDefinitionType "bpmn:ConditionalEventDefinition". */
+      condition?: string;
     }
   | {
       op: "insertShape";
@@ -213,6 +215,7 @@ export type GraphOp =
       calledElement?: string;
       eventDefinitionType?: string;
       timerDuration?: string;
+      condition?: string;
     }
   | { op: "connect"; from: string; to: string; id?: string; condition?: string; process?: string }
   | {
@@ -235,9 +238,11 @@ export type GraphOp =
       op: "attachBoundaryEvent";
       id: string;
       attachedTo: string;
-      eventDefinitionType: "bpmn:TimerEventDefinition" | "bpmn:ErrorEventDefinition";
+      eventDefinitionType: "bpmn:TimerEventDefinition" | "bpmn:ErrorEventDefinition" | "bpmn:ConditionalEventDefinition";
       /** Required with eventDefinitionType "bpmn:TimerEventDefinition". */
       timerDuration?: string;
+      /** Required with eventDefinitionType "bpmn:ConditionalEventDefinition". */
+      condition?: string;
       /** Interrupting (the host activity is cancelled when this fires) -- default true. */
       cancelActivity?: boolean;
       process?: string;
@@ -269,14 +274,18 @@ function zeebeTaskDefinitionValues(
   return values;
 }
 
-/** A boundary event only ever makes sense with an actual timeout or error to catch. */
-const BOUNDARY_EVENT_DEFINITIONS: ReadonlySet<string> = new Set(["bpmn:TimerEventDefinition", "bpmn:ErrorEventDefinition"]);
+/** A boundary event only ever makes sense with an actual timeout, condition, or error to catch. */
+const BOUNDARY_EVENT_DEFINITIONS: ReadonlySet<string> = new Set([
+  "bpmn:TimerEventDefinition",
+  "bpmn:ErrorEventDefinition",
+  "bpmn:ConditionalEventDefinition",
+]);
 
 /**
  * Builds a `bpmn:TerminateEventDefinition`/`bpmn:TimerEventDefinition`/
- * `bpmn:ErrorEventDefinition` moddle object for an `eventDefinitionType`
- * field on `appendShape`/`insertShape`/`attachBoundaryEvent`. `allowed`
- * lets `attachBoundaryEvent` restrict to Timer/Error only (Terminate makes
+ * `bpmn:ErrorEventDefinition`/`bpmn:ConditionalEventDefinition` moddle object
+ * for an `eventDefinitionType` field on `appendShape`/`insertShape`/`attachBoundaryEvent`.
+ * `allowed` lets `attachBoundaryEvent` restrict to Timer/Error/Conditional (Terminate makes
  * no sense on a boundary event) while `appendShape`/`insertShape` allow the
  * full `SUPPORTED_EVENT_DEFINITIONS` set.
  *
@@ -289,6 +298,7 @@ function buildEventDefinition(
   moddle: BpmnModdle,
   type: string,
   timerDuration: string | undefined,
+  condition: string | undefined,
   opIndex: number,
   allowed: ReadonlySet<string> = SUPPORTED_EVENT_DEFINITIONS,
 ): unknown {
@@ -299,6 +309,10 @@ function buildEventDefinition(
   if (type === "bpmn:TimerEventDefinition") {
     if (!timerDuration) throw new Error(`op ${opIndex}: 'bpmn:TimerEventDefinition' needs a 'timerDuration'`);
     return moddle.create(type, { timeDuration: moddle.create("bpmn:FormalExpression", { body: timerDuration }) });
+  }
+  if (type === "bpmn:ConditionalEventDefinition") {
+    if (!condition) throw new Error(`op ${opIndex}: 'bpmn:ConditionalEventDefinition' needs a 'condition'`);
+    return moddle.create(type, { condition: moddle.create("bpmn:FormalExpression", { body: condition }) });
   }
   return moddle.create(type, {});
 }
@@ -410,7 +424,7 @@ export async function applyGraphOps(currentXml: string, ops: GraphOp[]): Promise
           name: raw.name,
           ...(raw.calledElement ? { calledElement: raw.calledElement } : {}),
           ...(raw.eventDefinitionType
-            ? { eventDefinitions: [buildEventDefinition(moddle, raw.eventDefinitionType, raw.timerDuration, opIndex)] }
+            ? { eventDefinitions: [buildEventDefinition(moddle, raw.eventDefinitionType, raw.timerDuration, raw.condition, opIndex)] }
             : {}),
         });
         attach(process, shape);
@@ -428,7 +442,7 @@ export async function applyGraphOps(currentXml: string, ops: GraphOp[]): Promise
           name: raw.name,
           ...(raw.calledElement ? { calledElement: raw.calledElement } : {}),
           ...(raw.eventDefinitionType
-            ? { eventDefinitions: [buildEventDefinition(moddle, raw.eventDefinitionType, raw.timerDuration, opIndex)] }
+            ? { eventDefinitions: [buildEventDefinition(moddle, raw.eventDefinitionType, raw.timerDuration, raw.condition, opIndex)] }
             : {}),
         });
         attach(process, shape);
@@ -479,6 +493,7 @@ export async function applyGraphOps(currentXml: string, ops: GraphOp[]): Promise
           moddle,
           raw.eventDefinitionType,
           raw.timerDuration,
+          raw.condition,
           opIndex,
           BOUNDARY_EVENT_DEFINITIONS,
         );

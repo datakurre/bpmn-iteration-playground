@@ -644,6 +644,39 @@ describe("applyGraphOps", () => {
     expect(result.added).toEqual(expect.arrayContaining(["timeout1", "timed_out"]));
   });
 
+  it("attachBoundaryEvent(conditional) attaches a cost limit condition to an activity", async () => {
+    const ops: GraphOp[] = [
+      {
+        op: "attachBoundaryEvent",
+        id: "cost_breached",
+        attachedTo: "gate",
+        eventDefinitionType: "bpmn:ConditionalEventDefinition",
+        condition: "=_session.total_cost >= 0.50",
+      },
+      { op: "appendShape", type: "bpmn:EndEvent", id: "cost_stop", after: "cost_breached" },
+    ];
+    const merged = await applyGraphOps(base, ops);
+    expect(merged).toMatch(/<bpmn:boundaryEvent id="cost_breached" attachedToRef="gate"/);
+    expect(merged).toContain("<bpmn:conditionalEventDefinition");
+    expect(merged).toContain("=_session.total_cost &gt;= 0.50");
+    const result = await checkSplice(base, merged);
+    expect(result.ok).toBe(true);
+    expect(result.added).toEqual(expect.arrayContaining(["cost_breached", "cost_stop"]));
+  });
+
+  it("a conditional boundary event without condition is rejected", async () => {
+    await expect(
+      applyGraphOps(base, [
+        {
+          op: "attachBoundaryEvent",
+          id: "c1",
+          attachedTo: "gate",
+          eventDefinitionType: "bpmn:ConditionalEventDefinition",
+        },
+      ]),
+    ).rejects.toThrow(/needs a 'condition'/);
+  });
+
   it("attachBoundaryEvent(error) defaults to interrupting (cancelActivity's own BPMN default, so moddle omits the attribute)", async () => {
     const ops: GraphOp[] = [
       { op: "attachBoundaryEvent", id: "err1", attachedTo: "gate", eventDefinitionType: "bpmn:ErrorEventDefinition" },

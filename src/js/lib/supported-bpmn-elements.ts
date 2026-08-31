@@ -37,6 +37,7 @@ export const SUPPORTED_EVENT_DEFINITIONS: ReadonlySet<string> = new Set([
   "bpmn:TerminateEventDefinition",
   "bpmn:TimerEventDefinition",
   "bpmn:ErrorEventDefinition",
+  "bpmn:ConditionalEventDefinition",
 ]);
 
 interface BpmnlintEventDefinition {
