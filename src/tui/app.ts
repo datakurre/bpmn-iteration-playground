@@ -22,24 +22,23 @@ import type { ToolExecutor } from "../agent/tool-executor.ts";
 import { formFields } from "./form-fields.ts";
 import {
   assistantMessageComponent,
+  CombinedAutocompleteProvider,
   Container,
+  DynamicBorder,
   Editor,
+  getSelectListTheme,
+  streamingAssistantComponent,
   Text,
   toolTranscriptEntry,
   TuiMainScreen,
+  userMessageComponent,
   type Component,
+  type EditorTheme,
+  type StreamingAssistantEntry,
   type Terminal,
   type ToolTranscriptEntry,
 } from "./pi-bridge.ts";
 
-/**
- * What the TUI attaches to: a fresh session from a graph, or an existing one
- * to reattach to -- the only two entry points `runSession`/`resumeSession`
- * themselves offer. Everything downstream of the run (the transcript, the
- * trail, the status strip, the gate wizard) is driven by callbacks both
- * already provide identically, so this discriminant is the only place the
- * two paths actually diverge (issue #67).
- */
 export type TuiStart =
   | {
       kind: "run";
@@ -67,14 +66,6 @@ export interface TuiAppOptions {
   coerceValue?: (raw: string) => unknown;
   /** How many trailing activities the trail shows. */
   trailSize?: number;
-  /**
-   * Test seam: called once the editor and layout exist, before the run
-   * starts. `root.render(width)` gives a smoke test the same lines a real
-   * terminal would see, and `editor.onSubmit` lets it "type" an answer
-   * without simulating raw terminal escape sequences -- those belong to
-   * pi-tui's own `Editor`, not to anything this project owns or should
-   * re-test (issue #50).
-   */
   onReady?: (handles: TuiHandles) => void;
 }
 
@@ -92,42 +83,51 @@ interface GateWizard {
   resolve: (payload: Record<string, unknown> | undefined) => void;
 }
 
-const RULE = "─".repeat(60);
-
-/** Runs `graph-agent tui` end to end and resolves once the session settles (an end event, or a genuine stop). */
+/** Runs `graph-agent tui` end to end and resolves once the session settles. */
 export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> {
   const sessionId = options.start.kind === "resume" ? options.start.sessionId : randomUUID().slice(0, 8);
   const store = new SessionStore(options.paths, sessionId);
   const coerce = options.coerceValue ?? ((raw: string) => raw);
   const trailSize = options.trailSize ?? 5;
-  // A resumed session already exists on disk, with its own graph id recorded
-  // at runSession time (issue #73) -- read it back rather than showing the
-  // literal placeholder "(resumed)", falling back to that placeholder only
-  // for a session old enough to predate the field.
   const graphLabel =
-    options.start.kind === "run" ? options.start.graphLabel : (store.exists() ? store.readMeta().graph : undefined) ?? "(resumed)";
+    options.start.kind === "run"
+      ? options.start.graphLabel
+      : (store.exists() ? store.readMeta().graph : undefined) ?? "(resumed)";
 
   const tui = new TuiMainScreen(options.terminal);
   const transcript = new Container();
   const trailText = new Text("");
   const gateText = new Text("");
   const statusText = new Text("");
-  const editorTheme = {
+
+  const selectListTheme = getSelectListTheme();
+  const editorTheme: EditorTheme = {
     borderColor: (text: string) => text,
-    selectList: {
-      selectedPrefix: (text: string) => text,
-      selectedText: (text: string) => text,
-      description: (text: string) => text,
-      scrollInfo: (text: string) => text,
-      noMatch: (text: string) => text,
-    },
+    selectList: selectListTheme,
   };
   const editor = new Editor(tui, editorTheme);
+
+  const autocompleteProvider = new CombinedAutocompleteProvider(
+    [
+      { name: "model", description: "view active model" },
+      { name: "graph", description: "view active graph workflow details" },
+      { name: "sessions", description: "list recent sessions" },
+      { name: "studio", description: "launch or open studio in browser" },
+      { name: "steer", description: "queue a steering message before next turn", argumentHint: "<text>" },
+      { name: "follow", description: "queue a follow-up message when agent finishes", argumentHint: "<text>" },
+      { name: "clear", description: "clear current transcript screen" },
+      { name: "help", description: "show help and keybindings" },
+      { name: "exit", description: "quit the session" },
+    ],
+    options.project,
+  );
+  editor.setAutocompleteProvider(autocompleteProvider);
+
   const root = new Container();
   root.addChild(transcript);
-  root.addChild(new Text(RULE));
+  root.addChild(new DynamicBorder());
   root.addChild(trailText);
-  root.addChild(new Text(RULE));
+  root.addChild(new DynamicBorder());
   root.addChild(gateText);
   root.addChild(editor);
   root.addChild(statusText);
@@ -137,7 +137,7 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
   const trail: string[] = [];
   let activeGate: GateWizard | undefined;
 
-  function refreshStatus(): void {
+  function refreshStatus(state: "running" | "idle" | "waiting" = "running"): void {
     if (!store.exists()) {
       statusText.setText(`graph ${graphLabel} · model ${options.modelLabel} · session ${sessionId} · starting…`);
       tui.requestRender();
@@ -152,8 +152,10 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
       { input: 0, cacheRead: 0 },
     );
     const at = meta.tokens.length > 0 ? meta.tokens.join(", ") : "-";
+    const statePrefix = state === "idle" ? "idle · " : state === "waiting" ? "waiting · " : "";
+    const cacheHit = usage.input > 0 ? ` (${Math.round((usage.cacheRead / usage.input) * 100)}%)` : "";
     statusText.setText(
-      `graph ${graphLabel} · ${meta.turns.length} turn(s) · cache ${usage.cacheRead}/${usage.input} · ` +
+      `${statePrefix}graph ${graphLabel} · ${meta.turns.length} turn(s) · cache ${usage.cacheRead}/${usage.input}${cacheHit} · ` +
         `revision ${Math.max(meta.revisions.length - 1, 0)} · at ${at} · session ${sessionId}`,
     );
     tui.requestRender();
@@ -179,9 +181,27 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
 
   function wireTranscript(pi: PiSession): void {
     const toolEntries = new Map<string, ToolTranscriptEntry>();
+    let streamingEntry: StreamingAssistantEntry | undefined;
+
     pi.agent.subscribe((event: AgentEvent) => {
-      if (event.type === "message_end" && event.message.role === "assistant") {
-        transcript.addChild(assistantMessageComponent(event.message as AssistantMessage));
+      if (event.type === "message_start" && event.message.role === "assistant") {
+        streamingEntry = streamingAssistantComponent(event.message as AssistantMessage);
+        transcript.addChild(streamingEntry.component);
+        tui.requestRender();
+      } else if (event.type === "message_update" && event.message.role === "assistant") {
+        if (!streamingEntry) {
+          streamingEntry = streamingAssistantComponent(event.message as AssistantMessage);
+          transcript.addChild(streamingEntry.component);
+        }
+        streamingEntry.update(event.message as AssistantMessage, true);
+        tui.requestRender();
+      } else if (event.type === "message_end" && event.message.role === "assistant") {
+        if (streamingEntry) {
+          streamingEntry.update(event.message as AssistantMessage, false);
+          streamingEntry = undefined;
+        } else {
+          transcript.addChild(assistantMessageComponent(event.message as AssistantMessage));
+        }
         tui.requestRender();
       } else if (event.type === "tool_execution_start") {
         const entry = toolTranscriptEntry(event.toolName, event.toolCallId, event.args, tui, options.project);
@@ -206,6 +226,7 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
     return new Promise((resolve) => {
       activeGate = { activityId, fields, index: 0, values: {}, resolve };
       renderGatePrompt();
+      refreshStatus("waiting");
       tui.requestRender();
     });
   }
@@ -215,6 +236,43 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
     editor.setText("");
     if (!text) return;
 
+    if (text === "/help") {
+      transcript.addChild(
+        new Text(
+          [
+            "Commands:",
+            "  /model           view active model",
+            "  /graph           view active graph workflow details",
+            "  /steer <text>    queue steering input before next turn",
+            "  /follow <text>   queue follow-up input when run finishes",
+            "  /clear           clear transcript",
+            "  /help            show this help",
+            "  /exit, /quit     exit the session",
+          ].join("\n"),
+        ),
+      );
+      tui.requestRender();
+      return;
+    }
+
+    if (text === "/clear") {
+      transcript.clear();
+      tui.requestRender();
+      return;
+    }
+
+    if (text === "/model") {
+      transcript.addChild(new Text(`model: ${options.modelLabel}`));
+      tui.requestRender();
+      return;
+    }
+
+    if (text === "/graph") {
+      transcript.addChild(new Text(`graph: ${graphLabel}`));
+      tui.requestRender();
+      return;
+    }
+
     if (activeGate) {
       const gate = activeGate;
       const field = gate.fields[gate.index];
@@ -223,6 +281,7 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
       if (gate.index >= gate.fields.length) {
         activeGate = undefined;
         renderGatePrompt();
+        refreshStatus("running");
         gate.resolve(gate.values);
       } else {
         renderGatePrompt();
@@ -231,20 +290,27 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
       return;
     }
 
-    if (!store.exists()) return; // Nothing to queue into yet -- see the ordering note below.
-    if (text.startsWith("/follow ")) store.queueInbox("follow-up", text.slice("/follow ".length));
-    else if (text.startsWith("/steer ")) store.queueInbox("steer", text.slice("/steer ".length));
-    else store.queueInbox("steer", text);
+    if (!store.exists()) return;
+
+    if (text.startsWith("/follow ")) {
+      store.queueInbox("follow-up", text.slice("/follow ".length));
+      transcript.addChild(new Text(`[queued follow-up] ${text.slice("/follow ".length)}`));
+    } else if (text.startsWith("/steer ")) {
+      store.queueInbox("steer", text.slice("/steer ".length));
+      transcript.addChild(new Text(`[queued steering] ${text.slice("/steer ".length)}`));
+    } else {
+      store.queueInbox("steer", text);
+      transcript.addChild(new Text(`[queued steering] ${text}`));
+    }
     tui.requestRender();
   };
 
-  // A resumed session's own transcript is not something Pi restores across a
-  // fresh process -- only the graph's own state (meta.turns, the activity
-  // trail) survives a process restart at all -- so this is a summary of what
-  // already happened, built from the same `TurnRecord`s the status strip's
-  // usage totals come from, not a replay of the original rich messages
-  // (issue #67). Seeded before `onReady`/`tui.start()` so a headless test can
-  // see it in the very first frame, the same as a real reattach would.
+  // If a prompt was provided at startup, display it in the transcript
+  if (options.start.kind === "run" && options.start.prompt) {
+    transcript.addChild(userMessageComponent(options.start.prompt));
+  }
+
+  // A resumed session's own transcript summary
   if (options.start.kind === "resume" && store.exists()) {
     for (const turn of store.readMeta().turns) {
       const line = `${turn.activityId}  ${turn.harness ?? ""}  ${turn.summary ?? ""}`.trim();
@@ -258,12 +324,6 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
 
   tui.start();
   try {
-    // `runSession`/`resumeSession` call `store.create()`/require the store to
-    // already exist synchronously before their first `await`, so by the time
-    // either returns a pending promise the session directory is settled --
-    // the editor's `store.exists()` guard above only ever matters for a
-    // keystroke that arrives before that call is even made, which cannot
-    // happen since `tui.start()` runs first.
     const shared = {
       paths: options.paths,
       project: options.project,
@@ -277,28 +337,23 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
         pushTrail(`${activity.activityId}  ${activity.harness}  ${activity.result.summary}`),
       onProgress: (line: string) => {
         if (line.trim().startsWith("note:")) pushTrail(line.trim());
-        refreshStatus();
+        refreshStatus("running");
       },
       onWait,
     };
-    return options.start.kind === "resume"
-      ? await resumeSession({ ...shared, sessionId })
-      : await runSession({
-          ...shared,
-          graphPath: options.start.graphPath,
-          prompt: options.start.prompt,
-          name: options.start.name,
-          sessionId,
-        });
+    const outcome =
+      options.start.kind === "resume"
+        ? await resumeSession({ ...shared, sessionId })
+        : await runSession({
+            ...shared,
+            graphPath: options.start.graphPath,
+            prompt: options.start.prompt,
+            name: options.start.name,
+            sessionId,
+          });
+    refreshStatus("idle");
+    return outcome;
   } finally {
-    // `requestRender()` debounces: a run that settles inside that window (a
-    // single fast real-model turn easily does) can leave its last frame --
-    // the final assistant message, the last trail entry, the completed
-    // status line -- only *scheduled*, never actually flushed, if `stop()`
-    // tears the screen down before the debounce timer fires. A forced,
-    // synchronous render first is the only way the terminal ends up showing
-    // what actually happened rather than whatever the last flushed frame
-    // was moments before it did.
     tui.renderNow(true);
     tui.stop();
   }

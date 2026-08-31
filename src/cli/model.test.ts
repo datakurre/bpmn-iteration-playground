@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,6 +10,7 @@ import {
   isOpenCodeModel,
   isOpenRouterModel,
   readConfiguredModel,
+  setConfiguredModel,
 } from "./model.ts";
 
 function configWith(contents: string): string {
@@ -112,4 +113,28 @@ describe("getProviderAttributionHeaders", () => {
     expect(getProviderAttributionHeaders({ provider: "openai" })).toBeUndefined();
   });
 });
+
+describe("setConfiguredModel", () => {
+  it("creates config.toml with [agent] section if it does not exist", () => {
+    const file = join(mkdtempSync(join(tmpdir(), "graph-agent-config-")), "config.toml");
+    setConfiguredModel(file, "anthropic/claude-sonnet-4-5");
+    expect(readConfiguredModel(file)).toBe("anthropic/claude-sonnet-4-5");
+  });
+
+  it("updates an existing commented model line", () => {
+    const file = configWith(["[agent]", '# model = "old/model"', ""].join("\n"));
+    setConfiguredModel(file, "opencode-go/gpt-5.6-luna");
+    expect(readConfiguredModel(file)).toBe("opencode-go/gpt-5.6-luna");
+  });
+
+  it("updates an existing active model line and preserves other sections", () => {
+    const file = configWith(["[other]", "key = true", "", "[agent]", 'model = "old/model"', ""].join("\n"));
+    setConfiguredModel(file, "openai/gpt-4o");
+    expect(readConfiguredModel(file)).toBe("openai/gpt-4o");
+    const text = readFileSync(file, "utf8");
+    expect(text).toContain("[other]");
+    expect(text).toContain("key = true");
+  });
+});
+
 

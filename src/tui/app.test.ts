@@ -243,4 +243,52 @@ describe("graph-agent tui --resume (issue #67)", () => {
     expect(result.outcome).toBe("completed");
     expect(result.sessionId).toBe(parked.sessionId);
   });
+
+  it("handles slash commands and renders user prompts", async () => {
+    const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", name: "Faux" }] });
+    faux.setResponses([fauxAssistantMessage([fauxText("Done.")], { stopReason: "stop" })] as never);
+
+    let handles: TuiHandles | undefined;
+    const outcomePromise = startTui({
+      paths,
+      project: home,
+      start: { kind: "run", graphPath: graphFile, graphLabel: "smoke", prompt: "initial user prompt" },
+      model: faux.getModel(),
+      modelLabel: "faux-model-label",
+      systemPrompt: "test agent",
+      streamFn: (model, context, options) => faux.provider.streamSimple(model, context, options),
+      tools: createNoopToolExecutor([]),
+      terminal: new FakeTerminal(),
+      onReady: (ready) => {
+        handles = ready;
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(handles?.root.render(80).join("\n")).toContain("waiting on gate");
+    });
+
+    // Test /help command
+    handles?.editor.onSubmit?.("/help");
+    expect(handles?.root.render(80).join("\n")).toContain("/model");
+    expect(handles?.root.render(80).join("\n")).toContain("/steer");
+
+    // Test /model command
+    handles?.editor.onSubmit?.("/model");
+    expect(handles?.root.render(80).join("\n")).toContain("faux-model-label");
+
+    // Test /graph command
+    handles?.editor.onSubmit?.("/graph");
+    expect(handles?.root.render(80).join("\n")).toContain("smoke");
+
+    // Answer gate and finish
+    handles?.editor.onSubmit?.("answering gate");
+    const result = await outcomePromise;
+    expect(result.outcome).toBe("completed");
+
+    const rendered = handles?.root.render(80).join("\n") ?? "";
+    expect(rendered).toContain("initial user prompt");
+    expect(rendered).toContain("Done.");
+  });
 });
+

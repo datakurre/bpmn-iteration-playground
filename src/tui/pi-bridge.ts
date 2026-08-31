@@ -10,8 +10,33 @@
  * a constructor signature fails to typecheck in one file, and the fallback --
  * render the message as plain text -- lives in exactly one place too.
  */
-import { Text, type Component, type TUI } from "@earendil-works/pi-tui";
-import { AssistantMessageComponent, initTheme, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
+import {
+  Box,
+  CombinedAutocompleteProvider,
+  Container,
+  Editor,
+  ProcessTerminal,
+  SelectList,
+  Text,
+  TuiMainScreen,
+  type AutocompleteItem,
+  type AutocompleteProvider,
+  type Component,
+  type EditorTheme,
+  type SelectItem,
+  type SlashCommand,
+  type Terminal,
+  type TUI,
+} from "@earendil-works/pi-tui";
+import {
+  AssistantMessageComponent,
+  UserMessageComponent,
+  DynamicBorder,
+  getMarkdownTheme,
+  getSelectListTheme,
+  initTheme,
+  ToolExecutionComponent,
+} from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 
 // `AssistantMessageComponent`/`ToolExecutionComponent` read Pi's own global
@@ -64,9 +89,46 @@ function assistantText(message: AssistantMessage): string {
 /** Render one finished assistant message for the transcript. */
 export function assistantMessageComponent(message: AssistantMessage): Component {
   try {
-    return new SafeRender(new AssistantMessageComponent(message), () => assistantText(message));
+    return new SafeRender(new AssistantMessageComponent(message, false, getMarkdownTheme()), () => assistantText(message));
   } catch {
     return new Text(assistantText(message));
+  }
+}
+
+export interface StreamingAssistantEntry {
+  component: Component;
+  update(message: AssistantMessage, isStreaming?: boolean): void;
+}
+
+/** A live streaming assistant message in the transcript: created on message_start, updated on message_update. */
+export function streamingAssistantComponent(initialMessage?: AssistantMessage): StreamingAssistantEntry {
+  try {
+    const inner = new AssistantMessageComponent(initialMessage, false, getMarkdownTheme());
+    return {
+      component: new SafeRender(inner, () => (initialMessage ? assistantText(initialMessage) : "")),
+      update: (msg, isStreaming = true) => {
+        try {
+          inner.updateContent(msg, isStreaming);
+        } catch {
+          // Fallback if render throws
+        }
+      },
+    };
+  } catch {
+    const text = new Text(initialMessage ? assistantText(initialMessage) : "");
+    return {
+      component: text,
+      update: (msg) => text.setText(assistantText(msg)),
+    };
+  }
+}
+
+/** Render one user message for the transcript. */
+export function userMessageComponent(text: string): Component {
+  try {
+    return new SafeRender(new UserMessageComponent(text, getMarkdownTheme()), () => `> ${text}`);
+  } catch {
+    return new Text(`> ${text}`);
   }
 }
 
@@ -128,13 +190,22 @@ export function toolTranscriptEntry(
 
 export {
   Box,
+  CombinedAutocompleteProvider,
   Container,
+  DynamicBorder,
   Editor,
+  getMarkdownTheme,
+  getSelectListTheme,
   ProcessTerminal,
+  SelectList,
   Text,
   TuiMainScreen,
+  type AutocompleteItem,
+  type AutocompleteProvider,
   type Component,
   type EditorTheme,
+  type SelectItem,
+  type SlashCommand,
   type Terminal,
   type TUI,
-} from "@earendil-works/pi-tui";
+};

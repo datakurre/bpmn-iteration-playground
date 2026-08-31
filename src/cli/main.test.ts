@@ -820,3 +820,50 @@ describe("graph-agent promote (issue #55)", () => {
     expect(existsSync(join(workflowsDir, "promoted_caller.bpmn.bak"))).toBe(true);
   }, 20000);
 });
+
+describe("graph-agent model and headless flags", () => {
+  const distFile = join(import.meta.dirname, "..", "..", "dist", "graph-agent.js");
+
+  function project(): { env: NodeJS.ProcessEnv; configFile: string } {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-cli-model-"));
+    const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
+    execFileSync("node", [distFile, "init"], { env });
+    const configFile = join(home, "config", "graph-agent", "config.toml");
+    return { env, configFile };
+  }
+
+  function runCli(env: NodeJS.ProcessEnv, args: string[]): { stdout: string; stderr: string; code: number | null } {
+    const result = spawnSync("node", [distFile, ...args], { env, encoding: "utf8" });
+    return { stdout: result.stdout, stderr: result.stderr, code: result.status };
+  }
+
+  it("lists configured model with `graph-agent model`", () => {
+    const { env } = project();
+    const result = runCli(env, ["model"]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("configured default:");
+  });
+
+  it("sets default model with `graph-agent model <provider/model>`", () => {
+    const { env, configFile } = project();
+    const setRes = runCli(env, ["model", "anthropic/claude-sonnet-4-5"]);
+    expect(setRes.code).toBe(0);
+    expect(setRes.stdout).toContain("set default model");
+    expect(setRes.stdout).toContain("anthropic/claude-sonnet-4-5");
+
+    const checkRes = runCli(env, ["model"]);
+    expect(checkRes.code).toBe(0);
+    expect(checkRes.stdout).toContain("configured default: anthropic/claude-sonnet-4-5");
+
+    const content = readFileSync(configFile, "utf8");
+    expect(content).toContain('model = "anthropic/claude-sonnet-4-5"');
+  });
+
+  it("supports running headlessly with --no-tui", () => {
+    const { env } = project();
+    const result = runCli(env, ["--no-tui", "--graph", "session-default", "--dry-run"]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("session");
+  });
+});
+

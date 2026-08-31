@@ -5,7 +5,7 @@
  * thin resolver over it rather than a second place to configure models: if `pi`
  * can talk to a provider, so can we.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
@@ -62,6 +62,68 @@ export function readConfiguredModel(configFile: string): string | undefined {
     if (setting) return setting[1]?.trim().replace(/^["']|["']$/g, "");
   }
   return undefined;
+}
+
+/**
+ * Updates or writes `[agent] model = "..."` into `config.toml`.
+ */
+export function setConfiguredModel(configFile: string, modelSpec: string): void {
+  let content = "";
+  if (existsSync(configFile)) {
+    content = readFileSync(configFile, "utf8");
+  }
+  const trimmedSpec = modelSpec.trim();
+  let inAgentSection = false;
+  let replaced = false;
+  const lines = content ? content.split("\n") : [];
+  const newLines: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.replace(/#.*$/, "").trim();
+    const section = /^\[([^\]]+)\]$/.exec(trimmed);
+    if (section) {
+      if (inAgentSection && !replaced) {
+        newLines.push(`model = "${trimmedSpec}"`);
+        replaced = true;
+      }
+      inAgentSection = section[1]?.trim() === "agent";
+      newLines.push(line);
+      continue;
+    }
+    if (inAgentSection && /^model\s*=/.test(trimmed)) {
+      newLines.push(`model = "${trimmedSpec}"`);
+      replaced = true;
+      continue;
+    }
+    if (inAgentSection && /^#\s*model\s*=/.test(line.trim())) {
+      newLines.push(`model = "${trimmedSpec}"`);
+      replaced = true;
+      continue;
+    }
+    newLines.push(line);
+  }
+
+  if (!replaced) {
+    if (!inAgentSection && !lines.some((l) => /^\[agent\]/.test(l.replace(/#.*$/, "").trim()))) {
+      if (newLines.length > 0 && newLines[newLines.length - 1] !== "") {
+        newLines.push("");
+      }
+      newLines.push("[agent]");
+    }
+    newLines.push(`model = "${trimmedSpec}"`);
+  }
+
+  writeFileSync(configFile, newLines.join("\n") + (newLines[newLines.length - 1] === "" ? "" : "\n"));
+}
+
+/** Returns all models that have credentials configured. */
+export async function listAvailableModels(): Promise<readonly Model<Api>[]> {
+  const runtime = await ModelRuntime.create();
+  return runtime.getAvailable();
+}
+
+export interface ResolveModelOptions {
+  promptFn?: (available: readonly Model<Api>[]) => Promise<string | undefined>;
 }
 
 /** Caps a long list for an error message: `n` items, then a "…and N more" tail. */
@@ -148,9 +210,13 @@ export function getProviderAttributionHeaders(
 /**
  * `spec` is `provider/model`, or just a provider, or omitted to fall back to
  * `configuredModel` (typically `[agent] model` from config.toml), or omitted
- * entirely for the first model that has credentials.
+ * entirely to prompt / require configuration.
  */
-export async function resolveModel(spec?: string, configuredModel?: string): Promise<ResolvedModel> {
+export async function resolveModel(
+  spec?: string,
+  configuredModel?: string,
+  options?: ResolveModelOptions,
+): Promise<ResolvedModel> {
   const runtime = await ModelRuntime.create();
   // Credential-filtered, unlike getModels(): that returns every model of every
   // provider Pi knows about, whether or not this machine can actually call it.
@@ -162,7 +228,11 @@ export async function resolveModel(spec?: string, configuredModel?: string): Pro
     );
   }
 
-  const effectiveSpec = spec ?? configuredModel;
+  let effectiveSpec = spec ?? configuredModel;
+
+  if (!effectiveSpec && options?.promptFn) {
+    effectiveSpec = await options.promptFn(available);
+  }
 
   let model: Model<Api> | undefined;
   if (effectiveSpec) {
@@ -175,7 +245,13 @@ export async function resolveModel(spec?: string, configuredModel?: string): Pro
       throw new Error(`no model matches '${effectiveSpec}'. ${describeAvailable(available, effectiveSpec)}`);
     }
   } else {
-    model = available[0];
+    if (available.length === 1) {
+      model = available[0];
+    } else {
+      throw new Error(
+        `no model is configured. Pass --model <provider/model> or set a default with \`graph-agent model <provider/model>\`.\nAvailable models: ${capList(available.map((m) => `${m.provider}/${m.id}`))}`,
+      );
+    }
   }
   if (!model) throw new Error("no model could be resolved");
 

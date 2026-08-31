@@ -29,19 +29,18 @@ import { compareGraphVersions, extractModelInfo } from "../agent/versioning.ts";
 const USAGE = `graph-agent - a Pi coding agent whose control flow is a BPMN graph
 
 Usage
+  graph-agent [prompt]                 start interactive TUI session (default)
   graph-agent <command> [options]
 
 Commands
+  [prompt]             start an interactive terminal UI session (default mode)
+  run [prompt]         run headlessly and drive turn-by-turn without TUI (scripting/CI)
+  tui [prompt] | tui --resume <session>
+                       start or reattach to an interactive terminal UI session
+  model [spec]         list available models with credentials or set default model
   init                 create the user-level config and graph library
                         (--refresh: take the bundled version of any graph
                         that differs from your library copy, backed up first)
-  run [prompt]         start a session in this project and drive it turn by turn
-  tui [prompt] | tui --resume <session>
-                       start a session in an interactive terminal UI: a live
-                       transcript, a trail of the last few activities, and a
-                       prompt for any human gate the graph parks on --
-                       --resume reattaches to a parked session instead of
-                       starting a new one
   resume <session>     recover engine + transcript state and continue
   steer <session> <text>
                        queue a steering message, injected before the next turn
@@ -74,6 +73,8 @@ Options
   --model <spec>       provider/model to use (default: config.toml's [agent]
                         model, or the first model with credentials)
   --dry-run            walk the graph without calling a model
+  --no-tui, -p, --print
+                        run headlessly without interactive TUI
   --name <name>        label the session
   --answer [activity:]key=value
                         answer a parked human gate reached during run/resume
@@ -107,16 +108,41 @@ Options
   -v, --version        show the version
 `;
 
+const KNOWN_COMMANDS = new Set([
+  "init",
+  "where",
+  "studio",
+  "ls",
+  "show",
+  "report",
+  "export",
+  "run",
+  "tui",
+  "resume",
+  "steer",
+  "follow-up",
+  "promote",
+  "model",
+]);
+
 export async function main(argv: string[]): Promise<number> {
   const command = argv[0];
 
-  if (command === undefined || command === "-h" || command === "--help" || command === "help") {
+  if (command === "-h" || command === "--help" || command === "help") {
     process.stdout.write(USAGE);
     return 0;
   }
   if (command === "-v" || command === "--version") {
     process.stdout.write(`${version()}\n`);
     return 0;
+  }
+
+  if (command === undefined || !KNOWN_COMMANDS.has(command)) {
+    if (argv.includes("--no-tui") || argv.includes("--print") || argv.includes("-p")) {
+      const cleanArgs = argv.filter((a) => a !== "--no-tui" && a !== "--print" && a !== "-p");
+      return cmdRun(cleanArgs);
+    }
+    return cmdTui(argv);
   }
 
   switch (command) {
@@ -180,6 +206,8 @@ export async function main(argv: string[]): Promise<number> {
       return cmdRun(argv.slice(1));
     case "tui":
       return cmdTui(argv.slice(1));
+    case "model":
+      return cmdModel(argv.slice(1));
     case "resume":
       return cmdResume(argv.slice(1));
     case "steer":
@@ -372,6 +400,45 @@ async function cmdStudio(args: string[]): Promise<number> {
     process.once("SIGINT", stop);
     process.once("SIGTERM", stop);
   });
+  return 0;
+}
+
+async function cmdModel(args: string[]): Promise<number> {
+  const p = requirePaths();
+  if (!p) return 1;
+  const { listAvailableModels, setConfiguredModel, readConfiguredModel } = await import("./model.ts");
+  const configured = readConfiguredModel(p.configFile);
+
+  if (args.length === 0) {
+    process.stdout.write(`configured default: ${configured ?? "(none)"}\n\n`);
+    let available;
+    try {
+      available = await listAvailableModels();
+    } catch (err) {
+      process.stderr.write(`graph-agent: error reading available models: ${err instanceof Error ? err.message : String(err)}\n`);
+      return 1;
+    }
+    if (available.length === 0) {
+      process.stdout.write("no models with credentials found. Authenticate with Pi first (`pi`, then /login).\n");
+    } else {
+      process.stdout.write("available models with credentials:\n");
+      for (const m of available) {
+        const spec = `${m.provider}/${m.id}`;
+        const marker = spec === configured ? " (default)" : "";
+        process.stdout.write(`  ${spec}${marker}\n`);
+      }
+    }
+    return 0;
+  }
+
+  const modelSpec = args[0];
+  if (!modelSpec || modelSpec.startsWith("-")) {
+    process.stderr.write("usage: graph-agent model [<provider/model>]\n");
+    return 2;
+  }
+
+  setConfiguredModel(p.configFile, modelSpec);
+  process.stdout.write(`set default model in ${p.configFile}: ${modelSpec}\n`);
   return 0;
 }
 
