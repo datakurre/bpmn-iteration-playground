@@ -80,6 +80,19 @@
             <button id="tab-btn-turns" class="text-[11.5px] font-bold tracking-wider uppercase text-accent border-b-2 border-accent pb-0.5">Turns</button>
             <button id="tab-btn-activities" class="text-[11.5px] font-bold tracking-wider uppercase text-muted hover:text-ink pb-0.5">Activities</button>
           </div>
+          <div id="turns-actions" class="flex items-center gap-1">
+            <button type="button" id="btn-toggle-expand-all" class="text-[10.5px] font-medium text-muted hover:text-ink px-1.5 py-0.5 rounded border border-line hover:bg-panel-header transition-colors" title="Expand/collapse all turn details">Expand all</button>
+          </div>
+        </div>
+        <div id="turns-filter-container" class="p-2 border-b border-line bg-panel-alt flex flex-col gap-1.5">
+          <div class="flex items-center justify-between gap-1">
+            <div class="flex items-center gap-1 text-[10.5px]">
+              <button type="button" class="turn-filter-btn active px-2 py-0.5 rounded font-semibold bg-accent text-btn-text" data-filter="all">All</button>
+              <button type="button" class="turn-filter-btn px-2 py-0.5 rounded font-semibold text-muted hover:text-ink hover:bg-panel-header border border-line" data-filter="tools">Tools</button>
+              <button type="button" class="turn-filter-btn px-2 py-0.5 rounded font-semibold text-muted hover:text-ink hover:bg-panel-header border border-line" data-filter="errors">Errors</button>
+            </div>
+            <input type="text" id="turn-search-input" placeholder="Search turns, tools..." class="text-[11px] px-2 py-0.5 rounded border border-line bg-card text-ink placeholder-muted focus:outline-none focus:border-accent w-36 sm:w-44" />
+          </div>
         </div>
         <div id="turns" class="flex-1 overflow-y-auto text-xs"></div>
         <div id="activities" class="hidden flex-1 overflow-y-auto text-xs"></div>

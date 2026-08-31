@@ -4,7 +4,7 @@ import type { BpmnDiagramInstance } from "../../js/lib/bpmn-types";
 import type { FormInstance } from "../../js/types/globals";
 import { connectStudioEvents } from "./live";
 import { mountShell, statusChip } from "./shell";
-import type { PendingGateInfo, SessionDetail, TurnRecord } from "../types";
+import type { PendingGateInfo, SessionDetail, ToolCallDetail, TurnRecord } from "../types";
 
 let viewer: BpmnDiagramInstance | null = null;
 let renderedGraph: string | null = null;
@@ -93,6 +93,133 @@ function paintOverlays(detail: SessionDetail): void {
   }
 }
 
+let currentTurnFilter: "all" | "tools" | "errors" = "all";
+let currentTurnSearch = "";
+let allDetailsExpanded = false;
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function formatTurnRange(indices: number[]): string {
+  if (indices.length === 0) return "";
+  if (indices.length === 1) return `T${indices[0]}`;
+  const isContiguous = indices.every((idx, i) => i === 0 || idx === indices[i - 1]! + 1);
+  if (isContiguous) {
+    return `T${indices[0]}..T${indices[indices.length - 1]}`;
+  }
+  return indices.map((i) => `T${i}`).join(",");
+}
+
+function renderMarkdownToHtml(md: string): string {
+  if (!md) return "";
+  const codeBlocks: string[] = [];
+  let text = md.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)\n```/g, (_m, lang, code) => {
+    const idx = codeBlocks.length;
+    codeBlocks.push(
+      `<div class="terminal-card" style="margin: 0.5rem 0;">` +
+      (lang ? `<div class="terminal-bar"><span class="terminal-title">${escapeHtml(lang)}</span></div>` : "") +
+      `<pre class="code-block" style="margin: 0;"><code>${escapeHtml(code.trim())}</code></pre></div>`
+    );
+    return `___CODE_BLOCK_${idx}___`;
+  });
+
+  text = escapeHtml(text);
+  text = text.replace(/`([^`]+)`/g, (_m, code) => `<code>${code}</code>`);
+  text = text.replace(/\*\*([^*]+)\*\*/g, (_m, bold) => `<strong>${bold}</strong>`);
+  text = text.replace(/\*([^*]+)\*/g, (_m, it) => `<em>${it}</em>`);
+
+  const paragraphs = text.split(/\n\n+/).map(p => {
+    p = p.replace(/\n/g, "<br>");
+    return `<div class="my-1">${p}</div>`;
+  }).join("");
+
+  return paragraphs.replace(/___CODE_BLOCK_(\d+)___/g, (_m, idx) => codeBlocks[Number(idx)] || "");
+}
+
+function formatToolCallHtml(tc: ToolCallDetail, isExpanded: boolean): string {
+  const statusBadge = tc.result
+    ? (tc.result.isError ? `<span class="badge failed">failed</span>` : `<span class="badge completed">ok</span>`)
+    : `<span class="badge waiting_human">pending</span>`;
+  const durStr = tc.durationMs ? `<span class="font-mono text-[10px] text-muted">${(tc.durationMs / 1000).toFixed(2)}s</span>` : "";
+
+  let bodyHtml = "";
+  if (tc.name === "bash" && tc.arguments?.command) {
+    const cmd = String(tc.arguments.command);
+    bodyHtml = `
+      <div class="terminal-card">
+        <div class="terminal-bar">
+          <span class="terminal-title">Terminal</span>
+          <button type="button" class="btn-copy" data-copy="${escapeHtml(cmd)}" title="Copy Command">Copy</button>
+        </div>
+        <pre class="terminal-cmd"><code>$ ${escapeHtml(cmd)}</code></pre>
+      </div>
+      <div class="mt-1">
+        <div class="detail-subheading">Output ${tc.result ? (tc.result.isError ? "(Error)" : "(Success)") : ""}:</div>
+        <pre class="code-block ${tc.result?.isError ? 'code-error' : ''}">${escapeHtml(tc.result?.content || '(no output)')}</pre>
+      </div>
+    `;
+  } else if (tc.name === "edit" && tc.arguments?.path) {
+    const path = String(tc.arguments.path);
+    const edits = Array.isArray(tc.arguments.edits) ? tc.arguments.edits : [];
+    let diffHtml = "";
+    if (edits.length > 0) {
+      diffHtml = edits.map((e: any, idx: number) => `
+        <div class="diff-container">
+          <div class="diff-title">Replacement #${idx + 1}</div>
+          ${e.oldText ? `<div class="diff-chunk diff-old"><pre>${escapeHtml(e.oldText)}</pre></div>` : ""}
+          ${e.newText ? `<div class="diff-chunk diff-new"><pre>${escapeHtml(e.newText)}</pre></div>` : ""}
+        </div>
+      `).join("");
+    }
+    bodyHtml = `
+      <div class="font-mono text-[11px] font-semibold text-ink mb-1">File: <code>${escapeHtml(path)}</code></div>
+      ${diffHtml}
+      <div class="mt-1">
+        <div class="detail-subheading">Result:</div>
+        <pre class="code-block">${escapeHtml(tc.result?.content || 'ok')}</pre>
+      </div>
+    `;
+  } else if ((tc.name === "read" || tc.name === "write") && tc.arguments?.path) {
+    const path = String(tc.arguments.path);
+    const writeContent = tc.name === "write" && typeof tc.arguments.content === "string" ? tc.arguments.content : "";
+    bodyHtml = `
+      <div class="font-mono text-[11px] font-semibold text-ink mb-1">File: <code>${escapeHtml(path)}</code> <span class="badge">${escapeHtml(tc.name)}</span></div>
+      ${writeContent ? `<div class="detail-subheading">Written Content:</div><pre class="code-block">${escapeHtml(writeContent)}</pre>` : ""}
+      <div class="mt-1">
+        <div class="detail-subheading">Result:</div>
+        <pre class="code-block ${tc.result?.isError ? 'code-error' : ''}">${escapeHtml(tc.result?.content || '(empty)')}</pre>
+      </div>
+    `;
+  } else {
+    const argsHtml = tc.arguments && Object.keys(tc.arguments).length > 0
+      ? `<div class="detail-subheading">Arguments:</div><pre class="code-block">${escapeHtml(JSON.stringify(tc.arguments, null, 2))}</pre>`
+      : "";
+    const resultHtml = tc.result
+      ? `<div class="detail-subheading">Result ${tc.result.isError ? "(Error)" : ""}:</div><pre class="code-block ${tc.result.isError ? 'code-error' : ''}">${escapeHtml(tc.result.content || "(empty)")}</pre>`
+      : "";
+    bodyHtml = `${argsHtml}${resultHtml}`;
+  }
+
+  return `
+    <details class="detail-box tool-card" ${isExpanded ? "open" : ""}>
+      <summary class="detail-summary">
+        <div class="flex items-center gap-1.5 min-w-0">
+          <span class="font-mono font-bold text-[10px] px-1 py-0.5 rounded bg-sky-dim text-sky border border-sky-border">${escapeHtml(tc.name)}</span>
+          <span class="font-mono text-[10px] text-muted truncate">${escapeHtml(tc.id)}</span>
+          ${durStr}
+        </div>
+        ${statusBadge}
+      </summary>
+      <div class="detail-body">
+        ${bodyHtml}
+      </div>
+    </details>
+  `;
+}
+
 function usageChip(turn: TurnRecord): string {
   if (!turn.usage) return "";
   const { input, output, cacheRead } = turn.usage;
@@ -106,20 +233,42 @@ function usageChip(turn: TurnRecord): string {
 function renderActivities(turns: TurnRecord[]): void {
   const host = $("activities");
   if (!host) return;
-  const map = new Map<string, { id: string; name: string; harness: string; turns: number; cost: number; tokens: number }>();
+  const map = new Map<string, {
+    id: string;
+    name: string;
+    harness: string;
+    turns: number;
+    turnIndices: number[];
+    cost: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    durationMs: number;
+  }>();
+
   for (const turn of turns) {
     const prev = map.get(turn.activityId) || {
       id: turn.activityId,
       name: turn.activityName || turn.activityId,
       harness: turn.harness || "-",
       turns: 0,
+      turnIndices: [],
       cost: 0,
-      tokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      durationMs: 0,
     };
     prev.turns += 1;
+    prev.turnIndices.push(turn.index);
     if (turn.usage) {
       prev.cost += turn.usage.cost?.total || 0;
-      prev.tokens += (turn.usage.input || 0) + (turn.usage.output || 0);
+      prev.inputTokens += turn.usage.input || 0;
+      prev.outputTokens += turn.usage.output || 0;
+      prev.cacheReadTokens += turn.usage.cacheRead || 0;
+    }
+    if (turn.startedAt && turn.endedAt) {
+      prev.durationMs += turn.endedAt - turn.startedAt;
     }
     map.set(turn.activityId, prev);
   }
@@ -133,20 +282,27 @@ function renderActivities(turns: TurnRecord[]): void {
     <table class="w-full text-left border-collapse text-[11px]">
       <thead>
         <tr class="border-b border-line text-muted">
-          <th class="py-1 px-2 font-semibold">Activity</th>
-          <th class="py-1 px-2 font-semibold">Harness</th>
-          <th class="py-1 px-1 font-semibold text-center">Turns</th>
-          <th class="py-1 px-2 font-semibold text-right">Cost</th>
+          <th class="py-1.5 px-2 font-semibold">Activity</th>
+          <th class="py-1.5 px-1 font-semibold text-center">Range</th>
+          <th class="py-1.5 px-1 font-semibold text-center">Turns</th>
+          <th class="py-1.5 px-2 font-semibold">In / Out / Cache</th>
+          <th class="py-1.5 px-2 font-semibold text-right">Cost</th>
         </tr>
       </thead>
       <tbody>
         ${[...map.values()]
           .map(
             (act) => `
-          <tr class="border-b border-line-subtle hover:bg-card-hover cursor-pointer" data-activity="${escapeHtml(act.id)}">
-            <td class="py-1.5 px-2 font-medium text-ink truncate max-w-[120px]">${escapeHtml(act.name)}</td>
-            <td class="py-1.5 px-2 font-mono text-[10px] text-muted">${escapeHtml(act.harness)}</td>
+          <tr class="border-b border-line-subtle hover:bg-card-hover cursor-pointer" data-activity="${escapeHtml(act.id)}" data-first-turn="${act.turnIndices[0]}">
+            <td class="py-1.5 px-2">
+              <div class="font-medium text-ink truncate max-w-[110px]" title="${escapeHtml(act.name)}">${escapeHtml(act.name)}</div>
+              <div class="font-mono text-[9.5px] text-muted truncate max-w-[110px]">${escapeHtml(act.harness)}</div>
+            </td>
+            <td class="py-1.5 px-1 font-mono text-[10px] text-center text-muted">${formatTurnRange(act.turnIndices) || "-"}</td>
             <td class="py-1.5 px-1 font-mono text-[10px] text-center">${act.turns}</td>
+            <td class="py-1.5 px-2 font-mono text-[9.5px] text-muted whitespace-nowrap">
+              ${formatTokens(act.inputTokens)} / ${formatTokens(act.outputTokens)} / ${formatTokens(act.cacheReadTokens)}
+            </td>
             <td class="py-1.5 px-2 font-mono text-[10px] text-right font-bold text-accent">${formatCost(act.cost)}</td>
           </tr>`,
           )
@@ -163,6 +319,31 @@ function renderActivities(turns: TurnRecord[]): void {
         const element = viewer.get("elementRegistry").get(id);
         if (element) viewer.get("canvas").scrollToElement(element);
       } catch {}
+      const firstTurn = row.dataset.firstTurn;
+      if (firstTurn !== undefined) {
+        const turnEl = document.getElementById(`turn-${firstTurn}`);
+        if (turnEl) {
+          turnEl.scrollIntoView({ behavior: "smooth", block: "center" });
+          turnEl.classList.add("turn-highlight");
+          setTimeout(() => turnEl.classList.remove("turn-highlight"), 2000);
+        }
+      }
+    };
+  }
+}
+
+function wireCopyButtons(container: HTMLElement): void {
+  for (const btn of container.querySelectorAll<HTMLButtonElement>(".btn-copy")) {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const text = btn.dataset.copy;
+      if (text) {
+        navigator.clipboard.writeText(text).then(() => {
+          const orig = btn.textContent;
+          btn.textContent = "Copied";
+          setTimeout(() => (btn.textContent = orig), 1500);
+        });
+      }
     };
   }
 }
@@ -174,9 +355,41 @@ function renderTurns(turns: TurnRecord[]): void {
     host.innerHTML = `<p class="px-3 py-4 text-muted">No turns yet.</p>`;
     return;
   }
+
+  const query = currentTurnSearch.trim().toLowerCase();
+
   host.innerHTML = turns
     .map((turn) => {
-      const tools = turn.toolCalls?.length
+      const hasTools = (turn.toolCallDetails?.length || 0) > 0 || (turn.toolCalls?.length || 0) > 0;
+      const hasError = Boolean(turn.error || turn.stopReason === "error" || turn.toolCallDetails?.some((tc) => tc.result?.isError));
+
+      let matchesFilter = true;
+      if (currentTurnFilter === "tools" && !hasTools) matchesFilter = false;
+      if (currentTurnFilter === "errors" && !hasError) matchesFilter = false;
+
+      const searchableText = [
+        turn.index,
+        turn.activityName || "",
+        turn.activityId,
+        turn.harness || "",
+        turn.summary || "",
+        turn.prompt || "",
+        turn.response || "",
+        turn.thinking || "",
+        turn.error || "",
+        ...(turn.toolCalls || []),
+        ...(turn.toolCallDetails?.map((tc) => `${tc.name} ${JSON.stringify(tc.arguments || {})} ${tc.result?.content || ""}`) || []),
+      ].join(" ").toLowerCase();
+
+      const matchesSearch = !query || searchableText.includes(query);
+      const isVisible = matchesFilter && matchesSearch;
+
+      const tools = turn.toolCallDetails?.length
+        ? `<div class="mt-2">
+            <div class="detail-subheading">Tool Invocations (${turn.toolCallDetails.length})</div>
+            ${turn.toolCallDetails.map((tc) => formatToolCallHtml(tc, allDetailsExpanded)).join("")}
+          </div>`
+        : turn.toolCalls?.length
         ? `<div class="mt-1 flex flex-wrap gap-1">${turn.toolCalls
             .map(
               (t) =>
@@ -184,26 +397,106 @@ function renderTurns(turns: TurnRecord[]): void {
             )
             .join("")}</div>`
         : "";
+
+      const promptBlock = turn.prompt
+        ? `
+          <details class="detail-box" ${allDetailsExpanded ? "open" : ""}>
+            <summary class="detail-summary">
+              <span><strong>Input Prompt</strong> (${turn.prompt.length} chars)</span>
+              <button type="button" class="btn-copy" data-copy="${escapeHtml(turn.prompt)}" title="Copy Prompt">Copy</button>
+            </summary>
+            <div class="detail-body">
+              <pre class="code-block">${escapeHtml(turn.prompt)}</pre>
+            </div>
+          </details>
+        `
+        : turn.inputs && Object.keys(turn.inputs).length > 0 && turn.inputs.prompt !== null
+        ? `
+          <details class="detail-box" ${allDetailsExpanded ? "open" : ""}>
+            <summary class="detail-summary">
+              <span><strong>Inputs</strong> (${Object.keys(turn.inputs).length} field(s))</span>
+            </summary>
+            <div class="detail-body">
+              <pre class="code-block">${escapeHtml(JSON.stringify(turn.inputs, null, 2))}</pre>
+            </div>
+          </details>
+        `
+        : "";
+
+      const thinkingBlock = turn.thinking
+        ? `
+          <details class="detail-box" ${allDetailsExpanded ? "open" : ""}>
+            <summary class="detail-summary">
+              <span><strong>Thinking / Reasoning</strong> (${turn.thinking.length} chars)</span>
+              <button type="button" class="btn-copy" data-copy="${escapeHtml(turn.thinking)}" title="Copy Thinking">Copy</button>
+            </summary>
+            <div class="detail-body">
+              <pre class="code-block" style="font-style: italic; opacity: 0.9;">${escapeHtml(turn.thinking)}</pre>
+            </div>
+          </details>
+        `
+        : "";
+
+      const responseBlock = turn.response && turn.response !== turn.summary
+        ? `
+          <details class="detail-box" ${allDetailsExpanded ? "open" : ""}>
+            <summary class="detail-summary">
+              <span><strong>Model Response</strong> (${turn.response.length} chars)</span>
+              <button type="button" class="btn-copy" data-copy="${escapeHtml(turn.response)}" title="Copy Response">Copy</button>
+            </summary>
+            <div class="detail-body">
+              <pre class="code-block">${escapeHtml(turn.response)}</pre>
+            </div>
+          </details>
+        `
+        : turn.outputs && Object.keys(turn.outputs).length > 0 && !turn.response
+        ? `
+          <details class="detail-box" ${allDetailsExpanded ? "open" : ""}>
+            <summary class="detail-summary">
+              <span><strong>Outputs</strong></span>
+            </summary>
+            <div class="detail-body">
+              <pre class="code-block">${escapeHtml(JSON.stringify(turn.outputs, null, 2))}</pre>
+            </div>
+          </details>
+        `
+        : "";
+
+      const turnDur = turn.startedAt && turn.endedAt
+        ? `<span class="font-mono text-[10px] text-muted">${((turn.endedAt - turn.startedAt) / 1000).toFixed(1)}s</span>`
+        : "";
+
       return `
-        <article class="px-3 py-2 border-b border-line-subtle" data-activity="${escapeHtml(turn.activityId)}">
-          <div class="flex items-baseline justify-between gap-2">
-            <span class="font-semibold text-ink truncate">${turn.index}. ${escapeHtml(turn.activityName || turn.activityId)}</span>
-            <span class="flex items-center gap-1 shrink-0">
+        <article class="turn-item ${hasTools ? 'has-tools' : ''} ${hasError ? 'has-error' : ''}" id="turn-${turn.index}" data-activity="${escapeHtml(turn.activityId)}" style="${isVisible ? '' : 'display: none;'}">
+          <div class="turn-header">
+            <div>
+              <span class="font-mono font-bold text-[10px] px-1 py-0.5 rounded bg-accent-dim text-accent border border-accent-border mr-1">T${turn.index}</span>
+              <span class="font-semibold text-ink">${escapeHtml(turn.activityName || turn.activityId)}</span>
+            </div>
+            <div class="flex items-center gap-1 shrink-0">
               ${usageChip(turn)}
+              ${turnDur}
               ${turn.stopReason ? `<span class="text-[10px] uppercase tracking-wide font-bold text-muted">${escapeHtml(turn.stopReason)}</span>` : ""}
-            </span>
+            </div>
           </div>
           <div class="font-mono text-[10px] text-muted">${escapeHtml(turn.activityId)}${turn.harness ? ` &middot; ${escapeHtml(turn.harness)}` : ""}</div>
-          ${turn.summary ? `<div class="mt-1 text-ink-secondary">${escapeHtml(turn.summary)}</div>` : ""}
+          ${turn.summary ? `<div class="turn-summary">${renderMarkdownToHtml(turn.summary)}</div>` : ""}
+          ${promptBlock}
+          ${thinkingBlock}
+          ${responseBlock}
           ${tools}
-          ${turn.error ? `<div class="mt-1 text-danger">${escapeHtml(turn.error)}</div>` : ""}
+          ${turn.error ? `<div class="turn-error">${escapeHtml(turn.error)}</div>` : ""}
         </article>`;
     })
     .join("");
 
+  wireCopyButtons(host);
+
   // Clicking a turn centres the node that produced it.
   for (const article of host.querySelectorAll<HTMLElement>("article[data-activity]")) {
-    article.onclick = () => {
+    article.onclick = (e) => {
+      const target = e.target as HTMLElement;
+      if (target.closest("details") || target.closest("button") || target.closest("pre")) return;
       const id = article.dataset.activity;
       if (!id || !viewer) return;
       try {
@@ -617,6 +910,38 @@ async function init(): Promise<void> {
       tabTurns.className = "text-[11.5px] font-bold tracking-wider uppercase text-muted hover:text-ink pb-0.5";
       activitiesHost.classList.remove("hidden");
       turnsHost.classList.add("hidden");
+    };
+  }
+
+  const expandBtn = $("btn-toggle-expand-all");
+  if (expandBtn) {
+    expandBtn.onclick = () => {
+      allDetailsExpanded = !allDetailsExpanded;
+      expandBtn.textContent = allDetailsExpanded ? "Collapse all" : "Expand all";
+      const details = document.querySelectorAll("#turns details.detail-box");
+      details.forEach((d) => ((d as HTMLDetailsElement).open = allDetailsExpanded));
+    };
+  }
+
+  const filterBtns = document.querySelectorAll<HTMLButtonElement>(".turn-filter-btn");
+  filterBtns.forEach((btn) => {
+    btn.onclick = () => {
+      filterBtns.forEach((b) => {
+        b.classList.remove("active", "bg-accent", "text-btn-text");
+        b.classList.add("text-muted", "border", "border-line");
+      });
+      btn.classList.add("active", "bg-accent", "text-btn-text");
+      btn.classList.remove("text-muted", "border", "border-line");
+      currentTurnFilter = (btn.dataset.filter as "all" | "tools" | "errors") || "all";
+      if (latestDetail) renderTurns(latestDetail.turns);
+    };
+  });
+
+  const searchInput = $("turn-search-input") as HTMLInputElement | null;
+  if (searchInput) {
+    searchInput.oninput = () => {
+      currentTurnSearch = searchInput.value;
+      if (latestDetail) renderTurns(latestDetail.turns);
     };
   }
 
