@@ -7,6 +7,7 @@
 
 NPM ?= npm
 NODE ?= node
+HOST ?= 127.0.0.1
 PORT ?= 0
 
 help:
@@ -23,7 +24,7 @@ help:
 	@echo "Run"
 	@echo "  make init               - seed the user-level config and graph library"
 	@echo "  make run                - run the agent CLI (ARGS=...)"
-	@echo "  make studio             - serve the BPMN studio (PORT=0 picks a free port)"
+	@echo "  make studio             - serve the BPMN studio (HOST=..., PORT=0 picks a free port)"
 	@echo "  make dev                - rebuild on change and serve the studio"
 	@echo ""
 	@echo "Check"
@@ -67,10 +68,10 @@ run: build-cli
 	$(NODE) dist/graph-agent.js $(ARGS)
 
 studio: build
-	$(NODE) dist/graph-agent.js studio --port $(PORT)
+	$(NODE) dist/graph-agent.js studio --host $(HOST) --port $(PORT)
 
 dev: build
-	$(NODE) scripts/dev.mjs
+	HOST=$(HOST) PORT=$(PORT) $(NODE) scripts/dev.mjs
 
 # ---------------------------------------------------------------- check
 

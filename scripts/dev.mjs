@@ -9,14 +9,19 @@ import { join } from "node:path";
 // rebuilds (bundles, CSS, page HTML) do not need a restart -- the studio
 // serves them from disk on every request.
 
+const host = process.env.HOST ?? "127.0.0.1";
 const port = process.env.PORT ?? "0";
 let studio = null;
 
 function restartStudio() {
   if (studio) studio.kill();
-  studio = spawn(process.execPath, ["dist/graph-agent.js", "studio", "--port", port, "--no-open"], {
-    stdio: "inherit",
-  });
+  studio = spawn(
+    process.execPath,
+    ["dist/graph-agent.js", "studio", "--host", host, "--port", port, "--no-open"],
+    {
+      stdio: "inherit",
+    },
+  );
 }
 
 function copyPageHtml() {
