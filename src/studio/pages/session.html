@@ -18,7 +18,7 @@
   <link rel="stylesheet" href="/static/element-template-chooser.css">
   <link rel="stylesheet" href="/static/vendor/form-js/assets/form-js.css">
 </head>
-<body class="bg-bg text-ink font-sans antialiased min-h-screen overflow-x-hidden">
+<body class="session-page bg-bg text-ink font-sans antialiased min-h-screen overflow-x-hidden">
 <main class="max-w-[1600px] mx-auto px-5 py-4 pb-6">
   <header class="relative z-50 flex justify-between gap-4 items-start sm:items-end border-b border-line pb-3 mb-4">
     <div class="min-w-0 flex-1 pr-2">
@@ -51,9 +51,29 @@
 
   <div id="edit-msg" class="hidden mb-2"></div>
 
-  <div class="flex flex-col lg:flex-row gap-3 h-[calc(100vh-190px)] min-h-[480px]">
-    <div class="flex-1 min-h-0 relative bg-white rounded-lg overflow-hidden border border-line shadow-2xl flex">
-      <div id="viewer" class="w-full h-full bg-white relative">
+  <section class="session-metrics mb-3" aria-label="Session metrics">
+    <div class="report-metric"><strong id="metric-status">-</strong><span>Status</span></div>
+    <div class="report-metric"><strong id="metric-cost">$0.00</strong><span>Total cost</span></div>
+    <div class="report-metric"><strong id="metric-turns">0</strong><span>Turns</span></div>
+    <div class="report-metric"><strong id="metric-tools">0</strong><span>Tool invocations</span></div>
+    <div class="report-metric"><strong id="metric-tokens">0</strong><span>Tokens</span></div>
+    <div class="report-metric"><strong id="metric-cache">0%</strong><span>Cache hit</span></div>
+    <div class="report-metric"><strong id="metric-duration">-</strong><span>Duration</span></div>
+  </section>
+
+  <section id="prompt-card" class="report-card hidden mb-3">
+    <h3>Task prompt</h3>
+    <blockquote id="session-prompt"></blockquote>
+  </section>
+  <div id="harness-error" class="hidden report-alert mb-3"></div>
+
+  <button id="diagram-toggle" type="button" class="diagram-toggle btn btn-secondary" aria-expanded="false">Show diagram</button>
+  <div id="session-layout" class="session-layout flex flex-col lg:flex-row gap-3 h-[calc(100vh-190px)] min-h-[480px]">
+     <div id="diagram-pane" class="diagram-pane flex-1 min-h-0 relative bg-white panel-shell overflow-hidden border border-line shadow-2xl flex">
+       <div id="viewer" class="w-full h-full bg-white relative">
+         <div id="definition-navigation" class="definition-navigation hidden">
+           <div id="definition-breadcrumbs" class="definition-breadcrumbs"></div>
+         </div>
         <div class="diagram-controls !left-4">
           <button class="ctrl-btn" id="ctrl-zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
           <button class="ctrl-btn" id="ctrl-zoom-out" title="Zoom out" aria-label="Zoom out">-</button>
@@ -69,14 +89,14 @@
       </aside>
     </div>
 
-    <aside class="w-full lg:w-[420px] shrink-0 flex flex-col gap-3 min-h-0">
-      <section id="pending-section" class="hidden bg-panel border border-line rounded-lg overflow-hidden">
+     <aside class="session-sidebar w-full lg:w-[420px] shrink-0 flex flex-col gap-3 min-h-0">
+       <section id="pending-section" class="hidden bg-panel border border-line panel-shell overflow-hidden">
         <h3 class="px-3 py-2 bg-panel-header border-b border-line text-[11.5px] font-bold tracking-wider uppercase">Waiting on you</h3>
         <div id="pending-gates" class="max-h-64 overflow-y-auto text-xs"></div>
       </section>
-      <section class="bg-panel border border-line rounded-lg overflow-hidden flex flex-col min-h-0 flex-1">
+       <section id="turn-panel" class="bg-panel border border-line panel-shell overflow-hidden flex flex-col min-h-0 flex-1">
         <div class="px-3 py-2 bg-panel-header border-b border-line flex items-center justify-between">
-          <div class="flex gap-2">
+             <div class="flex gap-2">
             <button id="tab-btn-turns" class="text-[11.5px] font-bold tracking-wider uppercase text-accent border-b-2 border-accent pb-0.5">Turns</button>
             <button id="tab-btn-activities" class="text-[11.5px] font-bold tracking-wider uppercase text-muted hover:text-ink pb-0.5">Activities</button>
           </div>
@@ -97,7 +117,7 @@
         <div id="turns" class="flex-1 overflow-y-auto text-xs"></div>
         <div id="activities" class="hidden flex-1 overflow-y-auto text-xs"></div>
       </section>
-      <section class="bg-panel border border-line rounded-lg overflow-hidden">
+       <section class="bg-panel border border-line panel-shell overflow-hidden">
         <h3 class="px-3 py-2 bg-panel-header border-b border-line text-[11.5px] font-bold tracking-wider uppercase">Graph revisions</h3>
         <div id="revisions" class="max-h-40 overflow-y-auto text-xs"></div>
       </section>

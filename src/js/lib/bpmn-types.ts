@@ -60,6 +60,11 @@ export interface BpmnDiagramInstance {
   get(name: "minimap"): BpmnMinimap;
   get(name: "commandStack"): BpmnCommandStack;
   get(name: "elementTemplatesLoader"): BpmnElementTemplatesLoader;
+  getDefinitions?(): {
+    rootElements?: Array<Record<string, unknown>>;
+    diagrams?: Array<{ id?: string; plane?: { bpmnElement?: Record<string, unknown> } }>;
+  };
+  open?(diagram: unknown): Promise<void>;
   get(name: string): unknown;
   on(event: string, callback: (event: unknown) => void): void;
 }

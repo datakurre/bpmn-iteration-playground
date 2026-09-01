@@ -23,7 +23,7 @@ async function loadSessions(): Promise<void> {
       return `
       <div class="flex items-center justify-between gap-3 bg-panel border ${
         isCurrent ? "border-accent-border" : "border-line"
-      } rounded-lg px-3 py-2 hover:bg-card-hover hover:border-line-highlight transition-colors group">
+      } panel-shell px-3 py-2 hover:bg-card-hover hover:border-line-highlight transition-colors group">
         <a href="/session?id=${encodeURIComponent(s.id)}" class="min-w-0 flex-1">
           <span class="block font-semibold text-ink truncate">${escapeHtml(s.name || s.id)}</span>
           <span class="block text-xs text-muted truncate">${escapeHtml(projectName(s.project))} &middot; ${s.turnCount} turn${s.turnCount === 1 ? "" : "s"} &middot; ${escapeHtml(relativeTime(s.updatedAt))}</span>
@@ -80,7 +80,7 @@ async function loadGraphs(): Promise<void> {
     .map(
       (g) => `
       <a href="/graph?id=${encodeURIComponent(g.id)}"
-         class="flex items-center justify-between gap-3 bg-panel border border-line rounded-lg px-3 py-2 hover:bg-card-hover hover:border-line-highlight transition-colors">
+         class="flex items-center justify-between gap-3 bg-panel border border-line panel-shell px-3 py-2 hover:bg-card-hover hover:border-line-highlight transition-colors">
         <span class="font-semibold text-ink truncate">${escapeHtml(g.name)}</span>
         <span class="text-[10px] uppercase tracking-wide font-bold px-1.5 py-0.5 rounded border ${
           g.source === "bundled" ? "text-muted border-line bg-panel-header" : "text-sky border-sky-border bg-sky-dim"
@@ -101,4 +101,3 @@ async function init(): Promise<void> {
 }
 
 void init();
-

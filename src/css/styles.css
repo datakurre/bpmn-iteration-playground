@@ -222,6 +222,155 @@
     font-weight: 700;
   }
 
+  /* Compact report vocabulary also used by the live session page. */
+  .session-metrics {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .report-metric {
+    flex: 1 1 100px;
+    min-width: 100px;
+    padding: 0.5rem 0.75rem;
+    background: var(--color-panel);
+    border: 1px solid var(--color-line);
+    border-radius: 4px;
+  }
+  .report-metric strong {
+    display: block;
+    color: var(--color-accent);
+    font: 700 1.05rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .report-metric span {
+    display: block;
+    margin-top: 0.2rem;
+    color: var(--color-muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .report-card {
+    padding: 0.85rem 1rem;
+    background: var(--color-panel);
+    border: 1px solid var(--color-line);
+    border-radius: 4px;
+  }
+  .panel-shell {
+    border-radius: 4px !important;
+  }
+  .diagram-toggle {
+    display: none;
+    margin-bottom: 0.75rem;
+  }
+  .report-card h3, .report-alert {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .report-card h3 { margin: 0 0 0.5rem; color: var(--color-muted); }
+  .report-card blockquote {
+    margin: 0;
+    padding: 0.6rem 0.75rem;
+    border-left: 3px solid var(--color-accent);
+    background: var(--color-panel-alt);
+    color: var(--color-ink-secondary);
+    font-size: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .report-alert {
+    padding: 0.65rem 0.85rem;
+    color: var(--color-danger);
+    background: var(--color-danger-dim);
+    border: 1px solid var(--color-danger-border);
+    border-radius: 4px;
+  }
+  .definition-navigation {
+    position: absolute;
+    z-index: 20;
+    top: 0.75rem;
+    left: 1rem;
+    right: auto;
+    width: max-content;
+    pointer-events: none;
+  }
+  .definition-breadcrumbs {
+    display: flex;
+    gap: 0.25rem;
+    align-items: center;
+    min-height: 1.25rem;
+    color: var(--color-muted);
+    font-size: 10px;
+    overflow-x: auto;
+    white-space: nowrap;
+    pointer-events: auto;
+    max-width: calc(100vw - 2rem);
+    padding: 0;
+    background: transparent;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .definition-breadcrumbs button {
+    padding: 0;
+    color: var(--color-accent);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    font-size: inherit;
+  }
+
+  .session-page .report-card,
+  .session-page .report-metric,
+  .session-page #viewer,
+  .session-page aside > section {
+    box-shadow: none !important;
+  }
+
+  @media (max-width: 1023px) {
+    .session-page main {
+      padding-bottom: 2rem;
+    }
+    .diagram-toggle {
+      display: inline-flex;
+    }
+    .session-layout {
+      height: auto !important;
+      min-height: 0 !important;
+    }
+    .diagram-pane {
+      display: none !important;
+      flex: none !important;
+      width: 100%;
+      height: 0;
+      min-height: 0 !important;
+      border-width: 0;
+      overflow: hidden;
+    }
+    .diagram-pane.diagram-open {
+      display: flex !important;
+      height: 360px;
+      min-height: 360px !important;
+      border-width: 1px;
+    }
+    .session-sidebar {
+      flex: none !important;
+    }
+    #turn-panel {
+      flex: none !important;
+      min-height: 420px;
+    }
+    #turns, #activities {
+      max-height: none;
+      overflow: visible;
+    }
+  }
+  .session-page #viewer,
+  .session-page aside > section {
+    border-radius: 4px !important;
+  }
+
   .panel-box {
     background-color: var(--color-panel);
     border: 1px solid var(--color-line);
@@ -289,33 +438,34 @@
     display: none;
   }
 
-  /* Floating Diagram Controls (Clean bottom-right docking) */
+  /* Camunda Modeler-style controls: individual tools float over the canvas. */
   .diagram-controls {
     position: absolute;
     bottom: 0.75rem;
-    right: 0.75rem;
+    right: auto;
+    width: max-content;
     z-index: 20;
     display: flex;
     align-items: center;
-    gap: 0.25rem;
-    background-color: var(--color-controls-bg);
-    backdrop-filter: blur(8px);
-    border: 1px solid var(--color-line-highlight);
-    border-radius: 6px;
-    padding: 0.25rem;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    gap: 0.2rem;
+    background: transparent;
+    border: 0;
+    padding: 0;
   }
   .ctrl-btn {
+    width: 30px;
+    height: 30px;
+    padding: 0;
     background-color: transparent;
     color: var(--color-ink-secondary);
-    border-radius: 4px;
-    padding: 0.25rem 0.5rem;
+    border: 0;
+    border-radius: 3px;
     font-size: 0.75rem;
     font-weight: 600;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 0.25rem;
-    border: none;
     cursor: pointer;
     transition: all 0.15s ease;
   }
@@ -392,6 +542,48 @@
   .task-completed .djs-visual > :first-child {
     stroke: #0f766e !important;
     stroke-width: 3.5px !important;
+  }
+
+  .ga-visited-high .djs-visual rect,
+  .ga-visited-high .djs-visual circle,
+  .ga-visited-high .djs-visual polygon {
+    stroke: #047857 !important;
+    stroke-width: 3.5px !important;
+    fill: #a7f3d0 !important;
+  }
+  .ga-visited-high.djs-connection .djs-visual path { stroke: #047857 !important; stroke-width: 3.5px !important; }
+  .ga-visited-mid .djs-visual rect,
+  .ga-visited-mid .djs-visual circle,
+  .ga-visited-mid .djs-visual polygon {
+    stroke: #0d9488 !important;
+    stroke-width: 3px !important;
+    fill: #ccfbf1 !important;
+  }
+  .ga-visited-mid.djs-connection .djs-visual path { stroke: #0d9488 !important; stroke-width: 3px !important; }
+  .ga-visited .djs-visual rect,
+  .ga-visited .djs-visual circle,
+  .ga-visited .djs-visual polygon {
+    stroke: #059669 !important;
+    stroke-width: 2.5px !important;
+    fill: #ecfdf5 !important;
+  }
+  .ga-visited.djs-connection .djs-visual path { stroke: #059669 !important; stroke-width: 2.5px !important; }
+  .ga-error .djs-visual rect,
+  .ga-error .djs-visual circle,
+  .ga-error .djs-visual polygon {
+    stroke: #dc2626 !important;
+    stroke-width: 3px !important;
+    fill: #fef2f2 !important;
+  }
+  .ga-error.djs-connection .djs-visual path { stroke: #dc2626 !important; stroke-width: 3px !important; }
+  .ga-visited-lane .djs-visual rect {
+    stroke: #059669 !important;
+    stroke-width: 2px !important;
+    stroke-dasharray: 6 3 !important;
+  }
+  .ga-drillable,
+  .ga-drillable * {
+    cursor: pointer !important;
   }
 
   html.dark .task-active .djs-visual > :first-child {

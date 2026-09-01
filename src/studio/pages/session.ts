@@ -5,6 +5,15 @@ import type { FormInstance } from "../../js/types/globals";
 import { connectStudioEvents } from "./live";
 import { mountShell, statusChip } from "./shell";
 import type { PendingGateInfo, SessionDetail, ToolCallDetail, TurnRecord } from "../types";
+import {
+  computeActivitySummaries,
+  formatCost,
+  formatTokens,
+  sessionDurationMs,
+  sessionItems,
+  sessionToolCallCount,
+} from "../../session/presentation";
+import { definitionPath, inspectBpmnDefinitions, type BpmnDefinitionInfo } from "../../js/lib/bpmn-definitions";
 
 let viewer: BpmnDiagramInstance | null = null;
 let renderedGraph: string | null = null;
@@ -13,6 +22,9 @@ let markedElements: Array<{ id: string; marker: string }> = [];
 let modeler: BpmnDiagramInstance | null = null;
 let editing = false;
 let latestDetail: SessionDetail | null = null;
+let definitions: BpmnDefinitionInfo[] = [];
+let activeProcessId = "";
+let diagramOpen = true;
 /**
  * The revision count read when edit mode was entered -- sent back as
  * `If-Match` on save (issue #76). Captured once, not re-read from
@@ -26,6 +38,25 @@ let editingBaseRevision = 0;
 const pendingForms = new Map<string, FormInstance>();
 
 const sessionId = new URLSearchParams(location.search).get("id") ?? "";
+
+function setDiagramOpen(open: boolean): void {
+  diagramOpen = open;
+  const pane = $("diagram-pane");
+  const toggle = $("diagram-toggle");
+  pane?.classList.toggle("diagram-open", open);
+  if (toggle) {
+    toggle.setAttribute("aria-expanded", String(open));
+    toggle.textContent = open ? "Hide diagram" : "Show diagram";
+  }
+  if (open) {
+    window.setTimeout(() => {
+      if (viewer) {
+        viewer.get("canvas").resized();
+        fitDiagram(viewer);
+      }
+    }, 0);
+  }
+}
 
 /**
  * Where the token stands, and where it has been. Markers are cleared first: the
@@ -54,15 +85,48 @@ function paintTokens(detail: SessionDetail): void {
       }
     }
   };
-  mark(detail.visited, "ga-visited");
+
+  const executionCount = new Map<string, number>();
+  let toolCallTurns = 0;
+  for (const turn of detail.turns || []) {
+    executionCount.set(turn.activityId, (executionCount.get(turn.activityId) || 0) + 1);
+    if ((turn.toolCallDetails?.length || turn.toolCalls?.length || 0) > 0) toolCallTurns += 1;
+  }
+  const totalTurns = detail.turns?.length || 0;
+  const repeated = (ids: string[], count: number): void => {
+    for (const id of ids) if (detail.visited.includes(id)) executionCount.set(id, count);
+  };
+  repeated(["inject_pending", "gw_inject_entry", "gw_failed", "gw_tools", "agent_loop"], totalTurns || 1);
+  repeated(["gw_truncated", "tool_batch", "collect_tools", "gw_settled", "prepare_next", "next_turn"], toolCallTurns);
+  repeated(["drain_followup", "gw_followup", "agent_done", "loop_start", "session_start"], 1);
+
+  const visited = new Set(detail.visited || []);
+  const markerForCount = (count: number): string => {
+    return count >= 5 ? "ga-visited-high" : count >= 2 ? "ga-visited-mid" : "ga-visited";
+  };
+  const markerFor = (id: string): string => markerForCount(executionCount.get(id) || 1);
+  for (const id of visited) mark([id], markerFor(id));
+
+  const failed = new Set((detail.turns || []).filter((turn) => turn.stopReason === "error" || turn.error).map((turn) => turn.activityId));
+  mark([...failed], "ga-error");
+
+  // Highlight the completed route, not just the nodes that carried agent work.
+  for (const shape of viewer.get("elementRegistry").getAll() as Array<any>) {
+    if (shape?.type === "bpmn:CallActivity" && shape.businessObject?.calledElement && definitions.some((definition) => definition.processId === shape.businessObject.calledElement)) {
+      mark([shape.id], "ga-drillable");
+    }
+    if (shape?.type === "bpmn:SequenceFlow") {
+      const sourceId = shape.source?.id;
+      const targetId = shape.target?.id;
+      if (sourceId && targetId && visited.has(sourceId) && visited.has(targetId)) {
+        mark([shape.id], markerForCount(Math.min(executionCount.get(sourceId) || 1, executionCount.get(targetId) || 1)));
+      }
+    } else if (shape?.type === "bpmn:Lane" || shape?.type === "bpmn:Participant") {
+      if ((shape.children || []).some((child: any) => visited.has(child.id))) mark([shape.id], "ga-visited-lane");
+    }
+  }
   mark(detail.tokens, "ga-token");
   paintOverlays(detail);
-}
-
-function formatCost(usd: number): string {
-  if (!usd || usd <= 0) return "$0.00";
-  if (usd < 0.01) return `$${usd.toFixed(4)}`;
-  return `$${usd.toFixed(2)}`;
 }
 
 function paintOverlays(detail: SessionDetail): void {
@@ -96,12 +160,6 @@ function paintOverlays(detail: SessionDetail): void {
 let currentTurnFilter: "all" | "tools" | "errors" = "all";
 let currentTurnSearch = "";
 let allDetailsExpanded = false;
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
-}
 
 function formatTurnRange(indices: number[]): string {
   if (indices.length === 0) return "";
@@ -233,47 +291,9 @@ function usageChip(turn: TurnRecord): string {
 function renderActivities(turns: TurnRecord[]): void {
   const host = $("activities");
   if (!host) return;
-  const map = new Map<string, {
-    id: string;
-    name: string;
-    harness: string;
-    turns: number;
-    turnIndices: number[];
-    cost: number;
-    inputTokens: number;
-    outputTokens: number;
-    cacheReadTokens: number;
-    durationMs: number;
-  }>();
+  const map = computeActivitySummaries(turns);
 
-  for (const turn of turns) {
-    const prev = map.get(turn.activityId) || {
-      id: turn.activityId,
-      name: turn.activityName || turn.activityId,
-      harness: turn.harness || "-",
-      turns: 0,
-      turnIndices: [],
-      cost: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      cacheReadTokens: 0,
-      durationMs: 0,
-    };
-    prev.turns += 1;
-    prev.turnIndices.push(turn.index);
-    if (turn.usage) {
-      prev.cost += turn.usage.cost?.total || 0;
-      prev.inputTokens += turn.usage.input || 0;
-      prev.outputTokens += turn.usage.output || 0;
-      prev.cacheReadTokens += turn.usage.cacheRead || 0;
-    }
-    if (turn.startedAt && turn.endedAt) {
-      prev.durationMs += turn.endedAt - turn.startedAt;
-    }
-    map.set(turn.activityId, prev);
-  }
-
-  if (map.size === 0) {
+  if (map.length === 0) {
     host.innerHTML = `<p class="px-3 py-4 text-muted">No activities executed yet.</p>`;
     return;
   }
@@ -285,25 +305,25 @@ function renderActivities(turns: TurnRecord[]): void {
           <th class="py-1.5 px-2 font-semibold">Activity</th>
           <th class="py-1.5 px-1 font-semibold text-center">Range</th>
           <th class="py-1.5 px-1 font-semibold text-center">Turns</th>
-          <th class="py-1.5 px-2 font-semibold">In / Out / Cache</th>
+           <th class="py-1.5 px-2 font-semibold">In / Out / Cache / Reasoning</th>
           <th class="py-1.5 px-2 font-semibold text-right">Cost</th>
         </tr>
       </thead>
       <tbody>
-        ${[...map.values()]
+        ${map
           .map(
             (act) => `
-          <tr class="border-b border-line-subtle hover:bg-card-hover cursor-pointer" data-activity="${escapeHtml(act.id)}" data-first-turn="${act.turnIndices[0]}">
+            <tr class="border-b border-line-subtle hover:bg-card-hover cursor-pointer" data-activity="${escapeHtml(act.activityId)}" data-first-turn="${act.turnIndices[0]}">
             <td class="py-1.5 px-2">
-              <div class="font-medium text-ink truncate max-w-[110px]" title="${escapeHtml(act.name)}">${escapeHtml(act.name)}</div>
+              <div class="font-medium text-ink truncate max-w-[110px]" title="${escapeHtml(act.activityName)}">${escapeHtml(act.activityName)}</div>
               <div class="font-mono text-[9.5px] text-muted truncate max-w-[110px]">${escapeHtml(act.harness)}</div>
             </td>
             <td class="py-1.5 px-1 font-mono text-[10px] text-center text-muted">${formatTurnRange(act.turnIndices) || "-"}</td>
             <td class="py-1.5 px-1 font-mono text-[10px] text-center">${act.turns}</td>
             <td class="py-1.5 px-2 font-mono text-[9.5px] text-muted whitespace-nowrap">
-              ${formatTokens(act.inputTokens)} / ${formatTokens(act.outputTokens)} / ${formatTokens(act.cacheReadTokens)}
+              ${formatTokens(act.inputTokens)} / ${formatTokens(act.outputTokens)} / ${formatTokens(act.cacheReadTokens)} / ${formatTokens(act.reasoningTokens)}
             </td>
-            <td class="py-1.5 px-2 font-mono text-[10px] text-right font-bold text-accent">${formatCost(act.cost)}</td>
+            <td class="py-1.5 px-2 font-mono text-[10px] text-right font-bold text-accent">${formatCost(act.costUSD)}<br><span class="text-muted font-normal">${act.durationMs > 0 ? `${(act.durationMs / 1000).toFixed(1)}s` : "-"}</span></td>
           </tr>`,
           )
           .join("")}
@@ -535,6 +555,77 @@ function renderRevisions(detail: SessionDetail): void {
     .join("");
 }
 
+function renderDefinitionNavigation(detail: SessionDetail): void {
+  const nav = $("definition-navigation");
+  const crumbs = $("definition-breadcrumbs");
+  if (!nav || !crumbs || definitions.length === 0) return;
+  nav.classList.remove("hidden");
+
+  const active = definitions.find((definition) => definition.processId === activeProcessId) || definitions[0]!;
+  const path = definitionPath(definitions, active.processId);
+  crumbs.innerHTML = path
+    .map((definition, index) => `${index > 0 ? `<span aria-hidden="true">/</span>` : ""}<button type="button" data-process="${escapeHtml(definition.processId)}" ${index === path.length - 1 ? "aria-current=page" : ""}>${escapeHtml(definition.name)}</button>`)
+    .join("");
+  for (const button of crumbs.querySelectorAll<HTMLButtonElement>("button")) {
+    button.onclick = () => void openDefinition(button.dataset.process || "", detail);
+  }
+}
+
+async function openDefinition(processId: string, detail: SessionDetail): Promise<void> {
+  if (!viewer || !processId) return;
+  const modelDefinitions = viewer.getDefinitions?.();
+  if (!modelDefinitions || !viewer.open) return;
+  const diagram = modelDefinitions.diagrams?.find((candidate) => candidate.plane?.bpmnElement?.id === processId);
+  if (!diagram) return;
+  try {
+    await viewer.open(diagram);
+    activeProcessId = processId;
+    renderDefinitionNavigation(detail);
+    markedElements = [];
+    fitDiagram(viewer);
+    paintTokens(detail);
+  } catch {
+    // A malformed or removed diagram should not take down the live session view.
+  }
+}
+
+function syncDefinitions(detail: SessionDetail): void {
+  if (!viewer) return;
+  const modelDefinitions = viewer.getDefinitions?.();
+  if (!modelDefinitions) return;
+  definitions = inspectBpmnDefinitions(modelDefinitions as never);
+  const activeExists = definitions.some((definition) => definition.processId === activeProcessId);
+  if (!activeExists) activeProcessId = definitions.find((definition) => definition.isRoot)?.processId || definitions[0]?.processId || "";
+  renderDefinitionNavigation(detail);
+}
+
+function updateSessionSummary(detail: SessionDetail, turns: TurnRecord[]): void {
+  const metrics: Record<string, string> = {
+    status: detail.status,
+    cost: formatCost(detail.stats?.totalCostUSD || 0),
+    turns: String(detail.turnCount),
+    tools: String(sessionToolCallCount(turns)),
+    tokens: formatTokens(detail.stats?.totalTokens || 0),
+    cache: `${Math.round((detail.stats?.cacheHitRatio || 0) * 100)}%`,
+    duration: sessionDurationMs(turns) > 0 ? `${(sessionDurationMs(turns) / 1000).toFixed(1)}s` : "-",
+  };
+  for (const [name, value] of Object.entries(metrics)) {
+    const element = $(`metric-${name}`);
+    if (element) element.textContent = value;
+  }
+  const promptCard = $("prompt-card");
+  const prompt = $("session-prompt");
+  if (promptCard && prompt) {
+    promptCard.classList.toggle("hidden", !detail.prompt);
+    prompt.textContent = detail.prompt || "";
+  }
+  const error = $("harness-error");
+  if (error) {
+    error.classList.toggle("hidden", !detail.harnessError);
+    error.textContent = detail.harnessError ? `Harness error: ${detail.harnessError}` : "";
+  }
+}
+
 async function refresh(): Promise<void> {
   const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`);
   if (!res.ok) {
@@ -544,6 +635,8 @@ async function refresh(): Promise<void> {
   }
   const detail: SessionDetail = await res.json();
   latestDetail = detail;
+  const items = sessionItems(detail);
+  updateSessionSummary(detail, items);
 
   const title = $("session-title");
   if (title) title.textContent = detail.name || detail.id;
@@ -577,11 +670,15 @@ async function refresh(): Promise<void> {
     await viewer.importXML(detail.graph);
     renderedGraph = detail.graph;
     markedElements = [];
+    syncDefinitions(detail);
+    const active = definitions.find((definition) => definition.processId === activeProcessId);
+    const diagram = viewer.getDefinitions?.().diagrams?.find((candidate) => candidate.plane?.bpmnElement?.id === active?.processId);
+    if (diagram && viewer.open) await viewer.open(diagram);
     fitDiagram(viewer);
   }
   paintTokens(detail);
-  renderTurns(detail.turns);
-  renderActivities(detail.turns);
+  renderTurns(items);
+  renderActivities(items);
   renderRevisions(detail);
   void refreshPending();
 }
@@ -792,6 +889,7 @@ async function enterEdit(): Promise<void> {
   if (!instance) return editMsg("Editor failed to load.", "error");
 
   editing = true;
+  setDiagramOpen(true);
   editingBaseRevision = latestDetail.revisions.length;
   $("viewer")?.classList.add("hidden");
   $("editor")?.classList.remove("hidden");
@@ -819,6 +917,7 @@ async function enterEdit(): Promise<void> {
 
 function exitEdit(): void {
   editing = false;
+  setDiagramOpen(!window.matchMedia("(max-width: 1023px)").matches);
   $("editor")?.classList.add("hidden");
   $("properties-container")?.classList.add("hidden");
   $("properties-container")?.classList.remove("flex");
@@ -864,6 +963,7 @@ async function saveEdit(): Promise<void> {
 
 async function init(): Promise<void> {
   await mountShell("session");
+  setDiagramOpen(!window.matchMedia("(max-width: 1023px)").matches);
 
   const ViewerCtor = window.BpmnNavigatedViewer || window.BpmnJS;
   if (ViewerCtor) {
@@ -882,9 +982,19 @@ async function init(): Promise<void> {
       reset: "ctrl-zoom-reset",
       minimap: "ctrl-minimap",
     });
+    viewer.on("element.click", (event) => {
+      const clicked = (event as { element?: { type?: string; businessObject?: { calledElement?: string } } }).element;
+      if (clicked?.type !== "bpmn:CallActivity" || !clicked.businessObject?.calledElement || !latestDetail) return;
+      if (definitions.some((definition) => definition.processId === clicked.businessObject!.calledElement)) {
+        void openDefinition(clicked.businessObject.calledElement, latestDetail);
+      }
+    });
   }
 
   await refresh();
+
+  const diagramToggle = $("diagram-toggle");
+  if (diagramToggle) diagramToggle.onclick = () => setDiagramOpen(!diagramOpen);
 
   const editBtn = $("edit-btn");
   if (editBtn) editBtn.onclick = () => void enterEdit();

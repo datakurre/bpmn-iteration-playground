@@ -1,6 +1,14 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
-import type { SessionDetail, TurnRecord } from "../studio/types.ts";
+import type { SessionDetail } from "../studio/types.ts";
+import {
+  computeActivitySummaries,
+  formatCost,
+  formatTokens,
+  sessionDurationMs,
+  sessionItems,
+  sessionToolCallCount,
+} from "../session/presentation.ts";
 import {
   formatTurnRange,
   renderSessionDiagrams,
@@ -16,64 +24,8 @@ import {
 import { SessionStore } from "../agent/session-store.ts";
 import { requirePaths } from "./main.ts";
 
-export interface ActivitySummary {
-  activityId: string;
-  activityName: string;
-  harness: string;
-  turns: number;
-  turnIndices: number[];
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  reasoningTokens: number;
-  costUSD: number;
-  durationMs: number;
-}
-
-export function computeActivitySummaries(turns: TurnRecord[]): ActivitySummary[] {
-  const map = new Map<string, ActivitySummary>();
-  for (const turn of turns) {
-    const existing = map.get(turn.activityId) || {
-      activityId: turn.activityId,
-      activityName: turn.activityName || turn.activityId,
-      harness: turn.harness || "-",
-      turns: 0,
-      turnIndices: [],
-      inputTokens: 0,
-      outputTokens: 0,
-      cacheReadTokens: 0,
-      reasoningTokens: 0,
-      costUSD: 0,
-      durationMs: 0,
-    };
-    existing.turns += 1;
-    existing.turnIndices.push(turn.index);
-    if (turn.usage) {
-      existing.inputTokens += turn.usage.input || 0;
-      existing.outputTokens += turn.usage.output || 0;
-      existing.cacheReadTokens += turn.usage.cacheRead || 0;
-      existing.reasoningTokens += turn.usage.reasoning || 0;
-      existing.costUSD += turn.usage.cost?.total || 0;
-    }
-    if (turn.startedAt && turn.endedAt) {
-      existing.durationMs += turn.endedAt - turn.startedAt;
-    }
-    map.set(turn.activityId, existing);
-  }
-  return [...map.values()];
-}
-
-function formatCost(usd: number): string {
-  if (!usd || usd <= 0) return "$0.00";
-  if (usd < 0.01) return `$${usd.toFixed(4)}`;
-  return `$${usd.toFixed(2)}`;
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
-}
+export { computeActivitySummaries } from "../session/presentation.ts";
+export type { ActivitySummary } from "../session/presentation.ts";
 
 function escapeHtml(str: string): string {
   return str
@@ -241,22 +193,16 @@ export async function generateMarkdownReport(
   } = {}
 ): Promise<string> {
   const stats = detail.stats;
-  const itemsToReport = detail.steps && detail.steps.length > 0 ? detail.steps : detail.turns;
+  const itemsToReport = sessionItems(detail);
   const activities = computeActivitySummaries(itemsToReport);
   const totalCost = stats?.totalCostUSD ? formatCost(stats.totalCostUSD) : "$0.00";
   const totalTokens = stats?.totalTokens ? formatTokens(stats.totalTokens) : "0";
   const cacheHit = stats?.cacheHitRatio !== undefined ? `${Math.round(stats.cacheHitRatio * 100)}%` : "0%";
 
-  let totalDurationMs = 0;
-  for (const t of itemsToReport) {
-    if (t.startedAt && t.endedAt) totalDurationMs += t.endedAt - t.startedAt;
-  }
+  const totalDurationMs = sessionDurationMs(itemsToReport);
   const durationStr = totalDurationMs > 0 ? `${(totalDurationMs / 1000).toFixed(1)}s` : "-";
 
-  let totalToolCalls = 0;
-  for (const t of itemsToReport) {
-    totalToolCalls += t.toolCallDetails?.length || t.toolCalls?.length || 0;
-  }
+  const totalToolCalls = sessionToolCallCount(itemsToReport);
 
   let promptSection = "";
   if (detail.prompt) {
@@ -482,7 +428,7 @@ export async function generateHtmlReport(
     diagramSectionHtml = `<p class="text-muted">Diagram preview unavailable.</p>`;
   }
 
-  const itemsToReport = detail.steps && detail.steps.length > 0 ? detail.steps : detail.turns;
+  const itemsToReport = sessionItems(detail);
   let totalDurationMs = 0;
   let totalToolCallsCount = 0;
   let errorCount = 0;
