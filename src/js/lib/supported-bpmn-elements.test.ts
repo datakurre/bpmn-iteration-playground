@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { onlySupportedElements, SUPPORTED_ELEMENT_TYPES, SUPPORTED_EVENT_DEFINITIONS } from "./supported-bpmn-elements";
+import {
+  expandedSubprocesses,
+  onlySupportedElements,
+  SUPPORTED_ELEMENT_TYPES,
+  SUPPORTED_EVENT_DEFINITIONS,
+} from "./supported-bpmn-elements";
 
 // bpmnlint always hands rules real moddle elements, which implement
 // `$instanceOf` across the whole BPMN type hierarchy (a `bpmn:ServiceTask` is
@@ -123,5 +128,79 @@ describe("onlySupportedElements", () => {
         "bpmn:TimerEventDefinition",
       ].sort(),
     );
+  });
+});
+
+describe("expandedSubprocesses", () => {
+  function definitions(isExpanded: boolean | undefined, childIds: string[]) {
+    return {
+      id: "Defs_1",
+      $type: "bpmn:Definitions",
+      rootElements: [
+        {
+          id: "proc",
+          $type: "bpmn:Process",
+          flowElements: [
+            {
+              id: "sub",
+              $type: "bpmn:SubProcess",
+              flowElements: [{ id: "sub_start", $type: "bpmn:StartEvent" }],
+            },
+          ],
+        },
+      ],
+      diagrams: [
+        {
+          plane: {
+            bpmnElement: { id: "proc" },
+            planeElement: [
+              { bpmnElement: { id: "sub" }, ...(isExpanded === undefined ? {} : { isExpanded }) },
+              ...childIds.map((id) => ({ bpmnElement: { id } })),
+            ],
+          },
+        },
+      ],
+    };
+  }
+
+  it("accepts an expanded subprocess whose children are visible", () => {
+    const reports: unknown[] = [];
+    expandedSubprocesses().check(definitions(true, ["sub_start"]), { report: (...args) => reports.push(args) });
+    expect(reports).toEqual([]);
+  });
+
+  it("rejects a collapsed subprocess", () => {
+    const reports: [string, string][] = [];
+    expandedSubprocesses().check(definitions(false, ["sub_start"]), {
+      report: (id, message) => reports.push([id, message]),
+    });
+    expect(reports).toEqual([["sub", "Embedded subprocess must be expanded in its containing model"]]);
+  });
+
+  it("rejects a subprocess whose expansion flag is omitted", () => {
+    const reports: [string, string][] = [];
+    expandedSubprocesses().check(definitions(undefined, ["sub_start"]), {
+      report: (id, message) => reports.push([id, message]),
+    });
+    expect(reports).toEqual([["sub", "Embedded subprocess must be expanded in its containing model"]]);
+  });
+
+  it("rejects a subprocess whose child is absent from the containing model", () => {
+    const reports: [string, string][] = [];
+    expandedSubprocesses().check(definitions(undefined, []), {
+      report: (id, message) => reports.push([id, message]),
+    });
+    expect(reports).toEqual([
+      ["sub", "Embedded subprocess must be expanded in its containing model"],
+      ["sub_start", "Embedded subprocess 'sub' is not fully visible in its containing model"],
+    ]);
+  });
+
+  it("does not inspect callActivities", () => {
+    const reports: unknown[] = [];
+    const model = definitions(false, []);
+    model.rootElements[0]!.flowElements = [{ id: "call", $type: "bpmn:CallActivity", flowElements: [] }];
+    expandedSubprocesses().check(model, { report: (...args) => reports.push(args) });
+    expect(reports).toEqual([]);
   });
 });

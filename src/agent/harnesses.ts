@@ -14,6 +14,7 @@ import type { ToolExecutor } from "./tool-executor.ts";
 import { GraphRevisionConflictError, type SessionStore } from "./session-store.ts";
 import type { TurnRecord } from "../studio/types.ts";
 import { SUPPORTED_ELEMENT_TYPES, SUPPORTED_EVENT_DEFINITIONS } from "../js/lib/supported-bpmn-elements.ts";
+import { ensureLabelDi } from "../js/lib/bpmn-label-layout.ts";
 
 /** Matches craft-graph.bpmn's own `gw_lint` condition (`lint_attempts >= 3`). */
 const MAX_LINT_ATTEMPTS = 3;
@@ -81,10 +82,16 @@ const AGENT_ROLES: Record<string, string> = {
     "When extending the workflow, the most direct and reliable approach is to " +
     'insertShape the new task(s) or gateway(s) into an existing sequenceFlow ' +
     '(such as "to_applied" in craft-graph or "crafted_ok" in session-craft). ' +
-    'If you define a separate sub-process with createProcess, you MUST also ' +
-    'insertShape a bpmn:CallActivity (with "calledElement":"<process id>") ' +
-    "into an existing sequenceFlow so the sub-process is connected to the execution path.\n\n" +
-    'Every new element\'s "type" must be exactly one of these -- anything ' +
+     'If you define a separate sub-process with createProcess, you MUST also ' +
+     'insertShape a bpmn:CallActivity (with "calledElement":"<process id>") ' +
+     "into an existing sequenceFlow so the sub-process is connected to the execution path.\n\n" +
+     "Diagram authoring rules: do not create an embedded bpmn:SubProcess in a " +
+     "crafting patch; use createProcess plus a bpmn:CallActivity instead. Keep " +
+     "event and gateway names short because bpmn-js places their external labels " +
+     "around the shape. Avoid adding lanes unless they are required by the " +
+     "request. The layout stage generates diagram interchange and label bounds; " +
+     "never invent or hand-edit coordinates in this operation list.\n\n" +
+     'Every new element\'s "type" must be exactly one of these -- anything ' +
     "else has no tested behaviour here and will be rejected:\n" +
     [...SUPPORTED_ELEMENT_TYPES].sort().join(", ") +
     "\n\n" +
@@ -584,7 +591,7 @@ export function createHarnesses(deps: HarnessDeps): HarnessRegistry {
       const startedAt = Date.now();
       const source = stripCodeFence(String(context.input.fragment ?? deps.getGraph()));
       try {
-        const layouted = await layoutProcess(source);
+        const layouted = await ensureLabelDi(await layoutProcess(source));
         recordStep(store, {
           activityId: context.activityId,
           ...(context.activityName === undefined ? {} : { activityName: context.activityName }),

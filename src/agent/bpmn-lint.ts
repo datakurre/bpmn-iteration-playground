@@ -11,13 +11,14 @@ import { BpmnModdle } from "bpmn-moddle";
 import { Linter } from "bpmnlint";
 import NodeResolver from "bpmnlint/lib/resolver/node-resolver.js";
 import { MODDLE_OPTIONS } from "./graph.ts";
-import { onlySupportedElements } from "../js/lib/supported-bpmn-elements.ts";
+import { expandedSubprocesses, onlySupportedElements } from "../js/lib/supported-bpmn-elements.ts";
+import { labelLayout } from "../js/lib/bpmn-label-layout.ts";
 
 const CONFIG = {
   extends: "bpmnlint:recommended",
   rules: {
     "label-required": "warn",
-    "no-overlapping-elements": "off",
+    "no-overlapping-elements": "error",
     "no-disconnected": "error",
     "no-implicit-split": "error",
     "no-implicit-end": "error",
@@ -38,6 +39,8 @@ const CONFIG = {
     // Restricts creatable/importable elements to what this project's runtime
     // actually supports -- see supported-bpmn-elements.ts.
     "local/only-supported-elements": "error",
+    "local/expanded-subprocesses": "error",
+    "local/label-layout": "error",
   },
 };
 
@@ -55,6 +58,8 @@ function withLocalRules(resolver: NodeResolver) {
   return {
     resolveRule(pkg: string, ruleName: string): unknown {
       if (pkg === "bpmnlint-plugin-local" && ruleName === "only-supported-elements") return onlySupportedElements;
+      if (pkg === "bpmnlint-plugin-local" && ruleName === "expanded-subprocesses") return expandedSubprocesses;
+      if (pkg === "bpmnlint-plugin-local" && ruleName === "label-layout") return labelLayout;
       return resolver.resolveRule(pkg, ruleName);
     },
     resolveConfig(pkg: string, configName: string): unknown {

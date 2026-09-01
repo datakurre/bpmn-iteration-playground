@@ -56,6 +56,70 @@ interface BpmnlintReporter {
   report(id: string, message: string): void;
 }
 
+interface BpmnlintDiElement {
+  isExpanded?: boolean;
+  bpmnElement?: { id?: string };
+}
+
+interface BpmnlintDiagram {
+  plane?: {
+    bpmnElement?: { id?: string };
+    planeElement?: BpmnlintDiElement[];
+  };
+}
+
+interface BpmnlintFlowElement {
+  id: string;
+  $type: string;
+  flowElements?: BpmnlintFlowElement[];
+}
+
+/** Reject embedded subprocesses that are collapsed or not fully visible in-place. */
+export function expandedSubprocesses() {
+  return {
+    check(node: BpmnlintNode, reporter: BpmnlintReporter) {
+      if (node.$type !== "bpmn:Definitions") return;
+      const definitions = node as BpmnlintNode & {
+        rootElements?: BpmnlintFlowElement[];
+        diagrams?: BpmnlintDiagram[];
+      };
+      const diagramsByProcess = new Map(
+        (definitions.diagrams ?? [])
+          .map((diagram) => [diagram.plane?.bpmnElement?.id, diagram.plane?.planeElement ?? []] as const)
+          .filter(([id]) => id !== undefined),
+      );
+      const checkContainer = (elements: BpmnlintFlowElement[], processId: string) => {
+        const visibleIds = new Set(
+          (diagramsByProcess.get(processId) ?? []).map((element) => element.bpmnElement?.id).filter(Boolean),
+        );
+        const visit = (element: BpmnlintFlowElement) => {
+          if (element.$type === "bpmn:SubProcess") {
+            const shape = (diagramsByProcess.get(processId) ?? []).find(
+              (diElement) => diElement.bpmnElement?.id === element.id,
+            );
+            if (shape?.isExpanded !== true) {
+              reporter.report(element.id, "Embedded subprocess must be expanded in its containing model");
+            }
+            if (!visibleIds.has(element.id)) {
+              reporter.report(element.id, "Embedded subprocess is missing a visible shape in its containing model");
+            }
+            for (const child of element.flowElements ?? []) {
+              if (!visibleIds.has(child.id)) {
+                reporter.report(child.id, `Embedded subprocess '${element.id}' is not fully visible in its containing model`);
+              }
+            }
+          }
+          for (const child of element.flowElements ?? []) visit(child);
+        };
+        for (const element of elements) visit(element);
+      };
+      for (const process of definitions.rootElements ?? []) {
+        if (process.$type === "bpmn:Process") checkContainer(process.flowElements ?? [], process.id);
+      }
+    },
+  };
+}
+
 function isAny(node: BpmnlintNode, types: string[]): boolean {
   return types.some((type) =>
     typeof node.$instanceOf === "function" ? node.$instanceOf(type) : node.$type === type,

@@ -34,7 +34,8 @@ import subProcessBlankStartEvent from "bpmnlint/rules/sub-process-blank-start-ev
 import superfluousGateway from "bpmnlint/rules/superfluous-gateway";
 import superfluousTermination from "bpmnlint/rules/superfluous-termination";
 
-import { onlySupportedElements } from "./supported-bpmn-elements";
+import { expandedSubprocesses, onlySupportedElements } from "./supported-bpmn-elements";
+import { labelLayout } from "./bpmn-label-layout";
 
 // bpmnlint resolves bare (unprefixed) rule names, as used by
 // `config/recommended`, against the `bpmnlint` package itself, so the
@@ -72,6 +73,8 @@ const resolver = new StaticResolver({
   // cache key it actually looks up here too -- verified directly against a
   // real editor run; the naive "rule:local/..." key silently never resolves.
   "rule:bpmnlint-plugin-local/only-supported-elements": onlySupportedElements,
+  "rule:bpmnlint-plugin-local/expanded-subprocesses": expandedSubprocesses,
+  "rule:bpmnlint-plugin-local/label-layout": labelLayout,
 });
 
 // Shape expected by `bpmn-js-bpmnlint`'s `linting.bpmnlint` option.
@@ -86,9 +89,12 @@ export const recommendedLintConfig = {
       // for why, and any workflows/*.bpmn's gw_*_entry gateways for the
       // merging-exclusive-gateway pattern to use instead.
       "fake-join": "error",
+      "no-overlapping-elements": "error",
       // Restricts creatable/importable elements to what this project's runtime
       // actually supports -- see supported-bpmn-elements.ts.
       "local/only-supported-elements": "error",
+      "local/expanded-subprocesses": "error",
+      "local/label-layout": "error",
     },
   },
   resolver,

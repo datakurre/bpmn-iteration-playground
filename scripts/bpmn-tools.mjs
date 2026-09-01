@@ -19,6 +19,7 @@ import { BpmnModdle } from "bpmn-moddle";
 import zeebe from "zeebe-bpmn-moddle/resources/zeebe.json" with { type: "json" };
 import NodeResolver from "bpmnlint/lib/resolver/node-resolver.js";
 import { stampModel } from "../src/agent/versioning.ts";
+import { ensureLabelDi, labelLayout } from "../src/js/lib/bpmn-label-layout.ts";
 
 const pkg = JSON.parse(readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8"));
 
@@ -26,7 +27,7 @@ const CONFIG = {
   extends: "bpmnlint:recommended",
   rules: {
     "label-required": "warn",
-    "no-overlapping-elements": "off",
+    "no-overlapping-elements": "error",
     "no-disconnected": "error",
     "no-implicit-split": "error",
     "no-implicit-end": "error",
@@ -49,6 +50,8 @@ const CONFIG = {
     // actually supports -- keep in sync with src/js/lib/supported-bpmn-elements.ts
     // (this script deliberately doesn't import from src/, see the file header).
     "local/only-supported-elements": "error",
+    "local/expanded-subprocesses": "error",
+    "local/label-layout": "error",
   },
 };
 
@@ -101,12 +104,52 @@ function onlySupportedElements() {
   };
 }
 
+function expandedSubprocesses() {
+  return {
+    check(node, reporter) {
+      if (node.$type !== "bpmn:Definitions") return;
+      const diagramsByProcess = new Map(
+        (node.diagrams || [])
+          .map((diagram) => [diagram.plane?.bpmnElement?.id, diagram.plane?.planeElement || []])
+          .filter(([id]) => id !== undefined),
+      );
+      function checkContainer(elements, processId) {
+        const diElements = diagramsByProcess.get(processId) || [];
+        const visibleIds = new Set(diElements.map((element) => element.bpmnElement?.id).filter(Boolean));
+        function visit(element) {
+          if (element.$type === "bpmn:SubProcess") {
+            const shape = diElements.find((diElement) => diElement.bpmnElement?.id === element.id);
+            if (shape?.isExpanded !== true) {
+              reporter.report(element.id, "Embedded subprocess must be expanded in its containing model");
+            }
+            if (!visibleIds.has(element.id)) {
+              reporter.report(element.id, "Embedded subprocess is missing a visible shape in its containing model");
+            }
+            for (const child of element.flowElements || []) {
+              if (!visibleIds.has(child.id)) {
+                reporter.report(child.id, `Embedded subprocess '${element.id}' is not fully visible in its containing model`);
+              }
+            }
+          }
+          for (const child of element.flowElements || []) visit(child);
+        }
+        for (const element of elements) visit(element);
+      }
+      for (const process of node.rootElements || []) {
+        if (process.$type === "bpmn:Process") checkContainer(process.flowElements || [], process.id);
+      }
+    },
+  };
+}
+
 // See src/agent/bpmn-lint.ts's own withLocalRules for why this wrapper exists:
 // NodeResolver can't resolve a rule that isn't a real npm plugin package.
 function withLocalRules(resolver) {
   return {
     resolveRule(pkg, ruleName) {
       if (pkg === "bpmnlint-plugin-local" && ruleName === "only-supported-elements") return onlySupportedElements;
+      if (pkg === "bpmnlint-plugin-local" && ruleName === "expanded-subprocesses") return expandedSubprocesses;
+      if (pkg === "bpmnlint-plugin-local" && ruleName === "label-layout") return labelLayout;
       return resolver.resolveRule(pkg, ruleName);
     },
     resolveConfig(pkg, configName) {
@@ -117,7 +160,7 @@ function withLocalRules(resolver) {
 
 async function layout(file) {
   const xml = readFileSync(file, "utf8");
-  const laidOut = await layoutProcess(xml);
+  const laidOut = await ensureLabelDi(await layoutProcess(xml));
   const stamped = stampModel(laidOut, pkg.version);
   writeFileSync(file, stamped);
   return `layout  ${file}`;

@@ -22,8 +22,8 @@ describe("lintBpmn", () => {
   it("reports no errors for a small, fully-supported graph", async () => {
     const xml = await layoutProcess(
       graph(`
-      <bpmn:startEvent id="start" name="Start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
-      <bpmn:endEvent id="end" name="End"><bpmn:incoming>f1</bpmn:incoming></bpmn:endEvent>
+       <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+       <bpmn:endEvent id="end"><bpmn:incoming>f1</bpmn:incoming></bpmn:endEvent>
       <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="end" />
     `),
     );

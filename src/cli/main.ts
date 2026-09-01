@@ -11,6 +11,7 @@ import { firstActivity, pendingGates, processId, withDefinitionsId, withProcessI
 import { formFields } from "../tui/form-fields.ts";
 import { unlinkGraph } from "../agent/link.ts";
 import { lintBpmn } from "../agent/bpmn-lint.ts";
+import { ensureLabelDi } from "../js/lib/bpmn-label-layout.ts";
 import { createPiToolExecutor } from "../agent/tool-executor.ts";
 import { dryRunModel, readConfiguredModel, resolveModel } from "./model.ts";
 import { listSessions, SessionStore } from "../agent/session-store.ts";
@@ -1006,10 +1007,10 @@ async function cmdPromote(args: string[]): Promise<number> {
 
   const { xml: unlinkedXml, unlinked } = await unlinkGraph(revisionXml);
   const newProcessId = sanitizeId(name);
-  const promotedXml = await withProcessId(
+  const promotedXml = await ensureLabelDi(await withProcessId(
     await withDefinitionsId(unlinkedXml, `Defs_${newProcessId}`),
     newProcessId,
-  );
+  ));
 
   const lint = await lintBpmn(promotedXml);
   if (lint.errors > 0) {

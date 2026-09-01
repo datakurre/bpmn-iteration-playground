@@ -375,6 +375,14 @@ describe("pi-default-loop.bpmn is faithful to runLoop()", () => {
     expect(batch?.loopCharacteristics?.isSequential).toBe(false);
   });
 
+  it("keeps the embedded tool flow expanded and visible in the containing plane", () => {
+    const xml = readFileSync(join(DIR, "pi-default-loop.bpmn"), "utf8");
+    expect(xml).toContain('bpmnElement="tool_batch" isExpanded="true"');
+    for (const id of ["tool_start", "run_tool", "tool_end", "to_tool", "tool_done"]) {
+      expect(xml, `${id} is missing from the containing plane`).toContain(`bpmnElement="${id}"`);
+    }
+  });
+
   it("gives each tool-batch instance the tool call it is meant to run", async () => {
     // A bare loopCardinality spawns the right number of instances and tells none
     // of them which tool call is theirs; the batch has to loop over a collection.
