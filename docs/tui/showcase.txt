@@ -1,0 +1,18 @@
+
+ Show the deterministic TUI showcase.
+
+
+ [dry run] no model was called.
+────────────────────────────────────────────────────────────────────────────────
+
+ drain_followup  agent:follow-up  No follow-up queued
+ llm_turn  agent:turn  [dry run] no model was called.
+ inject_pending  agent:steer  No steering messages pending
+
+────────────────────────────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+ idle · graph pi-default-loop · 1 turn(s) · cache 0/45 (0%) · revision 0 · at -
+ · session showcase

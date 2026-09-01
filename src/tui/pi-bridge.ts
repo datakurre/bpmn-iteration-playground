@@ -19,6 +19,7 @@ import {
   SelectList,
   Text,
   TuiMainScreen,
+  stripTerminalSequences,
   type AutocompleteItem,
   type AutocompleteProvider,
   type Component,
@@ -208,4 +209,5 @@ export {
   type SlashCommand,
   type Terminal,
   type TUI,
+  stripTerminalSequences,
 };

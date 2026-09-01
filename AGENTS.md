@@ -203,3 +203,44 @@ reopening anything:
   `runSession`'s `onWait` in-process does not cover `run` -> park -> persist ->
   `resume --answer`. That gap hid two separate bugs (#31, #34) behind a green
   suite. When a fix is for CLI behaviour, drive the CLI.
+
+### TUI feedback loop
+
+The TUI has a deterministic, credential-free development loop. Use it for UI
+layout and interaction work instead of a real model:
+
+```sh
+make test-tui
+make showcase-tui
+make screenshot-tui
+```
+
+`src/tui/recording-terminal.ts` implements the Pi `Terminal` seam with a fixed
+in-memory screen, ANSI recording, resize support and queued input. It is not a
+full terminal emulator, but it handles the cursor, erase and style control
+sequences emitted by `TuiMainScreen` well enough to inspect the visible screen.
+
+`src/tui/scenario.ts` runs the real `startTui()` against that terminal. Prefer
+scenario actions that wait for visible text over fixed sleeps. Use
+`editor.onSubmit` when testing application behavior directly, and terminal
+input actions when testing editor key decoding.
+
+`make showcase-tui` runs the deterministic faux-provider scenario and prints
+the reconstructed terminal screen. `TUI_COLUMNS` and `TUI_ROWS` select its
+dimensions. `make screenshot-tui` writes the same screen and raw ANSI to
+`docs/tui/` and captures `docs/tui/showcase.png` with Chromium. These generated
+artifacts are for visual review; do not use them as the sole regression oracle.
+
+When changing TUI layout, inspect all three sizes before considering it done:
+
+```sh
+TUI_COLUMNS=120 TUI_ROWS=32 make showcase-tui
+TUI_COLUMNS=80 TUI_ROWS=24 make showcase-tui
+TUI_COLUMNS=40 TUI_ROWS=16 make showcase-tui
+```
+
+The current screenshot renderer intentionally shows the reconstructed visible
+text in a browser-styled terminal viewport. It is useful for spacing, wrapping
+and density review. Raw terminal lifecycle behavior such as real cursor
+restoration, Ctrl-C and alternate-screen handling still requires a real PTY;
+do not claim those are covered by the recording terminal.

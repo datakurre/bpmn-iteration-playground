@@ -2,8 +2,8 @@
 #   nix develop --command make <target>
 
 .PHONY: help setup install \
-        build build-cli build-assets build-css dev run studio init \
-        lint lint-templates lint-bpmn layout typecheck test test-watch test-coverage verify-editor clean
+        build build-cli build-assets build-css dev run studio init showcase-tui screenshot-tui \
+        lint lint-templates lint-bpmn layout typecheck test test-tui test-watch test-coverage verify-editor clean
 
 NPM ?= npm
 NODE ?= node
@@ -26,6 +26,8 @@ help:
 	@echo "  make run                - run the agent CLI (ARGS=...)"
 	@echo "  make studio             - serve the BPMN studio (HOST=..., PORT=0 picks a free port)"
 	@echo "  make dev                - rebuild on change and serve the studio"
+	@echo "  make showcase-tui       - run a deterministic TUI scenario interactively"
+	@echo "  make screenshot-tui     - regenerate deterministic TUI screenshots"
 	@echo ""
 	@echo "Check"
 	@echo "  make lint               - typecheck + template lint"
@@ -34,6 +36,7 @@ help:
 	@echo "  make lint-bpmn          - bpmnlint over workflows/"
 	@echo "  make layout             - regenerate diagram layout for workflows/"
 	@echo "  make test               - vitest run"
+	@echo "  make test-tui           - run TUI unit and scenario tests"
 	@echo "  make test-watch         - vitest watch"
 	@echo "  make test-coverage      - vitest run --coverage"
 	@echo "  make verify-editor      - drive the editor in a real browser"
@@ -70,6 +73,12 @@ run: build-cli
 studio: build
 	$(NODE) dist/graph-agent.js studio --host $(HOST) --port $(PORT)
 
+showcase-tui: build-cli
+	$(NODE) scripts/showcase-tui.mjs $(ARGS)
+
+screenshot-tui: build-cli
+	$(NODE) scripts/screenshot-tui.mjs
+
 dev: build
 	HOST=$(HOST) PORT=$(PORT) $(NODE) scripts/dev.mjs
 
@@ -93,6 +102,9 @@ lint: typecheck lint-templates lint-bpmn
 
 test:
 	$(NPM) test
+
+test-tui:
+	$(NPM) test -- src/tui
 
 # Drives a real Chromium against `graph-agent studio`. This is the only place the
 # element-templates properties panel is exercised for real; a second bundled copy
