@@ -281,6 +281,57 @@ export class PiSession {
   abort(): void {
     this.agent.abort();
   }
+
+  /** Update the active model and optionally the stream function for subsequent turns. */
+  setModel(model: Model<any>, streamFn?: ConstructorParameters<typeof Agent>[0]["streamFn"]): void {
+    this.agent.state.model = model;
+    if (streamFn) {
+      this.agent.streamFunction = streamFn;
+    }
+  }
+
+  /**
+   * Compacts prior conversation messages in agent state by summarizing older messages
+   * into a single summary message, keeping the recent tail of messages.
+   */
+  compactHistory(keepRecent = 4, summaryNote?: string): { beforeCount: number; afterCount: number } {
+    const msgs = this.agent.state.messages;
+    if (msgs.length <= keepRecent + 1) {
+      return { beforeCount: msgs.length, afterCount: msgs.length };
+    }
+    const beforeCount = msgs.length;
+    const splitIndex = msgs.length - keepRecent;
+    const toCompact = msgs.slice(0, splitIndex);
+    const tail = msgs.slice(splitIndex);
+
+    const summaryLines: string[] = [];
+    if (summaryNote) {
+      summaryLines.push(summaryNote);
+    } else {
+      summaryLines.push(`[Compacted conversation history: ${toCompact.length} prior message(s) summarized]`);
+    }
+    for (const m of toCompact) {
+      if (m.role === "user") {
+        const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+        summaryLines.push(`- User: ${text.slice(0, 200)}${text.length > 200 ? "…" : ""}`);
+      } else if (m.role === "assistant") {
+        const text = typeof m.content === "string" ? m.content : (m.content as Array<{ text?: string }>)?.[0]?.text ?? "";
+        if (text) {
+          summaryLines.push(`- Assistant: ${text.slice(0, 200)}${text.length > 200 ? "…" : ""}`);
+        }
+      }
+    }
+
+    const summaryMsg: AgentMessage = {
+      role: "user",
+      content: summaryLines.join("\n"),
+      timestamp: Date.now(),
+    } as AgentMessage;
+
+    this.agent.state.messages = [summaryMsg, ...tail];
+    const afterCount = this.agent.state.messages.length;
+    return { beforeCount, afterCount };
+  }
 }
 
 function readUsage(message: AssistantMessage): TurnUsage {

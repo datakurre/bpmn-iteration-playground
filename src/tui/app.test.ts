@@ -304,8 +304,16 @@ describe("graph-agent tui --resume (issue #67)", () => {
     expect(handles?.root.render(80).join("\n")).toContain("/steer");
 
     // Test /model command
-    handles?.editor.onSubmit?.("/model");
-    expect(handles?.root.render(80).join("\n")).toContain("faux-model-label");
+    await handles?.editor.onSubmit?.("/model");
+    expect(handles?.root.render(80).join("\n")).toMatch(/Select model|faux-model-label/);
+
+    // Test /diff command (checks workspace uncommitted diff)
+    await handles?.editor.onSubmit?.("/diff");
+    expect(handles?.root.render(80).join("\n")).toMatch(/no uncommitted changes|diff error/);
+
+    // Test /compact command
+    await handles?.editor.onSubmit?.("/compact");
+    expect(handles?.root.render(80).join("\n")).toMatch(/compact|conversation/);
 
     // Test /graph command (shows name and flow outline)
     await handles?.editor.onSubmit?.("/graph");
@@ -334,7 +342,7 @@ describe("graph-agent tui --resume (issue #67)", () => {
     expect(handles?.root.render(80).join("\n")).toContain("Recent sessions:");
 
     // Test unknown slash command error guarding
-    handles?.editor.onSubmit?.("/unknown_cmd");
+    await handles?.editor.onSubmit?.("/unknown_cmd");
     expect(handles?.root.render(80).join("\n")).toContain("unknown command: /unknown_cmd");
 
     // Answer gate and finish

@@ -198,4 +198,39 @@ describe("PiSession", () => {
     expect(outcome.usage.cost?.total).toBe(0.00038);
     expect(outcome.usage.cost?.input).toBe(0.0001);
   });
+
+  it("switches model dynamically via setModel", () => {
+    const { pi } = session([]);
+    const faux2 = fauxProvider({ provider: "faux2", models: [{ id: "model-2", name: "Model 2" }] });
+    const newModel = faux2.getModel();
+    pi.setModel(newModel);
+    expect(pi.agent.state.model).toBe(newModel);
+  });
+
+  it("compacts conversation history with compactHistory", async () => {
+    const { pi } = session([
+      fauxAssistantMessage([fauxText("Resp 1")]),
+      fauxAssistantMessage([fauxText("Resp 2")]),
+      fauxAssistantMessage([fauxText("Resp 3")]),
+      fauxAssistantMessage([fauxText("Resp 4")]),
+    ]);
+
+    await pi.beginTurn("Turn 1");
+    await pi.endTurn();
+    await pi.beginTurn("Turn 2");
+    await pi.endTurn();
+    await pi.beginTurn("Turn 3");
+    await pi.endTurn();
+    await pi.beginTurn("Turn 4");
+    await pi.endTurn();
+
+    const before = pi.messages.length;
+    expect(before).toBeGreaterThan(4);
+
+    const res = pi.compactHistory(2);
+    expect(res.beforeCount).toBe(before);
+    expect(res.afterCount).toBeLessThan(before);
+    expect(pi.messages[0]?.role).toBe("user");
+    expect(String((pi.messages[0] as { content?: string })?.content)).toContain("Compacted conversation history");
+  });
 });

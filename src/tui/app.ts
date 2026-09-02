@@ -13,6 +13,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { firstActivity, graphOutline, pendingGates } from "../agent/graph.ts";
@@ -22,6 +23,7 @@ import type { PiSession } from "../agent/pi-session.ts";
 import { resumeSession, runSession, type RunSessionOptions, type SessionOutcome } from "../agent/runner.ts";
 import { listSessions, SessionStore } from "../agent/session-store.ts";
 import type { ToolExecutor } from "../agent/tool-executor.ts";
+import { listAvailableModels, resolveModel } from "../cli/model.ts";
 import type { Studio } from "../studio/server.ts";
 import { formFields } from "./form-fields.ts";
 import {
@@ -33,6 +35,7 @@ import {
   Editor,
   getSelectListTheme,
   HStack,
+  SelectList,
   streamingAssistantComponent,
   Text,
   toolTranscriptEntry,
@@ -116,7 +119,9 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
 
   const autocompleteProvider = new CombinedAutocompleteProvider(
     [
-      { name: "model", description: "view active model" },
+      { name: "model", description: "view or switch active model", argumentHint: "[provider/model]" },
+      { name: "diff", description: "view uncommitted workspace git diff", argumentHint: "[args]" },
+      { name: "compact", description: "compact conversation history to reclaim context tokens" },
       { name: "graph", description: "view workflow outline (active session or named graph)", argumentHint: "[name]" },
       { name: "graphs", description: "list available workflows in library" },
       { name: "rail", description: "toggle live side rail showing BPMN sequence flow tree" },
@@ -191,6 +196,7 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
   let activeGate: GateWizard | undefined;
   let waitingForPrompt: ((prompt: string | undefined) => void) | undefined;
   let studioServer: Studio | undefined;
+  let activePiSession: PiSession | undefined;
 
   function formatTokens(n: number): string {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -259,6 +265,7 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
   }
 
   function wireTranscript(pi: PiSession): void {
+    activePiSession = pi;
     const toolEntries = new Map<string, ToolTranscriptEntry>();
     let streamingEntry: StreamingAssistantEntry | undefined;
 
@@ -333,7 +340,9 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
         new Text(
           [
             "Commands:",
-            "  /model           view active model",
+            "  /model [name]    view or switch active model (or select from available)",
+            "  /diff [args]     view uncommitted workspace git diff",
+            "  /compact         compact conversation history to reclaim context tokens",
             "  /graph [name]    view workflow outline (active session or named graph)",
             "  /graphs          list available workflows in library",
             "  /rail            toggle live side rail with BPMN sequence flow tree",
@@ -358,8 +367,124 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
       return;
     }
 
-    if (text === "/model") {
-      transcript.addChild(new Text(`model: ${options.modelLabel}`));
+    if (text === "/diff" || text.startsWith("/diff ")) {
+      const extraArgs = text.startsWith("/diff ") ? text.slice("/diff ".length).trim().split(/\s+/).filter(Boolean) : [];
+      try {
+        const gitRes = spawnSync("git", ["diff", ...extraArgs], {
+          cwd: options.project,
+          encoding: "utf8",
+        });
+        if (gitRes.error) {
+          transcript.addChild(new Text(`diff error: ${gitRes.error.message}`));
+        } else if (gitRes.status !== 0) {
+          transcript.addChild(new Text(`diff error: ${gitRes.stderr || `git diff exited ${gitRes.status}`}`));
+        } else if (!gitRes.stdout || !gitRes.stdout.trim()) {
+          transcript.addChild(new Text("no uncommitted changes in workspace"));
+        } else {
+          transcript.addChild(diffPreviewComponent(gitRes.stdout));
+        }
+      } catch (err) {
+        transcript.addChild(new Text(`diff error: ${err instanceof Error ? err.message : String(err)}`));
+      }
+      tui.requestRender();
+      return;
+    }
+
+    if (text === "/compact") {
+      if (!activePiSession) {
+        transcript.addChild(new Text("no active conversation in session yet"));
+      } else {
+        const res = activePiSession.compactHistory();
+        if (res.beforeCount === res.afterCount) {
+          transcript.addChild(new Text(`conversation context is already compact (${res.afterCount} message(s))`));
+        } else {
+          transcript.addChild(
+            new Text(`compacted conversation context: ${res.beforeCount} message(s) -> ${res.afterCount} message(s)`),
+          );
+          refreshStatus();
+        }
+      }
+      tui.requestRender();
+      return;
+    }
+
+    if (text === "/model" || text.startsWith("/model ")) {
+      const targetSpec = text.startsWith("/model ") ? text.slice("/model ".length).trim() : undefined;
+      if (targetSpec) {
+        try {
+          const resolved = await resolveModel(targetSpec);
+          options.model = resolved.model;
+          options.modelLabel = resolved.label;
+          options.streamFn = resolved.streamFn;
+          activePiSession?.setModel(resolved.model, resolved.streamFn);
+          if (store.exists()) {
+            store.update((m) => {
+              m.model = resolved.label;
+            });
+          }
+          transcript.addChild(new Text(`switched model to ${resolved.label}`));
+          refreshStatus();
+        } catch (err) {
+          transcript.addChild(new Text(`model error: ${err instanceof Error ? err.message : String(err)}`));
+        }
+      } else {
+        try {
+          const available = await listAvailableModels();
+          if (available.length === 0) {
+            transcript.addChild(new Text(`model: ${options.modelLabel} (no other configured providers found)`));
+          } else {
+            const selectItems = available.map((m) => {
+              const id = `${m.provider}/${m.id}`;
+              const isCurrent = id === options.modelLabel || m.id === options.modelLabel;
+              return {
+                value: id,
+                label: `${id}${isCurrent ? " (active)" : ""}`,
+                description: m.name ?? "",
+              };
+            });
+            const selectList = new SelectList(selectItems, 10, selectListTheme);
+            const modalContainer = new Container();
+            modalContainer.addChild(new Text("Select model (Enter to select, Esc to cancel):"));
+            modalContainer.addChild(selectList);
+
+            const cleanupModal = () => {
+              mainContainer.removeChild(modalContainer);
+              tui.setFocus(editor);
+              tui.requestRender();
+            };
+
+            selectList.onSelect = async (item) => {
+              cleanupModal();
+              try {
+                const resolved = await resolveModel(item.value);
+                options.model = resolved.model;
+                options.modelLabel = resolved.label;
+                options.streamFn = resolved.streamFn;
+                activePiSession?.setModel(resolved.model, resolved.streamFn);
+                if (store.exists()) {
+                  store.update((m) => {
+                    m.model = resolved.label;
+                  });
+                }
+                transcript.addChild(new Text(`switched model to ${resolved.label}`));
+                refreshStatus();
+              } catch (err) {
+                transcript.addChild(new Text(`model error: ${err instanceof Error ? err.message : String(err)}`));
+                tui.requestRender();
+              }
+            };
+
+            selectList.onCancel = () => {
+              cleanupModal();
+            };
+
+            mainContainer.addChild(modalContainer);
+            tui.setFocus(selectList);
+          }
+        } catch (err) {
+          transcript.addChild(new Text(`model: ${options.modelLabel}`));
+        }
+      }
       tui.requestRender();
       return;
     }
