@@ -1,5 +1,5 @@
 import { parseArgs } from "node:util";
-import { copyFileSync, existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -243,6 +243,18 @@ export function requirePaths(): Paths | null {
   return p;
 }
 
+function copyWorkflowFile(from: string, to: string): void {
+  if (existsSync(to)) {
+    try {
+      chmodSync(to, (statSync(to).mode & 0o7777) | 0o200);
+    } catch {
+      // Best-effort if existing target was read-only
+    }
+  }
+  copyFileSync(from, to);
+  chmodSync(to, (statSync(to).mode & 0o7777) | 0o200);
+}
+
 function cmdInit(args: string[]): number {
   const p = ensurePaths(resolvePaths());
   const refresh = args.includes("--refresh") || args.includes("--force");
@@ -258,7 +270,7 @@ function cmdInit(args: string[]): number {
   for (const { id, path: from } of listBpmnFiles(bundledWorkflowsDir())) {
     const to = join(p.workflowsDir, `${id}.bpmn`);
     if (!existsSync(to)) {
-      copyFileSync(from, to);
+      copyWorkflowFile(from, to);
       continue;
     }
     const bundledXml = readFileSync(from, "utf8");
@@ -268,17 +280,17 @@ function cmdInit(args: string[]): number {
 
     if (check.decision === "can_auto_upgrade") {
       if (refresh) {
-        copyFileSync(to, `${to}.bak`);
-        copyFileSync(from, to);
+        copyWorkflowFile(to, `${to}.bak`);
+        copyWorkflowFile(from, to);
         refreshed.push(id);
       } else {
-        copyFileSync(from, to);
+        copyWorkflowFile(from, to);
         autoUpgraded.push(id);
       }
     } else {
       if (refresh) {
-        copyFileSync(to, `${to}.bak`);
-        copyFileSync(from, to);
+        copyWorkflowFile(to, `${to}.bak`);
+        copyWorkflowFile(from, to);
         refreshed.push(id);
       } else {
         stale.push(id);

@@ -2,11 +2,11 @@
 import { describe, expect, it, beforeAll } from "vitest";
 import { EventEmitter } from "node:events";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { installEpipeGuard, parseAnswers, answersFor, boundedOnWait, reportWait } from "./main.ts";
-import { ensurePaths, paths as resolvePaths } from "../agent/paths.ts";
+import { bundledWorkflowsDir, ensurePaths, paths as resolvePaths } from "../agent/paths.ts";
 import { SessionStore } from "../agent/session-store.ts";
 import { stampModel } from "../agent/versioning.ts";
 
@@ -206,6 +206,57 @@ describe("cmdInit and BPMN model versioning upgrades", () => {
     expect(existsSync(`${target}.bak`)).toBe(true);
     expect(readFileSync(`${target}.bak`, "utf8")).toContain("My Custom Loop");
     expect(readFileSync(target, "utf8")).not.toContain("My Custom Loop");
+  });
+
+  it("chmods u+w the workflow files after copying them", () => {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-init-perms-"));
+    const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
+    const result = spawnSync("node", [distFile, "init"], { env, encoding: "utf8" });
+
+    expect(result.status).toBe(0);
+    const workflowsDir = join(home, "config", "graph-agent", "workflows");
+    const bpmnFiles = readdirSync(workflowsDir).filter((f) => f.endsWith(".bpmn"));
+    expect(bpmnFiles.length).toBeGreaterThan(0);
+    for (const file of bpmnFiles) {
+      const mode = statSync(join(workflowsDir, file)).mode;
+      expect(mode & 0o200).toBe(0o200);
+    }
+  });
+
+  it("chmods u+w the workflow files after copying them even when source is read-only", () => {
+    const bundledFile = join(bundledWorkflowsDir(), "session-craft.bpmn");
+    const originalMode = statSync(bundledFile).mode;
+    chmodSync(bundledFile, 0o444);
+    try {
+      const home = mkdtempSync(join(tmpdir(), "graph-agent-init-perms-ro-src-"));
+      const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
+      const result = spawnSync("node", [distFile, "init"], { env, encoding: "utf8" });
+
+      expect(result.status).toBe(0);
+      const target = join(home, "config", "graph-agent", "workflows", "session-craft.bpmn");
+      expect(existsSync(target)).toBe(true);
+      expect(statSync(target).mode & 0o200).toBe(0o200);
+    } finally {
+      chmodSync(bundledFile, originalMode);
+    }
+  });
+
+  it("chmods u+w the workflow files after copying them even if existing target was read-only", () => {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-init-perms-ro-dest-"));
+    const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
+    execFileSync("node", [distFile, "init"], { env });
+
+    const target = join(home, "config", "graph-agent", "workflows", "session-default.bpmn");
+    // Simulate user editing the workflow manually, and having read-only permissions
+    const userXml = readFileSync(target, "utf8").replace('name="Run the Pi loop"', 'name="My Custom Loop"');
+    writeFileSync(target, userXml);
+    chmodSync(target, 0o444);
+    expect(statSync(target).mode & 0o200).toBe(0);
+
+    const refreshResult = spawnSync("node", [distFile, "init", "--refresh"], { env, encoding: "utf8" });
+    expect(refreshResult.status).toBe(0);
+    expect(statSync(target).mode & 0o200).toBe(0o200);
+    expect(statSync(`${target}.bak`).mode & 0o200).toBe(0o200);
   });
 });
 
