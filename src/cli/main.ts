@@ -64,7 +64,7 @@ Commands
                        can start from what it converged on (--revision <n>
                        picks a revision other than the latest, --force
                        overwrites an existing library graph, backed up first)
-  studio               serve the studio for this project
+  ui                   serve the studio for this project
   where                print the config, graph library and state directories
 
 Graphs live in your user config directory and are shared across projects.
@@ -101,11 +101,11 @@ Options
   --follow-up <text>   queue a follow-up message before the run starts, drained
                         by the first agent:follow-up the graph reaches
                         (repeatable)
-  --port <n>           studio port (0 picks a free one)
-  --host <addr>        studio bind address (default: loopback only; the
-                        studio has no authentication, so a non-loopback
+  --port <n>           ui port (0 picks a free one)
+  --host <addr>        ui bind address (default: loopback only; the
+                        ui has no authentication, so a non-loopback
                         --host exposes its write routes to the network)
-  --open / --no-open   open the studio URL in a browser (default: --open)
+  --open / --no-open   open the ui URL in a browser (default: --open)
   --all                with ls, include sessions from other projects
   -h, --help           show this help
   -v, --version        show the version
@@ -114,7 +114,7 @@ Options
 const KNOWN_COMMANDS = new Set([
   "init",
   "where",
-  "studio",
+  "ui",
   "ls",
   "rm",
   "delete",
@@ -155,7 +155,7 @@ export async function main(argv: string[]): Promise<number> {
       return cmdInit(argv.slice(1));
     case "where":
       return cmdWhere();
-    case "studio":
+    case "ui":
       return cmdStudio(argv.slice(1));
     case "ls":
       return cmdLs(argv.includes("--all"));
@@ -385,14 +385,14 @@ async function cmdStudio(args: string[]): Promise<number> {
     ...(port === undefined ? {} : { port }),
   });
 
-  process.stdout.write(`graph-agent studio  ${studio.url}\n`);
+  process.stdout.write(`graph-agent ui  ${studio.url}\n`);
   process.stdout.write(`  project   ${projectName(project)}  ${project}\n`);
   process.stdout.write(`  sessions  ${studio.url}/\n`);
   process.stdout.write(`  graphs    ${studio.url}/graph\n`);
 
   if (host !== undefined && !isLoopbackHost(host)) {
     process.stderr.write(
-      `warning: studio has no authentication and is bound to ${host}, which is not loopback -- ` +
+      `warning: ui has no authentication and is bound to ${host}, which is not loopback -- ` +
         `its write routes (e.g. PUT /api/graphs/:id) are reachable from the network.\n`,
     );
   }

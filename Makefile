@@ -2,7 +2,7 @@
 #   nix develop --command make <target>
 
 .PHONY: help setup install \
-        build build-cli build-assets build-css dev run studio init showcase-tui screenshot-tui \
+        build build-cli build-assets build-css dev run ui init showcase-tui screenshot-tui \
         lint lint-templates lint-bpmn layout typecheck test test-tui test-watch test-coverage verify-editor clean
 
 NPM ?= npm
@@ -24,8 +24,8 @@ help:
 	@echo "Run"
 	@echo "  make init               - seed the user-level config and graph library"
 	@echo "  make run                - run the agent CLI (ARGS=...)"
-	@echo "  make studio             - serve the BPMN studio (HOST=..., PORT=0 picks a free port)"
-	@echo "  make dev                - rebuild on change and serve the studio"
+	@echo "  make ui                - serve the BPMN studio (HOST=..., PORT=0 picks a free port)"
+	@echo "  make dev               - rebuild on change and serve the studio"
 	@echo "  make showcase-tui       - run a deterministic TUI scenario interactively"
 	@echo "  make screenshot-tui     - regenerate deterministic TUI screenshots"
 	@echo ""
@@ -70,8 +70,8 @@ init: build-cli
 run: build-cli
 	$(NODE) dist/graph-agent.js $(ARGS)
 
-studio: build
-	$(NODE) dist/graph-agent.js studio --host $(HOST) --port $(PORT)
+ui: build
+	$(NODE) dist/graph-agent.js ui --host $(HOST) --port $(PORT)
 
 showcase-tui: build-cli
 	$(NODE) scripts/showcase-tui.mjs $(ARGS)
@@ -106,7 +106,7 @@ test:
 test-tui:
 	$(NPM) test -- src/tui
 
-# Drives a real Chromium against `graph-agent studio`. This is the only place the
+# Drives a real Chromium against `graph-agent ui`. This is the only place the
 # element-templates properties panel is exercised for real; a second bundled copy
 # of preact only crashes in a browser.
 verify-editor: build

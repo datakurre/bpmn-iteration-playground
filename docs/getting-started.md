@@ -217,10 +217,10 @@ activity outright or just publishes the exit code for a gateway to route on.
 Swap the header for whatever the graph should actually confirm -- a test run,
 a lint, a build -- rather than the placeholder `git rev-parse` check.
 
-## The studio
+## The UI
 
 ```
-graph-agent studio
+graph-agent ui
 ```
 
 serves a BPMN editor and a session viewer scoped to the project you run it
@@ -686,7 +686,7 @@ $ echo $?
 ```
 
 For the full record -- usage, tool calls, the graph revision -- read the
-session's `meta.json`, or open it in `graph-agent studio`, whose session view
+session's `meta.json`, or open it in `graph-agent ui`, whose session view
 renders the error under the failing turn:
 
 ```

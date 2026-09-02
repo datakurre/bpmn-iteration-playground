@@ -34,7 +34,7 @@ for](getting-started.html#what-lint-checks-and-what-review-is-still-for)).
 
 ## Screenshots
 
-The studio -- `graph-agent studio` -- is a BPMN editor and a session viewer for
+The studio -- `graph-agent ui` -- is a BPMN editor and a session viewer for
 whatever project you point it at.
 
 ![The graph library, with the shell-demo workflow visible](screenshots/project.png)

@@ -33,7 +33,7 @@ secret = "OPENCODE_API_KEY"
 target. `make lint` (typecheck + template lint + `bpmnlint` over
 `workflows/`) and `make test` (vitest) are the fast local checks; run them
 before committing. `make verify-editor` and `node scripts/screenshot-docs.mjs`
-both drive a real Chromium against `graph-agent studio` -- slower, but the
+both drive a real Chromium against `graph-agent ui` -- slower, but the
 only way anything touching the studio's properties panel or a workflow
 diagram is actually exercised.
 

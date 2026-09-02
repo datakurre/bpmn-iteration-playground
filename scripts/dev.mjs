@@ -17,7 +17,7 @@ function restartStudio() {
   if (studio) studio.kill();
   studio = spawn(
     process.execPath,
-    ["dist/graph-agent.js", "studio", "--host", host, "--port", port, "--no-open"],
+    ["dist/graph-agent.js", "ui", "--host", host, "--port", port, "--no-open"],
     {
       stdio: "inherit",
     },

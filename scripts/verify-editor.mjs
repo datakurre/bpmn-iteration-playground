@@ -47,21 +47,21 @@ const env = {
 spawnSync(process.execPath, [join(import.meta.dirname, "..", "dist", "graph-agent.js"), "init"], { cwd: root, env, stdio: "ignore" });
 
 // Drive the real CLI rather than importing the server, so this exercises the
-// same path a user gets from `graph-agent studio`.
-const cli = spawn(process.execPath, [join(import.meta.dirname, "..", "dist", "graph-agent.js"), "studio", "--port", "0"], {
+// same path a user gets from `graph-agent ui`.
+const cli = spawn(process.execPath, [join(import.meta.dirname, "..", "dist", "graph-agent.js"), "ui", "--port", "0"], {
   cwd: root,
   env,
   stdio: ["ignore", "pipe", "inherit"],
 });
 const studioUrl = await new Promise((resolveUrl, reject) => {
-  const timer = setTimeout(() => reject(new Error("studio did not start within 30s")), 30000);
+  const timer = setTimeout(() => reject(new Error("ui did not start within 30s")), 30000);
   let buffered = "";
   cli.stdout.on("data", (chunk) => {
     buffered += chunk.toString();
     const match = /http:\/\/[0-9.]+:\d+/.exec(buffered);
     if (match) { clearTimeout(timer); resolveUrl(match[0]); }
   });
-  cli.once("exit", (code) => { clearTimeout(timer); reject(new Error(`studio exited with ${code}`)); });
+  cli.once("exit", (code) => { clearTimeout(timer); reject(new Error(`ui exited with ${code}`)); });
 });
 const studio = { url: studioUrl, close: async () => { cli.kill("SIGTERM"); } };
 const failures = [];

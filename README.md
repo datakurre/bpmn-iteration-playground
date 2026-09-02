@@ -113,10 +113,10 @@ that stopped it -- reattaches with `graph-agent tui --resume <session-id>`,
 no `--graph`/prompt needed: it opens straight onto the prior transcript and
 whatever it is still waiting on ([#67](https://github.com/datakurre/graph-agent/issues/67)).
 
-## Studio
+## UI
 
 ```
-graph-agent studio
+graph-agent ui
 ```
 
 serves a BPMN editor and a session viewer scoped to the project you run it

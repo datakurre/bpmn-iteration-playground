@@ -86,7 +86,7 @@ describe("cmdStudio flags (issue #56)", () => {
     execFileSync("node", [distFile, "init"], {
       env: { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") },
     });
-    const cli = spawn("node", [distFile, "studio", "--port", "0", ...args], {
+    const cli = spawn("node", [distFile, "ui", "--port", "0", ...args], {
       env: { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -100,7 +100,7 @@ describe("cmdStudio flags (issue #56)", () => {
     // browser-opener spawn a moment to run before shutting down.
     await new Promise<void>((resolve) => {
       const check = (): void => {
-        if (stdout.includes("graph-agent studio")) resolve();
+        if (stdout.includes("graph-agent ui")) resolve();
       };
       cli.stdout.on("data", check);
       check();
@@ -124,7 +124,7 @@ describe("cmdStudio flags (issue #56)", () => {
     expect(stderr).not.toContain("Unhandled 'error' event");
   }, 20000);
 
-  it("warns when --host binds off loopback, since the studio has no authentication", async () => {
+  it("warns when --host binds off loopback, since the ui has no authentication", async () => {
     const { stderr } = await runStudio(["--host", "0.0.0.0", "--no-open"]);
     expect(stderr).toContain("0.0.0.0");
     expect(stderr).toMatch(/no authentication/);
@@ -139,7 +139,7 @@ describe("cmdStudio flags (issue #56)", () => {
     const home = mkdtempSync(join(tmpdir(), "graph-agent-studio-"));
     const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
     execFileSync("node", [distFile, "init"], { env });
-    const result = spawnSync("node", [distFile, "studio", "--port", "abc", "--no-open"], { env, encoding: "utf8" });
+    const result = spawnSync("node", [distFile, "ui", "--port", "abc", "--no-open"], { env, encoding: "utf8" });
     expect(result.stderr).toContain("--port must be an integer");
     expect(result.stderr).toContain("got 'abc'");
     expect(result.status).toBe(1);

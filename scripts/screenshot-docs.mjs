@@ -58,13 +58,13 @@ const runOutput = run(["run", "verify this workspace", "--dry-run", "--graph", "
 const sessionId = /^session (\S+)/m.exec(runOutput)?.[1];
 if (!sessionId) throw new Error(`could not find a session id in:\n${runOutput}`);
 
-const cli = spawn(process.execPath, [cliPath, "studio", "--port", "0"], {
+const cli = spawn(process.execPath, [cliPath, "ui", "--port", "0"], {
   cwd: root,
   env,
   stdio: ["ignore", "pipe", "inherit"],
 });
 const studioUrl = await new Promise((resolveUrl, reject) => {
-  const timer = setTimeout(() => reject(new Error("studio did not start within 30s")), 30000);
+  const timer = setTimeout(() => reject(new Error("ui did not start within 30s")), 30000);
   let buffered = "";
   cli.stdout.on("data", (chunk) => {
     buffered += chunk.toString();
@@ -76,7 +76,7 @@ const studioUrl = await new Promise((resolveUrl, reject) => {
   });
   cli.once("exit", (code) => {
     clearTimeout(timer);
-    reject(new Error(`studio exited with ${code}`));
+    reject(new Error(`ui exited with ${code}`));
   });
 });
 
