@@ -153,7 +153,7 @@ async function handle(
   // ---- pages
   if (path === "/") return sendPage(res, pagesDir, "project.html");
   if (path === "/session") return sendPage(res, pagesDir, "session.html");
-  if (path === "/graph") return sendPage(res, pagesDir, "graph.html");
+  if (path === "/graph" || path === "/graphs") return sendPage(res, pagesDir, "graph.html");
 
   // ---- static assets
   if (path.startsWith("/static/")) {

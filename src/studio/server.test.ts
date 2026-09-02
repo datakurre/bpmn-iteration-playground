@@ -572,3 +572,19 @@ describe("PUT /api/graphs/:id optimistic concurrency (issue #76)", () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe("page routes", () => {
+  it("serves graph.html for both /graph and /graphs", async () => {
+    const res1 = await fetch(`${studio.url}/graph`);
+    expect(res1.status).toBe(200);
+    expect(res1.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    const text1 = await res1.text();
+    expect(text1).toContain("graph-select");
+
+    const res2 = await fetch(`${studio.url}/graphs`);
+    expect(res2.status).toBe(200);
+    expect(res2.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    const text2 = await res2.text();
+    expect(text2).toContain("graph-select");
+  });
+});

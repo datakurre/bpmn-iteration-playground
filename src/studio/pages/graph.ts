@@ -26,12 +26,30 @@ const BLANK = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:sequenceFlow id="f2" sourceRef="turn" targetRef="end" />
     <bpmn:endEvent id="end" name="Done"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>
   </bpmn:process>
-  <bpmndi:BPMNDiagram id="D"><bpmndi:BPMNPlane id="P" bpmnElement="new_graph">
-    <bpmndi:BPMNShape id="start_di" bpmnElement="start"><dc:Bounds x="180" y="160" width="36" height="36" /></bpmndi:BPMNShape>
-    <bpmndi:BPMNShape id="turn_di" bpmnElement="turn"><dc:Bounds x="270" y="138" width="120" height="80" /></bpmndi:BPMNShape>
-    <bpmndi:BPMNShape id="end_di" bpmnElement="end"><dc:Bounds x="450" y="160" width="36" height="36" /></bpmndi:BPMNShape>
-    <bpmndi:BPMNEdge id="f1_di" bpmnElement="f1"><di:waypoint x="216" y="178" /><di:waypoint x="270" y="178" /></bpmndi:BPMNEdge>
-    <bpmndi:BPMNEdge id="f2_di" bpmnElement="f2"><di:waypoint x="390" y="178" /><di:waypoint x="450" y="178" /></bpmndi:BPMNEdge>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_new_graph"><bpmndi:BPMNPlane id="BPMNPlane_new_graph" bpmnElement="new_graph">
+    <bpmndi:BPMNShape id="start_di" bpmnElement="start">
+      <dc:Bounds x="57" y="52" width="36" height="36" />
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="30" y="88" width="90" height="20" />
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="turn_di" bpmnElement="turn">
+      <dc:Bounds x="175" y="30" width="100" height="80" />
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="end_di" bpmnElement="end">
+      <dc:Bounds x="357" y="52" width="36" height="36" />
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="330" y="88" width="90" height="20" />
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNEdge id="f1_di" bpmnElement="f1">
+      <di:waypoint x="93" y="70" />
+      <di:waypoint x="175" y="70" />
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="f2_di" bpmnElement="f2">
+      <di:waypoint x="275" y="70" />
+      <di:waypoint x="357" y="70" />
+    </bpmndi:BPMNEdge>
   </bpmndi:BPMNPlane></bpmndi:BPMNDiagram>
 </bpmn:definitions>`;
 
@@ -48,16 +66,34 @@ function status(message: string, tone: "ok" | "error" | "none" = "none"): void {
   host.textContent = message;
 }
 
+async function startNew(): Promise<void> {
+  if (!modeler) return;
+  await modeler.importXML(BLANK);
+  currentId = "";
+  loadedEtag = null;
+  const name = $("graph-name") as HTMLInputElement | null;
+  if (name) name.value = "new_graph";
+  const select = $("graph-select") as HTMLSelectElement | null;
+  if (select) select.value = "";
+  fitDiagram(modeler);
+  status("", "none");
+}
+
 async function loadList(selected?: string): Promise<void> {
   const select = $("graph-select") as HTMLSelectElement | null;
   if (!select) return;
   const res = await fetch("/api/graphs");
   if (!res.ok) return;
   const graphs: GraphSummary[] = await res.json();
-  select.innerHTML = graphs
-    .map((g) => `<option value="${g.id}">${g.name}${g.source === "bundled" ? " (bundled)" : ""}</option>`)
-    .join("");
-  if (selected) select.value = selected;
+  const options = [
+    `<option value=""${!selected ? " selected" : ""}>New graph</option>`,
+    ...graphs.map(
+      (g) =>
+        `<option value="${g.id}"${selected === g.id ? " selected" : ""}>${g.name}${g.source === "bundled" ? " (bundled)" : ""}</option>`,
+    ),
+  ];
+  select.innerHTML = options.join("");
+  if (selected !== undefined) select.value = selected;
 }
 
 async function open(id: string): Promise<void> {
@@ -69,6 +105,8 @@ async function open(id: string): Promise<void> {
   loadedEtag = res.headers.get("etag");
   const name = $("graph-name") as HTMLInputElement | null;
   if (name) name.value = id;
+  const select = $("graph-select") as HTMLSelectElement | null;
+  if (select) select.value = id;
   fitDiagram(modeler);
   status("", "none");
 }
@@ -151,10 +189,13 @@ async function init(): Promise<void> {
   });
 
   const wanted = new URLSearchParams(location.search).get("id");
-  await modeler.importXML(BLANK);
-  fitDiagram(modeler);
-  await loadList(wanted ?? undefined);
-  if (wanted) await open(wanted);
+  if (wanted) {
+    await loadList(wanted);
+    await open(wanted);
+  } else {
+    await startNew();
+    await loadList();
+  }
 
   try {
     const res = await fetch("/api/element-templates");
@@ -164,17 +205,15 @@ async function init(): Promise<void> {
   }
 
   const select = $("graph-select") as HTMLSelectElement | null;
-  if (select) select.onchange = () => void open(select.value);
+  if (select) {
+    select.onchange = () => {
+      if (select.value) void open(select.value);
+      else void startNew();
+    };
+  }
   const newBtn = $("new-btn");
   if (newBtn) {
-    newBtn.onclick = async () => {
-      if (!modeler) return;
-      await modeler.importXML(BLANK);
-      currentId = "";
-      const name = $("graph-name") as HTMLInputElement | null;
-      if (name) name.value = "new_graph";
-      fitDiagram(modeler);
-    };
+    newBtn.onclick = () => void startNew();
   }
   const layoutBtn = $("layout-btn");
   if (layoutBtn) {
