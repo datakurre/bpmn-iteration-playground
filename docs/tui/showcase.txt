@@ -10,9 +10,8 @@
  inject_pending  agent:steer  No steering messages pending
 
 ────────────────────────────────────────────────────────────────────────────────
-────────────────────────────────────────────────────────────────────────────────
 
 ────────────────────────────────────────────────────────────────────────────────
 
- idle · graph pi-default-loop · 1 turn(s) · cache 0/45 (0%) · revision 0 · at -
- · session showcase
+ idle · graph pi-default-loop · 1 turn(s) · tokens 98 · cache 0/45 (0%) ·
+ revision 0 · at - · session showcase

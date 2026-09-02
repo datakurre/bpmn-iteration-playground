@@ -9,11 +9,10 @@
  llm_turn  agent:turn  [dry run] no model was called.                           [0m]8;;
  inject_pending  agent:steer  No steering messages pending                      [0m]8;;
                                                                                 [0m]8;;
-[38;2;95;135;255m────────────────────────────────────────────────────────────────────────────────[39m[0m]8;;
 ────────────────────────────────────────────────────────────────────────────────[0m]8;;
 [7m [0m                                                                               [0m]8;;
 ────────────────────────────────────────────────────────────────────────────────[0m]8;;
                                                                                 [0m]8;;
- idle · graph pi-default-loop · 1 turn(s) · cache 0/45 (0%) · revision 0 · at - [0m]8;;
- · session showcase                                                             [0m]8;;
+ idle · graph pi-default-loop · 1 turn(s) · tokens 98 · cache 0/45 (0%) ·       [0m]8;;
+ revision 0 · at - · session showcase                                           [0m]8;;
                                                                                 [0m]8;;[?2026l[5A[1G [6B

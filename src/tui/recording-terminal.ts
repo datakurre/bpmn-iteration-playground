@@ -155,7 +155,15 @@ export class RecordingTerminal implements Terminal {
         if (params[0] === 2 || params[0] === 3) this.clearScreen();
         else for (let row = this.cursorRow; row < this.rows; row++) this.buffer[row]!.fill(" ");
         break;
-      case "K": this.eraseLine(params[0] === 2 ? 0 : this.cursorColumn); break;
+      case "K":
+        if (params[0] === 1) {
+          this.buffer[this.cursorRow]!.fill(" ", 0, this.cursorColumn + 1);
+        } else if (params[0] === 2) {
+          this.buffer[this.cursorRow]!.fill(" ", 0);
+        } else {
+          this.buffer[this.cursorRow]!.fill(" ", this.cursorColumn);
+        }
+        break;
       case "s": this.savedCursor = { row: this.cursorRow, column: this.cursorColumn }; break;
       case "u": this.cursorRow = this.savedCursor.row; this.cursorColumn = this.savedCursor.column; break;
       case "m":

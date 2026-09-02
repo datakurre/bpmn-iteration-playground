@@ -12,6 +12,7 @@ import { formFields } from "../tui/form-fields.ts";
 import { unlinkGraph } from "../agent/link.ts";
 import { lintBpmn } from "../agent/bpmn-lint.ts";
 import { ensureLabelDi } from "../js/lib/bpmn-label-layout.ts";
+import { promoteSession } from "../agent/promote.ts";
 import { createPiToolExecutor } from "../agent/tool-executor.ts";
 import { dryRunModel, readConfiguredModel, resolveModel } from "./model.ts";
 import { listSessions, SessionStore } from "../agent/session-store.ts";
@@ -981,75 +982,39 @@ async function cmdPromote(args: string[]): Promise<number> {
     return 2;
   }
 
-  const store = new SessionStore(p, sessionId);
-  if (!store.exists()) {
-    process.stderr.write(`graph-agent: unknown session '${sessionId}'\n`);
-    return 1;
-  }
-
-  const revisionFiles = store.graphRevisionFiles();
-  if (revisionFiles.length === 0) {
-    process.stderr.write(`graph-agent: session '${sessionId}' has no graph\n`);
-    return 1;
-  }
-  let revisionIndex = revisionFiles.length - 1;
+  let revisionIndex: number | undefined;
   if (values.revision !== undefined) {
     const parsed = Number(values.revision);
-    if (!Number.isInteger(parsed) || parsed < 0 || parsed >= revisionFiles.length) {
+    const store = new SessionStore(p, sessionId);
+    const count = store.graphRevisionFiles().length;
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed >= count) {
       process.stderr.write(
-        `graph-agent: --revision ${String(values.revision)} is out of range (session '${sessionId}' has revisions 0-${revisionFiles.length - 1})\n`,
+        `graph-agent: --revision ${String(values.revision)} is out of range (session '${sessionId}' has revisions 0-${count - 1})\n`,
       );
       return 1;
     }
     revisionIndex = parsed;
   }
-  const revisionXml = readFileSync(join(store.graphDir, revisionFiles[revisionIndex]!), "utf8");
 
-  const { xml: unlinkedXml, unlinked } = await unlinkGraph(revisionXml);
+  const result = await promoteSession({
+    paths: p,
+    sessionId,
+    name,
+    revision: revisionIndex,
+    force: Boolean(values.force),
+  });
+
+  if (!result.success) {
+    process.stderr.write(`graph-agent: ${result.error}\n`);
+    return 1;
+  }
+
+  const store = new SessionStore(p, sessionId);
+  const actualRev = revisionIndex ?? (store.graphRevisionFiles().length - 1);
   const newProcessId = sanitizeId(name);
-  const promotedXml = await ensureLabelDi(await withProcessId(
-    await withDefinitionsId(unlinkedXml, `Defs_${newProcessId}`),
-    newProcessId,
-  ));
-
-  const lint = await lintBpmn(promotedXml);
-  if (lint.errors > 0) {
-    process.stderr.write(
-      `graph-agent: revision ${revisionIndex} of '${sessionId}' fails bpmnlint and was not promoted:\n` +
-        lint.lines.map((line) => `  ${line}\n`).join(""),
-    );
-    return 1;
-  }
-
-  const target = join(p.workflowsDir, `${name}.bpmn`);
-  if (existsSync(target) && !values.force) {
-    process.stderr.write(
-      `graph-agent: '${name}.bpmn' already exists in the library; pass --force to overwrite it (backed up as '${name}.bpmn.bak' first)\n`,
-    );
-    return 1;
-  }
-  // calledElement names a *process*, not a file -- indexLibrary resolves a
-  // shared process id with last-write-wins, so two library files defining
-  // the same process silently make which one a callActivity actually
-  // reaches a function of directory order (issue #64).
-  if (!values.force) {
-    for (const { path: otherPath } of listBpmnFiles(p.workflowsDir)) {
-      if (otherPath === target) continue;
-      if ((await processId(readFileSync(otherPath, "utf8"))) === newProcessId) {
-        process.stderr.write(
-          `graph-agent: process id '${newProcessId}' is already used by ${otherPath}; ` +
-            `pass --force to promote anyway, or choose a different --as\n`,
-        );
-        return 1;
-      }
-    }
-  }
-  if (existsSync(target)) copyFileSync(target, `${target}.bak`);
-  writeFileSync(target, promotedXml);
-
   process.stdout.write(
-    `promoted revision ${revisionIndex} of ${sessionId} to ${target}, callable as calledElement="${newProcessId}"\n` +
-      (unlinked.length > 0 ? `unlinked (still callable via calledElement): ${unlinked.join(", ")}\n` : ""),
+    `promoted revision ${actualRev} of ${sessionId} to ${result.targetPath}, callable as calledElement="${newProcessId}"\n` +
+      ((result.unlinkedCount ?? 0) > 0 ? `unlinked (still callable via calledElement): ${result.unlinkedCount}\n` : ""),
   );
   return 0;
 }

@@ -12,22 +12,27 @@
  */
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { firstActivity, pendingGates } from "../agent/graph.ts";
-import type { Paths } from "../agent/paths.ts";
+import { firstActivity, graphOutline, pendingGates } from "../agent/graph.ts";
+import { bundledWorkflowsDir, listBpmnFiles, type Paths } from "../agent/paths.ts";
+import { promoteSession } from "../agent/promote.ts";
 import type { PiSession } from "../agent/pi-session.ts";
 import { resumeSession, runSession, type RunSessionOptions, type SessionOutcome } from "../agent/runner.ts";
-import { SessionStore } from "../agent/session-store.ts";
+import { listSessions, SessionStore } from "../agent/session-store.ts";
 import type { ToolExecutor } from "../agent/tool-executor.ts";
+import type { Studio } from "../studio/server.ts";
 import { formFields } from "./form-fields.ts";
 import {
   assistantMessageComponent,
   CombinedAutocompleteProvider,
   Container,
+  diffPreviewComponent,
   DynamicBorder,
   Editor,
   getSelectListTheme,
+  HStack,
   streamingAssistantComponent,
   Text,
   toolTranscriptEntry,
@@ -89,7 +94,8 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
   const sessionId = options.start.kind === "resume" ? options.start.sessionId : randomUUID().slice(0, 8);
   const store = new SessionStore(options.paths, sessionId);
   const coerce = options.coerceValue ?? ((raw: string) => raw);
-  const trailSize = options.trailSize ?? 5;
+  const defaultTrailSize = options.terminal.rows < 20 ? 3 : 5;
+  const trailSize = options.trailSize ?? defaultTrailSize;
   const graphLabel =
     options.start.kind === "run"
       ? options.start.graphLabel
@@ -111,9 +117,12 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
   const autocompleteProvider = new CombinedAutocompleteProvider(
     [
       { name: "model", description: "view active model" },
-      { name: "graph", description: "view active graph workflow details" },
+      { name: "graph", description: "view workflow outline (active session or named graph)", argumentHint: "[name]" },
+      { name: "graphs", description: "list available workflows in library" },
+      { name: "rail", description: "toggle live side rail showing BPMN sequence flow tree" },
+      { name: "promote", description: "promote active session graph to shared library", argumentHint: "<name> [--force]" },
       { name: "sessions", description: "list recent sessions" },
-      { name: "studio", description: "launch or open studio in browser" },
+      { name: "studio", description: "launch or view studio URL" },
       { name: "steer", description: "queue a steering message before next turn", argumentHint: "<text>" },
       { name: "follow", description: "queue a follow-up message when agent finishes", argumentHint: "<text>" },
       { name: "clear", description: "clear current transcript screen" },
@@ -124,43 +133,110 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
   );
   editor.setAutocompleteProvider(autocompleteProvider);
 
+  const mainContainer = new Container();
+  mainContainer.addChild(transcript);
+  mainContainer.addChild(new DynamicBorder());
+  mainContainer.addChild(trailText);
+  mainContainer.addChild(gateText);
+  mainContainer.addChild(editor);
+  mainContainer.addChild(statusText);
+
+  const railContainer = new Container();
+  const railHeader = new Text("── BPMN Flow Tree ──\n");
+  const railOutlineText = new Text("");
+  railContainer.addChild(railHeader);
+  railContainer.addChild(railOutlineText);
+
+  const splitStack = new HStack();
+  let railMode = false;
+
   const root = new Container();
-  root.addChild(transcript);
-  root.addChild(new DynamicBorder());
-  root.addChild(trailText);
-  root.addChild(new DynamicBorder());
-  root.addChild(gateText);
-  root.addChild(editor);
-  root.addChild(statusText);
   tui.addChild(root);
   tui.setFocus(editor);
+
+  async function updateRail(): Promise<void> {
+    if (!railMode) return;
+    const xml =
+      store.currentGraph() ??
+      (options.start.kind === "run" && existsSync(options.start.graphPath)
+        ? readFileSync(options.start.graphPath, "utf8")
+        : "");
+    if (!xml) {
+      railOutlineText.setText(`graph: ${graphLabel}`);
+    } else {
+      const meta = store.exists() ? store.readMeta() : undefined;
+      const outline = await graphOutline(xml, meta ? { visited: meta.visited, tokens: meta.tokens } : undefined);
+      railOutlineText.setText(outline);
+    }
+    tui.requestRender();
+  }
+
+  function applyLayout(): void {
+    root.clear();
+    if (!railMode) {
+      root.addChild(mainContainer);
+    } else {
+      splitStack.clear();
+      splitStack.addChild(mainContainer, { grow: 1 });
+      splitStack.addChild(railContainer, { basis: 34 });
+      root.addChild(splitStack);
+      void updateRail();
+    }
+    tui.requestRender();
+  }
+
+  applyLayout();
 
   const trail: string[] = [];
   let activeGate: GateWizard | undefined;
   let waitingForPrompt: ((prompt: string | undefined) => void) | undefined;
+  let studioServer: Studio | undefined;
+
+  function formatTokens(n: number): string {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+    return String(n);
+  }
+
+  function formatCost(costUSD?: number): string {
+    if (costUSD === undefined || costUSD === 0) return "";
+    if (costUSD < 0.01) return `$${costUSD.toFixed(4)}`;
+    return `$${costUSD.toFixed(2)}`;
+  }
 
   function refreshStatus(state: "running" | "idle" | "waiting" = "running"): void {
     if (!store.exists()) {
       const stateSuffix = state === "idle" ? "enter prompt to start" : "starting…";
       statusText.setText(`graph ${graphLabel} · model ${options.modelLabel} · session ${sessionId} · ${stateSuffix}`);
+      if (railMode) void updateRail();
       tui.requestRender();
       return;
     }
     const meta = store.readMeta();
-    const usage = meta.turns.reduce(
-      (acc, turn) => ({
-        input: acc.input + (turn.usage?.input ?? 0),
-        cacheRead: acc.cacheRead + (turn.usage?.cacheRead ?? 0),
-      }),
-      { input: 0, cacheRead: 0 },
+    const stats = meta.turns.reduce(
+      (acc, turn) => {
+        const u = turn.usage;
+        return {
+          input: acc.input + (u?.input ?? 0),
+          output: acc.output + (u?.output ?? 0),
+          cacheRead: acc.cacheRead + (u?.cacheRead ?? 0),
+          totalTokens: acc.totalTokens + (u?.totalTokens ?? ((u?.input ?? 0) + (u?.output ?? 0) + (u?.cacheRead ?? 0))),
+          costUSD: acc.costUSD + (u?.cost?.total ?? 0),
+        };
+      },
+      { input: 0, output: 0, cacheRead: 0, totalTokens: 0, costUSD: 0 },
     );
     const at = meta.tokens.length > 0 ? meta.tokens.join(", ") : "-";
     const statePrefix = state === "idle" ? "idle · " : state === "waiting" ? "waiting · " : "";
-    const cacheHit = usage.input > 0 ? ` (${Math.round((usage.cacheRead / usage.input) * 100)}%)` : "";
+    const cacheHit = stats.input > 0 ? ` (${Math.round((stats.cacheRead / stats.input) * 100)}%)` : "";
+    const costPart = stats.costUSD > 0 ? ` · ${formatCost(stats.costUSD)}` : "";
+    const tokenPart = stats.totalTokens > 0 ? ` · tokens ${formatTokens(stats.totalTokens)}` : "";
     statusText.setText(
-      `${statePrefix}graph ${graphLabel} · ${meta.turns.length} turn(s) · cache ${usage.cacheRead}/${usage.input}${cacheHit} · ` +
+      `${statePrefix}graph ${graphLabel} · ${meta.turns.length} turn(s)${tokenPart} · cache ${stats.cacheRead}/${stats.input}${cacheHit}${costPart} · ` +
         `revision ${Math.max(meta.revisions.length - 1, 0)} · at ${at} · session ${sessionId}`,
     );
+    if (railMode) void updateRail();
+    if (studioServer) studioServer.broadcast({ type: "session_changed", sessionId });
     tui.requestRender();
   }
 
@@ -178,7 +254,7 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
     }
     const field = activeGate.fields[activeGate.index];
     gateText.setText(
-      field ? `waiting on ${activeGate.activityId} — ${field.label} (${field.key}): ` : "",
+      field ? `[gate] waiting on ${activeGate.activityId} — ${field.label} (${field.key}): ` : "",
     );
   }
 
@@ -226,6 +302,10 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
     const gate = gates[0];
     const fallbackLabel = gate?.name ?? activityId;
     const fields = gate?.form ? formFields(gate.form.schema, fallbackLabel) : [{ key: "value", label: fallbackLabel }];
+    if (gate?.documentation && (gate.documentation.includes("---") || gate.documentation.includes("+++") || gate.documentation.includes("@@"))) {
+      transcript.addChild(diffPreviewComponent(gate.documentation));
+      tui.requestRender();
+    }
     return new Promise((resolve) => {
       activeGate = { activityId, fields, index: 0, values: {}, resolve };
       renderGatePrompt();
@@ -234,7 +314,7 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
     });
   }
 
-  editor.onSubmit = (raw: string) => {
+  editor.onSubmit = async (raw: string) => {
     const text = raw.trim();
     editor.setText("");
     if (!text) return;
@@ -254,7 +334,12 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
           [
             "Commands:",
             "  /model           view active model",
-            "  /graph           view active graph workflow details",
+            "  /graph [name]    view workflow outline (active session or named graph)",
+            "  /graphs          list available workflows in library",
+            "  /rail            toggle live side rail with BPMN sequence flow tree",
+            "  /promote <name>  promote active session graph to shared library",
+            "  /sessions        list recent sessions",
+            "  /studio          launch or view studio URL",
             "  /steer <text>    queue steering input before next turn",
             "  /follow <text>   queue follow-up input when run finishes",
             "  /clear           clear transcript",
@@ -279,8 +364,145 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
       return;
     }
 
-    if (text === "/graph") {
-      transcript.addChild(new Text(`graph: ${graphLabel}`));
+    if (text === "/rail") {
+      railMode = !railMode;
+      applyLayout();
+      transcript.addChild(new Text(`side rail ${railMode ? "enabled (live sequence flow active)" : "disabled"}`));
+      tui.requestRender();
+      return;
+    }
+
+    if (text === "/graphs") {
+      const libraryFiles = listBpmnFiles(options.paths.workflowsDir);
+      const bundledDir = bundledWorkflowsDir();
+      const bundledFiles = existsSync(bundledDir) ? listBpmnFiles(bundledDir) : [];
+      const allGraphs = new Map<string, string>();
+      for (const b of bundledFiles) allGraphs.set(b.id, "bundled");
+      for (const l of libraryFiles) allGraphs.set(l.id, "library");
+
+      const lines = ["Available workflows:"];
+      for (const [id, source] of allGraphs.entries()) {
+        const isCurrent = id === graphLabel ? " (active)" : "";
+        lines.push(`  ${id}${isCurrent}  [${source}]`);
+      }
+      transcript.addChild(new Text(lines.join("\n")));
+      tui.requestRender();
+      return;
+    }
+
+    if (text === "/graph" || text.startsWith("/graph ")) {
+      const targetName = text.startsWith("/graph ") ? text.slice("/graph ".length).trim() : undefined;
+      if (!targetName) {
+        const xml =
+          store.currentGraph() ??
+          (options.start.kind === "run" && existsSync(options.start.graphPath)
+            ? readFileSync(options.start.graphPath, "utf8")
+            : "");
+        if (!xml) {
+          transcript.addChild(new Text(`graph: ${graphLabel}`));
+        } else {
+          const meta = store.exists() ? store.readMeta() : undefined;
+          const outline = await graphOutline(xml, meta ? { visited: meta.visited, tokens: meta.tokens } : undefined);
+          transcript.addChild(new Text(`graph: ${graphLabel}\n\n${outline}`));
+        }
+      } else {
+        const libPath = join(options.paths.workflowsDir, `${targetName}.bpmn`);
+        const bundledPath = join(bundledWorkflowsDir(), `${targetName}.bpmn`);
+        const filePath = existsSync(libPath) ? libPath : existsSync(bundledPath) ? bundledPath : undefined;
+        if (!filePath) {
+          transcript.addChild(new Text(`graph '${targetName}' not found in library or bundled workflows. Type /graphs to list.`));
+        } else {
+          const xml = readFileSync(filePath, "utf8");
+          const outline = await graphOutline(xml);
+          transcript.addChild(new Text(`graph: ${targetName} (${filePath})\n\n${outline}`));
+        }
+      }
+      tui.requestRender();
+      return;
+    }
+
+    if (text === "/promote" || text.startsWith("/promote ")) {
+      const parts = text.slice("/promote".length).trim().split(/\s+/).filter(Boolean);
+      const name = parts.find((p) => !p.startsWith("-"));
+      const force = parts.includes("--force") || parts.includes("-f");
+      if (!name) {
+        transcript.addChild(new Text("usage: /promote <name> [--force]"));
+        tui.requestRender();
+        return;
+      }
+      const result = await promoteSession({
+        paths: options.paths,
+        sessionId,
+        name,
+        force,
+      });
+      if (result.success) {
+        transcript.addChild(new Text(`promoted session graph to library: ${result.targetPath}`));
+      } else {
+        transcript.addChild(new Text(`promote error: ${result.error}`));
+      }
+      tui.requestRender();
+      return;
+    }
+
+    if (text === "/sessions") {
+      const sessions = listSessions(options.paths, options.project).slice(0, 10);
+      if (sessions.length === 0) {
+        transcript.addChild(new Text("no sessions in this project yet"));
+      } else {
+        const lines = ["Recent sessions:"];
+        for (const s of sessions) {
+          const sum = s.summary();
+          const meta = s.readMeta();
+          const graphName = meta.graph ?? "";
+          const isCurrent = sum.id === sessionId ? " (current)" : "";
+          lines.push(
+            `  ${sum.id}${isCurrent}  ${sum.status.padEnd(9)}  ${String(sum.turnCount).padStart(2)} turn(s)  ${graphName}`,
+          );
+        }
+        transcript.addChild(new Text(lines.join("\n")));
+      }
+      tui.requestRender();
+      return;
+    }
+
+    if (text === "/studio") {
+      try {
+        if (!studioServer) {
+          const { startStudio } = await import("../studio/server.ts");
+          studioServer = await startStudio({
+            paths: options.paths,
+            project: options.project,
+            host: "127.0.0.1",
+            port: 0,
+          });
+        }
+        transcript.addChild(new Text(`studio: ${studioServer.url}/sessions/${sessionId}`));
+      } catch (err) {
+        transcript.addChild(new Text(`studio error: ${err instanceof Error ? err.message : String(err)}`));
+      }
+      tui.requestRender();
+      return;
+    }
+
+    if (text.startsWith("/")) {
+      if (text.startsWith("/follow ")) {
+        if (!store.exists()) return;
+        const payload = text.slice("/follow ".length).trim();
+        store.queueInbox("follow-up", payload);
+        transcript.addChild(new Text(`[queued follow-up] ${payload}`));
+        tui.requestRender();
+        return;
+      }
+      if (text.startsWith("/steer ")) {
+        if (!store.exists()) return;
+        const payload = text.slice("/steer ".length).trim();
+        store.queueInbox("steer", payload);
+        transcript.addChild(new Text(`[queued steering] ${payload}`));
+        tui.requestRender();
+        return;
+      }
+      transcript.addChild(new Text(`unknown command: ${text}. Type /help for available commands.`));
       tui.requestRender();
       return;
     }
@@ -314,16 +536,8 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
 
     if (!store.exists()) return;
 
-    if (text.startsWith("/follow ")) {
-      store.queueInbox("follow-up", text.slice("/follow ".length));
-      transcript.addChild(new Text(`[queued follow-up] ${text.slice("/follow ".length)}`));
-    } else if (text.startsWith("/steer ")) {
-      store.queueInbox("steer", text.slice("/steer ".length));
-      transcript.addChild(new Text(`[queued steering] ${text.slice("/steer ".length)}`));
-    } else {
-      store.queueInbox("steer", text);
-      transcript.addChild(new Text(`[queued steering] ${text}`));
-    }
+    store.queueInbox("steer", text);
+    transcript.addChild(new Text(`[queued steering] ${text}`));
     tui.requestRender();
   };
 
@@ -391,6 +605,9 @@ export async function startTui(options: TuiAppOptions): Promise<SessionOutcome> 
     refreshStatus("idle");
     return outcome;
   } finally {
+    if (studioServer) {
+      void studioServer.close();
+    }
     tui.renderNow(true);
     tui.stop();
   }

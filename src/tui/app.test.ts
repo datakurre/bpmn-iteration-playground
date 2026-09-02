@@ -43,12 +43,12 @@ class FakeTerminal implements Terminal {
  * without needing session-skeleton's own multi-turn craft/lint loop.
  */
 const SMOKE_GRAPH = `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions id="Defs_tui_smoke" xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" targetNamespace="http://graph-agent/bpmn">
+<bpmn:definitions id="Defs_tui_smoke" xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" targetNamespace="http://graph-agent/bpmn">
   <bpmn:process id="tui_smoke" isExecutable="true">
     <bpmn:extensionElements>
       <zeebe:userTaskForm id="gate_form">{"components":[{"key":"value","label":"Say something","type":"textfield"}]}</zeebe:userTaskForm>
     </bpmn:extensionElements>
-    <bpmn:startEvent id="start">
+    <bpmn:startEvent id="start" name="Start">
       <bpmn:outgoing>to_gate</bpmn:outgoing>
     </bpmn:startEvent>
     <bpmn:sequenceFlow id="to_gate" sourceRef="start" targetRef="gate" />
@@ -75,10 +75,38 @@ const SMOKE_GRAPH = `<?xml version="1.0" encoding="UTF-8"?>
       <bpmn:outgoing>to_end</bpmn:outgoing>
     </bpmn:serviceTask>
     <bpmn:sequenceFlow id="to_end" sourceRef="turn" targetRef="end" />
-    <bpmn:endEvent id="end">
+    <bpmn:endEvent id="end" name="End">
       <bpmn:incoming>to_end</bpmn:incoming>
     </bpmn:endEvent>
   </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_tui_smoke">
+    <bpmndi:BPMNPlane id="BPMNPlane_tui_smoke" bpmnElement="tui_smoke">
+      <bpmndi:BPMNShape id="start_di" bpmnElement="start">
+        <dc:Bounds x="57" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gate_di" bpmnElement="gate">
+        <dc:Bounds x="150" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="turn_di" bpmnElement="turn">
+        <dc:Bounds x="300" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end_di" bpmnElement="end">
+        <dc:Bounds x="450" y="52" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="to_gate_di" bpmnElement="to_gate">
+        <di:waypoint x="93" y="70" />
+        <di:waypoint x="150" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_turn_di" bpmnElement="to_turn">
+        <di:waypoint x="250" y="70" />
+        <di:waypoint x="300" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_end_di" bpmnElement="to_end">
+        <di:waypoint x="400" y="70" />
+        <di:waypoint x="450" y="70" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
 </bpmn:definitions>`;
 
 /**
@@ -271,15 +299,43 @@ describe("graph-agent tui --resume (issue #67)", () => {
     // Test /help command
     handles?.editor.onSubmit?.("/help");
     expect(handles?.root.render(80).join("\n")).toContain("/model");
+    expect(handles?.root.render(80).join("\n")).toContain("/sessions");
+    expect(handles?.root.render(80).join("\n")).toContain("/studio");
     expect(handles?.root.render(80).join("\n")).toContain("/steer");
 
     // Test /model command
     handles?.editor.onSubmit?.("/model");
     expect(handles?.root.render(80).join("\n")).toContain("faux-model-label");
 
-    // Test /graph command
-    handles?.editor.onSubmit?.("/graph");
-    expect(handles?.root.render(80).join("\n")).toContain("smoke");
+    // Test /graph command (shows name and flow outline)
+    await handles?.editor.onSubmit?.("/graph");
+    expect(handles?.root.render(80).join("\n")).toContain("graph: smoke");
+    expect(handles?.root.render(80).join("\n")).toContain("start");
+    expect(handles?.root.render(80).join("\n")).toContain("gate  [UserTask: Say something]");
+
+    // Test /graphs command (lists library workflows)
+    await handles?.editor.onSubmit?.("/graphs");
+    expect(handles?.root.render(80).join("\n")).toContain("Available workflows:");
+
+    // Test /rail command (toggles split rail mode)
+    await handles?.editor.onSubmit?.("/rail");
+    expect(handles?.root.render(80).join("\n")).toContain("side rail enabled");
+
+    // Test /graph <name> command (shows named graph outline)
+    await handles?.editor.onSubmit?.("/graph smoke");
+    expect(handles?.root.render(80).join("\n")).toContain("graph: smoke");
+
+    // Test /promote command (promotes active session graph to library)
+    await handles?.editor.onSubmit?.("/promote promoted_smoke");
+    expect(handles?.root.render(80).join("\n")).toContain("promoted session graph to library");
+
+    // Test /sessions command
+    await handles?.editor.onSubmit?.("/sessions");
+    expect(handles?.root.render(80).join("\n")).toContain("Recent sessions:");
+
+    // Test unknown slash command error guarding
+    handles?.editor.onSubmit?.("/unknown_cmd");
+    expect(handles?.root.render(80).join("\n")).toContain("unknown command: /unknown_cmd");
 
     // Answer gate and finish
     handles?.editor.onSubmit?.("answering gate");
@@ -349,6 +405,68 @@ describe("graph-agent tui --resume (issue #67)", () => {
     const rendered = handles?.root.render(80).join("\n") ?? "";
     expect(rendered).toContain("my custom prompt from editor");
     expect(rendered).toContain("Prompt received.");
+  });
+
+  it("renders diff preview component when gate documentation has unified diff", async () => {
+    const diffGraph = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_tui_diff" xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" targetNamespace="http://graph-agent/bpmn">
+  <bpmn:process id="tui_diff" isExecutable="true">
+    <bpmn:extensionElements>
+      <zeebe:userTaskForm id="review_form">{"components":[{"key":"approved","label":"Approve patch?","type":"textfield"}]}</zeebe:userTaskForm>
+    </bpmn:extensionElements>
+    <bpmn:startEvent id="start">
+      <bpmn:outgoing>to_gate</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="to_gate" sourceRef="start" targetRef="gate" />
+    <bpmn:userTask id="gate" name="Review patch">
+      <bpmn:documentation>--- a/index.ts
++++ b/index.ts
+@@ -1,3 +1,3 @@
+-const oldVal = 1;
++const newVal = 2;</bpmn:documentation>
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:formDefinition formId="review_form" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>to_gate</bpmn:incoming>
+      <bpmn:outgoing>to_end</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="to_end" sourceRef="gate" targetRef="end" />
+    <bpmn:endEvent id="end">
+      <bpmn:incoming>to_end</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+
+    const diffGraphFile = join(home, "diff_review.bpmn");
+    writeFileSync(diffGraphFile, diffGraph);
+
+    let handles: TuiHandles | undefined;
+    const outcomePromise = startTui({
+      paths,
+      project: home,
+      start: { kind: "run", graphPath: diffGraphFile, graphLabel: "diff_review", prompt: "Review this diff" },
+      model: fauxProvider({ provider: "faux", models: [{ id: "faux-1", name: "Faux" }] }).getModel(),
+      modelLabel: "faux-model",
+      systemPrompt: "test agent",
+      streamFn: (model, context, options) => fauxProvider({ provider: "faux", models: [{ id: "f", name: "F" }] }).provider.streamSimple(model, context, options),
+      tools: createNoopToolExecutor([]),
+      terminal: new FakeTerminal(),
+      onReady: (ready) => {
+        handles = ready;
+      },
+    });
+
+    await vi.waitFor(() => {
+      const rendered = handles?.root.render(80).join("\n") ?? "";
+      expect(rendered).toContain("waiting on gate");
+      expect(rendered).toContain("const oldVal = 1;");
+      expect(rendered).toContain("const newVal = 2;");
+    });
+
+    handles?.editor.onSubmit?.("yes");
+    const result = await outcomePromise;
+    expect(result.outcome).toBe("completed");
   });
 });
 

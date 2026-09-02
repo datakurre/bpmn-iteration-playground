@@ -113,6 +113,144 @@ export async function firstActivity(xml: string): Promise<{ id: string; type: st
   return undefined;
 }
 
+export interface GraphOutlineState {
+  visited?: readonly string[];
+  tokens?: readonly string[];
+}
+
+/**
+ * Renders a terminal-native flow outline walking the BPMN process sequence flows,
+ * annotating visited elements (`·`), active tokens (`●`), gateway branches, and
+ * loop back-edges (`↺`).
+ */
+export async function graphOutline(xml: string, state?: GraphOutlineState): Promise<string> {
+  const moddle = new BpmnModdle(MODDLE_OPTIONS);
+  const { rootElement } = await moddle.fromXML(xml.trim());
+  const proc = executableProcess(rootElement);
+  if (!proc) return "(no executable process found)";
+
+  const flowElements = flattenFlowElements((proc.flowElements as ModdleFlowElement[]) ?? []);
+  const nodesById = new Map<string, ModdleFlowElement>();
+  const flowsBySource = new Map<string, Array<{ id: string; targetId: string; name?: string; condition?: string }>>();
+
+  for (const el of flowElements) {
+    if (el.$type === "bpmn:SequenceFlow") {
+      const sourceId = (el.sourceRef as unknown as { id?: string })?.id ?? (el as unknown as { sourceRef?: string }).sourceRef;
+      const targetId = (el.targetRef as unknown as { id?: string })?.id ?? (el as unknown as { targetRef?: string }).targetRef;
+      if (sourceId && targetId) {
+        const condition =
+          (el.conditionExpression as unknown as { body?: string })?.body ??
+          (typeof el.conditionExpression === "string" ? el.conditionExpression : undefined);
+        const name = typeof el.name === "string" && el.name.trim() ? el.name.trim() : undefined;
+        const list = flowsBySource.get(sourceId) ?? [];
+        list.push({ id: el.id, targetId, name, condition });
+        flowsBySource.set(sourceId, list);
+      }
+    } else {
+      nodesById.set(el.id, el);
+    }
+  }
+
+  const startEvent = flowElements.find((el) => el.$type === "bpmn:StartEvent");
+  if (!startEvent) return "(no start event found)";
+
+  const visitedTokens = new Set(state?.tokens ?? []);
+  const visitedHistory = new Set(state?.visited ?? []);
+
+  const lines: string[] = [];
+
+  function nodeLabel(node: ModdleFlowElement): string {
+    const harness = harnessOf({ id: node.id, type: node.$type, behaviour: node as unknown as ActivityLike["behaviour"] });
+    const name = typeof node.name === "string" && node.name.trim() ? node.name.trim() : "";
+    if (node.$type === "bpmn:StartEvent") return name ? `start (${name})` : `start`;
+    if (node.$type === "bpmn:EndEvent") return name ? `◉ ${node.id} (${name})` : `◉ ${node.id}`;
+    if (node.$type === "bpmn:ExclusiveGateway") return name ? `◆ ${node.id} (${name})` : `◆ ${node.id}`;
+    if (node.$type === "bpmn:ParallelGateway") return name ? `✛ ${node.id} (${name})` : `✛ ${node.id}`;
+    if (node.$type === "bpmn:UserTask") return `${node.id}  [UserTask${name ? `: ${name}` : ""}]`;
+    if (node.$type === "bpmn:SubProcess") return `${node.id}  [SubProcess${name ? `: ${name}` : ""}]`;
+    if (node.$type === "bpmn:CallActivity") {
+      const called = (node as unknown as { calledElement?: string }).calledElement;
+      return `${node.id}  [call: ${called ?? "unknown"}]`;
+    }
+    if (harness) return `${node.id}  ${harness}`;
+    return name ? `${node.id} (${name})` : node.id;
+  }
+
+  function marker(nodeId: string): string {
+    if (visitedTokens.has(nodeId)) return "●";
+    if (visitedHistory.has(nodeId)) return "·";
+    return " ";
+  }
+
+  function walk(nodeId: string, prefix: string, isTail: boolean, activePath: Set<string>): void {
+    const node = nodesById.get(nodeId);
+    if (!node) {
+      lines.push(`${marker(nodeId)} ${prefix}${isTail ? "└─ " : "├─ "}? ${nodeId}`);
+      return;
+    }
+
+    const mark = marker(node.id);
+    const label = nodeLabel(node);
+    const linePrefix = `${prefix}${isTail ? "└─ " : "├─ "}`;
+    lines.push(`${mark} ${linePrefix}${label}`);
+
+    if (activePath.has(nodeId)) {
+      return;
+    }
+
+    const nextPath = new Set(activePath).add(nodeId);
+    const flows = flowsBySource.get(nodeId) ?? [];
+    if (flows.length === 0) return;
+
+    const childPrefix = `${prefix}${isTail ? "   " : "│  "}`;
+
+    if (flows.length === 1) {
+      const targetId = flows[0]!.targetId;
+      if (nextPath.has(targetId)) {
+        const targetMark = marker(targetId);
+        lines.push(`${targetMark} ${childPrefix}└─ ↺ ${targetId}`);
+      } else {
+        walk(targetId, childPrefix, true, nextPath);
+      }
+      return;
+    }
+
+    for (let i = 0; i < flows.length; i++) {
+      const flow = flows[i]!;
+      const isLastBranch = i === flows.length - 1;
+      const branchLabel = flow.name ?? (flow.condition ? flow.condition.replace(/^=/, "") : undefined);
+      const branchDesc = branchLabel ? `[${branchLabel}]` : `[branch ${i + 1}]`;
+
+      const branchConnector = isLastBranch ? "└─ " : "├─ ";
+      const branchChildPrefix = `${childPrefix}${isLastBranch ? "   " : "│  "}`;
+
+      lines.push(`  ${childPrefix}${branchConnector}${branchDesc}`);
+
+      if (nextPath.has(flow.targetId)) {
+        const targetMark = marker(flow.targetId);
+        lines.push(`${targetMark} ${branchChildPrefix}└─ ↺ ${flow.targetId}`);
+      } else {
+        walk(flow.targetId, branchChildPrefix, true, nextPath);
+      }
+    }
+  }
+
+  const startMark = marker(startEvent.id);
+  lines.push(`${startMark} ${nodeLabel(startEvent)}`);
+  const initialFlows = flowsBySource.get(startEvent.id) ?? [];
+  if (initialFlows.length === 1) {
+    walk(initialFlows[0]!.targetId, "", true, new Set([startEvent.id]));
+  } else {
+    for (let i = 0; i < initialFlows.length; i++) {
+      const flow = initialFlows[i]!;
+      const isTail = i === initialFlows.length - 1;
+      walk(flow.targetId, "", isTail, new Set([startEvent.id]));
+    }
+  }
+
+  return lines.join("\n");
+}
+
 /**
  * Rewrites `<bpmn:definitions id>`. A session pins its definitions id for
  * recovery (`recoverWithGraph` throws on a mismatch), so a graph promoted out

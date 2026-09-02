@@ -15,10 +15,12 @@ import {
   CombinedAutocompleteProvider,
   Container,
   Editor,
+  HStack,
   ProcessTerminal,
   SelectList,
   Text,
   TuiMainScreen,
+  VStack,
   stripTerminalSequences,
   type AutocompleteItem,
   type AutocompleteProvider,
@@ -36,6 +38,7 @@ import {
   getMarkdownTheme,
   getSelectListTheme,
   initTheme,
+  renderDiff,
   ToolExecutionComponent,
 } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
@@ -189,6 +192,18 @@ export function toolTranscriptEntry(
   }
 }
 
+/**
+ * Render a unified diff with syntax and line-change color highlights (+green, -red, context gray).
+ */
+export function diffPreviewComponent(diffText: string): Component {
+  try {
+    const formatted = renderDiff(diffText);
+    return new Text(formatted);
+  } catch {
+    return new Text(diffText);
+  }
+}
+
 export {
   Box,
   CombinedAutocompleteProvider,
@@ -197,10 +212,12 @@ export {
   Editor,
   getMarkdownTheme,
   getSelectListTheme,
+  HStack,
   ProcessTerminal,
   SelectList,
   Text,
   TuiMainScreen,
+  VStack,
   type AutocompleteItem,
   type AutocompleteProvider,
   type Component,
