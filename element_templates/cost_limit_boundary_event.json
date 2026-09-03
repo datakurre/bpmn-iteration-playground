@@ -31,12 +31,13 @@
         "label": "Cost condition (FEEL)",
         "description": "FEEL condition expression evaluated against _session.total_cost (e.g. =_session.total_cost >= 0.50).",
         "type": "String",
+        "feel": "required",
         "value": "=_session.total_cost >= 0.50",
         "constraints": {
           "notEmpty": true
         },
         "binding": {
-          "type": "property",
+          "type": "bpmn:ConditionalEventDefinition#property",
           "name": "condition"
         }
       }
