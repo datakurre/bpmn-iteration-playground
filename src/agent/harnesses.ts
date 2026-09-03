@@ -6,7 +6,7 @@
  * the Pi session, so a harness is mostly a translation between the two.
  */
 import { spawn } from "node:child_process";
-import { layoutProcess } from "bpmn-auto-layout";
+import { layoutProcess } from "../js/lib/bpmn-auto-layout.ts";
 import { applyGraphOps, checkSplice, type GraphOp, type HarnessIOContract } from "./graph.ts";
 import { failed, HARNESS_RESULT_BASE_FIELDS, ok, type Harness, type HarnessRegistry, type HarnessResult } from "./harness.ts";
 import type { PiSession, ToolCallRequest } from "./pi-session.ts";

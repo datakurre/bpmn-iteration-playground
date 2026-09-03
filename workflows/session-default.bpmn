@@ -28,7 +28,7 @@ session-skeleton extends craft-graph.</bpmn:documentation>
       <bpmndi:BPMNShape id="session_start_di" bpmnElement="session_start">
         <dc:Bounds x="57" y="52" width="36" height="36" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="30" y="88" width="90" height="20" />
+          <dc:Bounds x="30" y="96" width="90" height="20" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="agent_loop_di" bpmnElement="agent_loop">
@@ -37,7 +37,7 @@ session-skeleton extends craft-graph.</bpmn:documentation>
       <bpmndi:BPMNShape id="session_end_di" bpmnElement="session_end">
         <dc:Bounds x="357" y="52" width="36" height="36" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="330" y="88" width="90" height="20" />
+          <dc:Bounds x="330" y="96" width="90" height="20" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNEdge id="to_loop_di" bpmnElement="to_loop">
@@ -50,5 +50,5 @@ session-skeleton extends craft-graph.</bpmn:documentation>
       </bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>
-  <!-- ga:modelHash:9e8706829d024e87a689fa4c9f5eb9b5793dc956c184edb1e776298640f92dad -->
+  <!-- ga:modelHash:7bfebde9265ab0c27bfc7269bbd1f6df48e1ae45801678451c4af8156a3a6fe6 -->
 </bpmn:definitions>

@@ -237,231 +237,269 @@ the same reasoning as gw_inject_entry above.</bpmn:documentation>
   <bpmndi:BPMNDiagram id="BPMNDiagram_pi_default_loop">
     <bpmndi:BPMNPlane id="BPMNPlane_pi_default_loop" bpmnElement="pi_default_loop">
       <bpmndi:BPMNShape id="loop_start_di" bpmnElement="loop_start">
-        <dc:Bounds x="57" y="52" width="36" height="36" />
+        <dc:Bounds x="57" y="252" width="36" height="36" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="30" y="88" width="90" height="20" />
+          <dc:Bounds x="30" y="296" width="90" height="20" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_inject_entry_di" bpmnElement="gw_inject_entry" isMarkerVisible="true">
-        <dc:Bounds x="200" y="45" width="50" height="50" />
+        <dc:Bounds x="200" y="245" width="50" height="50" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="180" y="95" width="90" height="20" />
+          <dc:Bounds x="205" y="210" width="40" height="27" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="inject_pending_di" bpmnElement="inject_pending">
-        <dc:Bounds x="325" y="30" width="100" height="80" />
+        <dc:Bounds x="325" y="230" width="100" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="llm_turn_di" bpmnElement="llm_turn">
-        <dc:Bounds x="475" y="30" width="100" height="80" />
+        <dc:Bounds x="625" y="230" width="100" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_failed_di" bpmnElement="gw_failed" isMarkerVisible="true">
-        <dc:Bounds x="650" y="45" width="50" height="50" />
+        <dc:Bounds x="800" y="245" width="50" height="50" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="630" y="95" width="90" height="20" />
-        </bpmndi:BPMNLabel>
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="end_error_di" bpmnElement="end_error">
-        <dc:Bounds x="807" y="52" width="36" height="36" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="780" y="88" width="90" height="20" />
+          <dc:Bounds x="792" y="303" width="66" height="27" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_tools_di" bpmnElement="gw_tools" isMarkerVisible="true">
-        <dc:Bounds x="950" y="45" width="50" height="50" />
+        <dc:Bounds x="950" y="245" width="50" height="50" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="930" y="95" width="90" height="20" />
+          <dc:Bounds x="995" y="303" width="40" height="27" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_truncated_di" bpmnElement="gw_truncated" isMarkerVisible="true">
-        <dc:Bounds x="1100" y="45" width="50" height="50" />
+        <dc:Bounds x="1100" y="245" width="50" height="50" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="1080" y="95" width="90" height="20" />
+          <dc:Bounds x="1105" y="303" width="40" height="27" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="fail_tool_batch_di" bpmnElement="fail_tool_batch">
-        <dc:Bounds x="1225" y="30" width="100" height="80" />
+        <dc:Bounds x="1225" y="230" width="100" height="80" />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="gw_prepare_entry_di" bpmnElement="gw_prepare_entry" isMarkerVisible="true">
-        <dc:Bounds x="1850" y="45" width="50" height="50" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="1830" y="95" width="90" height="20" />
-        </bpmndi:BPMNLabel>
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="prepare_next_turn_di" bpmnElement="prepare_next_turn">
-        <dc:Bounds x="1975" y="30" width="100" height="80" />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="gw_should_stop_di" bpmnElement="gw_should_stop" isMarkerVisible="true">
-        <dc:Bounds x="2150" y="45" width="50" height="50" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="2130" y="95" width="90" height="20" />
-        </bpmndi:BPMNLabel>
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="gw_end_stopped_entry_di" bpmnElement="gw_end_stopped_entry" isMarkerVisible="true">
-        <dc:Bounds x="2300" y="45" width="50" height="50" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="2280" y="95" width="90" height="20" />
-        </bpmndi:BPMNLabel>
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="end_stopped_di" bpmnElement="end_stopped">
-        <dc:Bounds x="2457" y="52" width="36" height="36" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="2430" y="88" width="90" height="20" />
-        </bpmndi:BPMNLabel>
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="tool_batch_di" bpmnElement="tool_batch" isExpanded="true">
-        <dc:Bounds x="1225" y="170" width="550" height="220" />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="collect_batch_di" bpmnElement="collect_batch">
-        <dc:Bounds x="1825" y="170" width="100" height="80" />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="gw_terminate_di" bpmnElement="gw_terminate" isMarkerVisible="true">
-        <dc:Bounds x="2000" y="185" width="50" height="50" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="1980" y="235" width="90" height="20" />
-        </bpmndi:BPMNLabel>
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="drain_followup_di" bpmnElement="drain_followup">
-        <dc:Bounds x="1075" y="450" width="100" height="80" />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="gw_followup_di" bpmnElement="gw_followup" isMarkerVisible="true">
-        <dc:Bounds x="1250" y="465" width="50" height="50" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="1230" y="515" width="90" height="20" />
-        </bpmndi:BPMNLabel>
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="end_done_di" bpmnElement="end_done">
-        <dc:Bounds x="1857" y="472" width="36" height="36" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="1830" y="508" width="90" height="20" />
-        </bpmndi:BPMNLabel>
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNEdge id="to_inject_di" bpmnElement="to_inject">
-        <di:waypoint x="93" y="70" />
-        <di:waypoint x="200" y="70" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="into_inject_pending_di" bpmnElement="into_inject_pending">
-        <di:waypoint x="250" y="70" />
-        <di:waypoint x="325" y="70" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="to_turn_di" bpmnElement="to_turn">
-        <di:waypoint x="425" y="70" />
-        <di:waypoint x="475" y="70" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="to_gw_failed_di" bpmnElement="to_gw_failed">
-        <di:waypoint x="575" y="70" />
-        <di:waypoint x="650" y="70" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="turn_failed_di" bpmnElement="turn_failed">
-        <di:waypoint x="700" y="70" />
-        <di:waypoint x="807" y="70" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="turn_ok_di" bpmnElement="turn_ok">
-        <di:waypoint x="675" y="95" />
-        <di:waypoint x="675" y="140" />
-        <di:waypoint x="975" y="140" />
-        <di:waypoint x="975" y="95" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="has_tools_di" bpmnElement="has_tools">
-        <di:waypoint x="1000" y="70" />
-        <di:waypoint x="1100" y="70" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="no_tools_di" bpmnElement="no_tools">
-        <di:waypoint x="975" y="95" />
-        <di:waypoint x="975" y="490" />
-        <di:waypoint x="1075" y="490" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="truncated_di" bpmnElement="truncated">
-        <di:waypoint x="1150" y="70" />
-        <di:waypoint x="1225" y="70" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="not_truncated_di" bpmnElement="not_truncated">
-        <di:waypoint x="1125" y="95" />
-        <di:waypoint x="1125" y="280" />
-        <di:waypoint x="1225" y="280" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="failed_to_prepare_di" bpmnElement="failed_to_prepare">
-        <di:waypoint x="1325" y="70" />
-        <di:waypoint x="1850" y="70" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="into_prepare_next_turn_di" bpmnElement="into_prepare_next_turn">
-        <di:waypoint x="1900" y="70" />
-        <di:waypoint x="1975" y="70" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="to_gw_stop_di" bpmnElement="to_gw_stop">
-        <di:waypoint x="2075" y="70" />
-        <di:waypoint x="2150" y="70" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="stop_now_di" bpmnElement="stop_now">
-        <di:waypoint x="2200" y="70" />
-        <di:waypoint x="2300" y="70" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="next_turn_di" bpmnElement="next_turn">
-        <di:waypoint x="2175" y="95" />
-        <di:waypoint x="2175" y="140" />
-        <di:waypoint x="225" y="140" />
-        <di:waypoint x="225" y="95" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="into_end_stopped_di" bpmnElement="into_end_stopped">
-        <di:waypoint x="2350" y="70" />
-        <di:waypoint x="2457" y="70" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="batch_done_di" bpmnElement="batch_done">
-        <di:waypoint x="1775" y="210" />
-        <di:waypoint x="1825" y="210" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="collected_di" bpmnElement="collected">
-        <di:waypoint x="1925" y="210" />
-        <di:waypoint x="2000" y="210" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="batch_terminates_di" bpmnElement="batch_terminates">
-        <di:waypoint x="2050" y="210" />
-        <di:waypoint x="2325" y="210" />
-        <di:waypoint x="2325" y="95" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="batch_continues_di" bpmnElement="batch_continues">
-        <di:waypoint x="2025" y="235" />
-        <di:waypoint x="2025" y="280" />
-        <di:waypoint x="1875" y="280" />
-        <di:waypoint x="1875" y="95" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="to_gw_followup_di" bpmnElement="to_gw_followup">
-        <di:waypoint x="1175" y="490" />
-        <di:waypoint x="1250" y="490" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="followup_again_di" bpmnElement="followup_again">
-        <di:waypoint x="1275" y="515" />
-        <di:waypoint x="1275" y="560" />
-        <di:waypoint x="225" y="560" />
-        <di:waypoint x="225" y="95" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="no_followup_di" bpmnElement="no_followup">
-        <di:waypoint x="1300" y="490" />
-        <di:waypoint x="1857" y="490" />
-      </bpmndi:BPMNEdge>
       <bpmndi:BPMNShape id="tool_start_di" bpmnElement="tool_start">
-        <dc:Bounds x="1332" y="262" width="36" height="36" />
+        <dc:Bounds x="1280" y="52" width="36" height="36" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="1305" y="298" width="90" height="20" />
+          <dc:Bounds x="1253" y="96" width="90" height="20" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="run_tool_di" bpmnElement="run_tool">
-        <dc:Bounds x="1450" y="240" width="100" height="80" />
+        <dc:Bounds x="1376" y="30" width="100" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="tool_end_di" bpmnElement="tool_end">
-        <dc:Bounds x="1632" y="262" width="36" height="36" />
+        <dc:Bounds x="1536" y="52" width="36" height="36" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="1605" y="298" width="90" height="20" />
+          <dc:Bounds x="1509" y="96" width="90" height="20" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="tool_batch_di" bpmnElement="tool_batch" isExpanded="true">
+        <dc:Bounds x="1245" y="-30" width="360" height="200" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="collect_batch_di" bpmnElement="collect_batch">
+        <dc:Bounds x="1975" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_terminate_di" bpmnElement="gw_terminate" isMarkerVisible="true">
+        <dc:Bounds x="2150" y="45" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="2130" y="103" width="90" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_prepare_entry_di" bpmnElement="gw_prepare_entry" isMarkerVisible="true">
+        <dc:Bounds x="2300" y="245" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="2305" y="303" width="40" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="prepare_next_turn_di" bpmnElement="prepare_next_turn">
+        <dc:Bounds x="2425" y="230" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_should_stop_di" bpmnElement="gw_should_stop" isMarkerVisible="true">
+        <dc:Bounds x="2600" y="245" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="2592" y="210" width="66" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="drain_followup_di" bpmnElement="drain_followup">
+        <dc:Bounds x="1075" y="30" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_followup_di" bpmnElement="gw_followup" isMarkerVisible="true">
+        <dc:Bounds x="1700" y="45" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1705" y="10" width="40" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end_done_di" bpmnElement="end_done">
+        <dc:Bounds x="1857" y="52" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1830" y="96" width="90" height="20" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_end_stopped_entry_di" bpmnElement="gw_end_stopped_entry" isMarkerVisible="true">
+        <dc:Bounds x="2750" y="245" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="2744" y="297" width="62" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end_stopped_di" bpmnElement="end_stopped">
+        <dc:Bounds x="2907" y="252" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="2880" y="296" width="90" height="20" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end_error_di" bpmnElement="end_error">
+        <dc:Bounds x="957" y="52" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="870" y="96" width="90" height="20" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="to_inject_di" bpmnElement="to_inject">
+        <di:waypoint x="93" y="270" />
+        <di:waypoint x="200" y="270" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="into_inject_pending_di" bpmnElement="into_inject_pending">
+        <di:waypoint x="250" y="270" />
+        <di:waypoint x="325" y="270" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_turn_di" bpmnElement="to_turn">
+        <di:waypoint x="425" y="270" />
+        <di:waypoint x="625" y="270" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_gw_failed_di" bpmnElement="to_gw_failed">
+        <di:waypoint x="725" y="270" />
+        <di:waypoint x="800" y="270" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="turn_failed_di" bpmnElement="turn_failed">
+        <di:waypoint x="825" y="245" />
+        <di:waypoint x="825" y="70" />
+        <di:waypoint x="957" y="70" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="846" y="54" width="90" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="turn_ok_di" bpmnElement="turn_ok">
+        <di:waypoint x="850" y="270" />
+        <di:waypoint x="950" y="270" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="885" y="254" width="30" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="has_tools_di" bpmnElement="has_tools">
+        <di:waypoint x="1000" y="270" />
+        <di:waypoint x="1100" y="270" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1035" y="254" width="30" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="no_tools_di" bpmnElement="no_tools">
+        <di:waypoint x="975" y="245" />
+        <di:waypoint x="975" y="70" />
+        <di:waypoint x="1075" y="70" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1010" y="54" width="30" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="truncated_di" bpmnElement="truncated">
+        <di:waypoint x="1150" y="270" />
+        <di:waypoint x="1225" y="270" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1143" y="254" width="90" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="not_truncated_di" bpmnElement="not_truncated">
+        <di:waypoint x="1125" y="245" />
+        <di:waypoint x="1125" y="70" />
+        <di:waypoint x="1245" y="70" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1154" y="54" width="62" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="failed_to_prepare_di" bpmnElement="failed_to_prepare">
+        <di:waypoint x="1325" y="270" />
+        <di:waypoint x="2300" y="270" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="batch_done_di" bpmnElement="batch_done">
+        <di:waypoint x="1425" y="170" />
+        <di:waypoint x="1425" y="280" />
+        <di:waypoint x="2025" y="280" />
+        <di:waypoint x="2025" y="110" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="collected_di" bpmnElement="collected">
+        <di:waypoint x="2075" y="70" />
+        <di:waypoint x="2150" y="70" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="batch_terminates_di" bpmnElement="batch_terminates">
+        <di:waypoint x="2200" y="70" />
+        <di:waypoint x="2775" y="70" />
+        <di:waypoint x="2775" y="245" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="2443" y="54" width="90" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="batch_continues_di" bpmnElement="batch_continues">
+        <di:waypoint x="2200" y="70" />
+        <di:waypoint x="2325" y="70" />
+        <di:waypoint x="2325" y="245" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="2232" y="54" width="62" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="into_prepare_next_turn_di" bpmnElement="into_prepare_next_turn">
+        <di:waypoint x="2350" y="270" />
+        <di:waypoint x="2425" y="270" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_gw_stop_di" bpmnElement="to_gw_stop">
+        <di:waypoint x="2525" y="270" />
+        <di:waypoint x="2600" y="270" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="stop_now_di" bpmnElement="stop_now">
+        <di:waypoint x="2650" y="270" />
+        <di:waypoint x="2750" y="270" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="2685" y="254" width="30" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="next_turn_di" bpmnElement="next_turn">
+        <di:waypoint x="2625" y="295" />
+        <di:waypoint x="2625" y="290" />
+        <di:waypoint x="225" y="290" />
+        <di:waypoint x="225" y="295" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1381" y="294" width="88" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="to_gw_followup_di" bpmnElement="to_gw_followup">
+        <di:waypoint x="1125" y="110" />
+        <di:waypoint x="1125" y="280" />
+        <di:waypoint x="1725" y="280" />
+        <di:waypoint x="1725" y="95" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="followup_again_di" bpmnElement="followup_again">
+        <di:waypoint x="1725" y="95" />
+        <di:waypoint x="1725" y="290" />
+        <di:waypoint x="225" y="290" />
+        <di:waypoint x="225" y="295" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="960" y="294" width="30" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="no_followup_di" bpmnElement="no_followup">
+        <di:waypoint x="1750" y="70" />
+        <di:waypoint x="1857" y="70" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1789" y="54" width="30" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="into_end_stopped_di" bpmnElement="into_end_stopped">
+        <di:waypoint x="2800" y="270" />
+        <di:waypoint x="2907" y="270" />
+      </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="to_tool_di" bpmnElement="to_tool">
-        <di:waypoint x="1368" y="280" />
-        <di:waypoint x="1450" y="280" />
+        <di:waypoint x="1316" y="70" />
+        <di:waypoint x="1376" y="70" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="tool_done_di" bpmnElement="tool_done">
-        <di:waypoint x="1550" y="280" />
-        <di:waypoint x="1632" y="280" />
+        <di:waypoint x="1476" y="70" />
+        <di:waypoint x="1536" y="70" />
       </bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>
-  <!-- ga:modelHash:5be1198cd3072690d53f4347a8002d72fddae7a041d99f453e87fc9ba4cddf5b -->
+  <!-- ga:modelHash:2835e91866707c4aa00b32a81dbcf8ec67064dffb494ccb1b82931cbacadd868 -->
 </bpmn:definitions>

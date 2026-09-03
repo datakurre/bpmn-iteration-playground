@@ -13,7 +13,7 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { layoutProcess } from "bpmn-auto-layout";
+import { layoutProcess } from "../src/js/lib/bpmn-auto-layout.ts";
 import { Linter } from "bpmnlint";
 import { BpmnModdle } from "bpmn-moddle";
 import zeebe from "zeebe-bpmn-moddle/resources/zeebe.json" with { type: "json" };

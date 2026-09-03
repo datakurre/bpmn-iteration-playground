@@ -5,7 +5,7 @@ import { BpmnPropertiesPanelModule, BpmnPropertiesProviderModule } from "bpmn-js
 // so the descriptor goes in as published. (camunda-bpmn-moddle did not, which is
 // why the Camunda 7 build carried a patched copy.)
 import zeebeModdleDescriptor from "zeebe-bpmn-moddle/resources/zeebe.json";
-import { layoutProcess } from "bpmn-auto-layout";
+import { layoutProcess } from "./lib/bpmn-auto-layout";
 import { CreateAppendAnythingModule, CreateAppendElementTemplatesModule } from "bpmn-js-create-append-anything";
 import TokenSimulationModule from "bpmn-js-token-simulation";
 import bpmnlintModule from "bpmn-js-bpmnlint";

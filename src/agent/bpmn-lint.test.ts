@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { layoutProcess } from "bpmn-auto-layout";
+import { layoutProcess } from "../js/lib/bpmn-auto-layout.ts";
 import { lintBpmn } from "./bpmn-lint.ts";
 
 const NAMESPACES =
