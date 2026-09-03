@@ -299,7 +299,7 @@ describe("graph:extend is a no-op on an empty splice (issue #60)", () => {
   it("still calls setGraph, and reports what was added, for a genuine splice", async () => {
     const withMarker = currentGraph.replace(
       "<bpmn:startEvent id=\"start\" />",
-      '<bpmn:startEvent id="start" /><bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="marker" /><bpmn:endEvent id="marker" />',
+      '<bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent><bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="marker" /><bpmn:endEvent id="marker"><bpmn:incoming>f1</bpmn:incoming></bpmn:endEvent>',
     );
     const setGraph = (
       _xml: string,
@@ -324,7 +324,7 @@ describe("graph:extend is a no-op on an empty splice (issue #60)", () => {
   it("passes the revision count read alongside the graph as setGraph's expectedIndex (issue #75)", async () => {
     const withMarker = currentGraph.replace(
       "<bpmn:startEvent id=\"start\" />",
-      '<bpmn:startEvent id="start" /><bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="marker" /><bpmn:endEvent id="marker" />',
+      '<bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent><bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="marker" /><bpmn:endEvent id="marker"><bpmn:incoming>f1</bpmn:incoming></bpmn:endEvent>',
     );
     let seenExpectedIndex: number | undefined;
     const extend = extendHarness((_xml, _reason, _added, expectedIndex) => {
@@ -346,7 +346,7 @@ describe("graph:extend is a no-op on an empty splice (issue #60)", () => {
   it("reports a revision conflict as a failed splice instead of an uncaught throw (issue #75)", async () => {
     const withMarker = currentGraph.replace(
       "<bpmn:startEvent id=\"start\" />",
-      '<bpmn:startEvent id="start" /><bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="marker" /><bpmn:endEvent id="marker" />',
+      '<bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent><bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="marker" /><bpmn:endEvent id="marker"><bpmn:incoming>f1</bpmn:incoming></bpmn:endEvent>',
     );
     // Simulates SessionStore.appendGraph rejecting the write because someone
     // else's revision landed first.

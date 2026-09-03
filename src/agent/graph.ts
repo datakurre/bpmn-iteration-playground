@@ -11,6 +11,7 @@ import { Serializer, TypeResolver } from "moddle-context-serializer";
 import zeebeDescriptor from "zeebe-bpmn-moddle/resources/zeebe.json" with { type: "json" };
 import { activityProperties, harnessOf, ioMapping, type ActivityLike } from "./zeebe.ts";
 import { SUPPORTED_ELEMENT_TYPES, SUPPORTED_EVENT_DEFINITIONS } from "../js/lib/supported-bpmn-elements.ts";
+import { lintBpmnSemantics } from "./bpmn-lint.ts";
 
 export const MODDLE_OPTIONS = { zeebe: zeebeDescriptor };
 
@@ -1053,6 +1054,33 @@ async function checkFlowContainment(xml: string): Promise<{ ok: true } | { ok: f
   return { ok: true };
 }
 
+/**
+ * Runs the project's own bpmnlint ruleset (minus `no-bpmndi`, not yet
+ * meaningful before `graph:layout` has run -- see `lintBpmnSemantics`'s own
+ * comment) against the merged document, and rejects on any error.
+ *
+ * Before this, `checkSplice` covered additive-only, job types, I/O
+ * bindings, element types, process scope and flow containment -- but not
+ * the ruleset `make lint` enforces on every bundled graph and `promote`
+ * enforces before writing to the library, so the splice path accepted
+ * diagrams the rest of the project treats as errors. `fake-join` is the
+ * sharp one: not a style rule, but a real behavioural trap -- bpmn-elements
+ * re-triggers a plain activity with more than one incoming flow once per
+ * arriving token instead of joining, so an accepted splice with one could
+ * double-run a billed `agent:turn` or a `shell` command. Catching it here
+ * means the redraft loop gets a concrete, id-scoped reason
+ * (`lint_feedback`) instead of the fragment reaching `promote` -- the last
+ * stop in the round trip -- only to be told there it was never valid
+ * (issue #104).
+ */
+async function checkBpmnlintSemantics(xml: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const lint = await lintBpmnSemantics(xml);
+  if (lint.errors > 0) {
+    return { ok: false, reason: `fails bpmnlint:\n${lint.lines.map((l) => `  ${l}`).join("\n")}` };
+  }
+  return { ok: true };
+}
+
 export async function checkSplice(
   previousXml: string,
   nextXml: string,
@@ -1085,6 +1113,8 @@ export async function checkSplice(
   if (!scope.ok) return { ok: false, added, removed, reason: scope.reason };
   const containment = await checkFlowContainment(nextXml);
   if (!containment.ok) return { ok: false, added, removed, reason: containment.reason };
+  const lint = await checkBpmnlintSemantics(nextXml);
+  if (!lint.ok) return { ok: false, added, removed, reason: lint.reason };
   return { ok: true, added, removed };
 }
 
@@ -1203,6 +1233,9 @@ export async function checkMigration(
 
   const containment = await checkFlowContainment(nextXml);
   if (!containment.ok) return { ok: false, removed: [], reason: containment.reason };
+
+  const lint = await checkBpmnlintSemantics(nextXml);
+  if (!lint.ok) return { ok: false, removed: [], reason: lint.reason };
 
   return { ok: true, removed: [] };
 }
