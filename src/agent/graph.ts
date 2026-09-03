@@ -355,6 +355,14 @@ export type GraphOp =
       eventDefinitionType?: string;
       timerDuration?: string;
       condition?: string;
+      /**
+       * Id for the flow this op auto-creates from the new shape to `into`'s
+       * old target (otherwise a generated `Flow_ops_N`). Naming it lets a
+       * later op in the same batch reference it -- e.g. `insertShape`-ing a
+       * join gateway into it -- without guessing the generated id
+       * (issue #107).
+       */
+      flowId?: string;
     }
   | { op: "connect"; from: string; to: string; id?: string; condition?: string; process?: string }
   | {
@@ -623,6 +631,7 @@ export async function applyGraphOps(currentXml: string, ops: GraphOp[]): Promise
       case "insertShape": {
         requireSupportedType(raw.type, opIndex);
         requireNewId(raw.id, opIndex);
+        if (raw.flowId) requireNewId(raw.flowId, opIndex);
         const flow = resolve(raw.into, opIndex);
         if (flow.$type !== "bpmn:SequenceFlow") throw new Error(`op ${opIndex}: '${raw.into}' is not a sequenceFlow`);
         const process = processForTarget(raw.process, flow, opIndex);
@@ -643,7 +652,7 @@ export async function applyGraphOps(currentXml: string, ops: GraphOp[]): Promise
         const shapeIncoming = (shape.incoming as ModdleFlowElement[] | undefined) ?? [];
         shapeIncoming.push(flow);
         shape.incoming = shapeIncoming;
-        connectNodes(process, shape, oldTarget, undefined);
+        connectNodes(process, shape, oldTarget, raw.flowId);
         break;
       }
       case "connect": {

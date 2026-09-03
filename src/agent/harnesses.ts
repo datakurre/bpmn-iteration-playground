@@ -56,9 +56,13 @@ const AGENT_ROLES: Record<string, string> = {
     '  {"op":"appendShape","type":"bpmn:...","id":"...","after":"<existing id>"} ' +
     "-- a new node plus one new flow from an existing node into it.\n" +
     '  {"op":"insertShape","type":"bpmn:...","id":"...","into":"<an existing ' +
-    'sequenceFlow id>"} -- splices a new node into the middle of an existing ' +
-    "path: that flow keeps its own id but now points at the new node, and a " +
-    "brand-new flow carries on from the new node to the flow's old target.\n" +
+    'sequenceFlow id>","flowId":"<optional>"} -- splices a new node into the ' +
+    "middle of an existing path: that flow keeps its own id but now points " +
+    "at the new node, and a new flow -- \"flowId\" if you name one, " +
+    'otherwise generated -- carries on from the new node to the flow\'s old ' +
+    "target. Name \"flowId\" when a later op in this same list needs to " +
+    "target that continuation (see the fork/join and merge recipes below) " +
+    "-- otherwise you would have to guess the generated id.\n" +
     '  {"op":"connect","from":"<id>","to":"<id>","condition":"<FEEL, ' +
     'optional>"} -- a new sequence flow between two already-named nodes.\n' +
     '  {"op":"setTaskDefinition","id":"<a service/user task named earlier in ' +
@@ -102,16 +106,42 @@ const AGENT_ROLES: Record<string, string> = {
     "Never insertShape or connect a second incoming flow into a plain task " +
     "or event -- that looks like a join but is not one, and bpmn-elements " +
     "re-triggers the activity once per arriving token instead of waiting for " +
-    "both. Where two paths need to reconverge without actually waiting for " +
-    "both (a loop-back alongside a fresh entry, say), appendShape a " +
-    "bpmn:ExclusiveGateway, connect both sources into it, and give it a " +
-    "single outgoing flow to the shared target instead. For a genuine " +
-    "parallel fork/join -- run several branches at once and wait for all of " +
-    "them -- appendShape a bpmn:ParallelGateway for the fork (connect each " +
-    "branch's first step from it) and another bpmn:ParallelGateway for the " +
-    "join (connect every branch's last step into it, then one outgoing flow " +
-    "onward); a ParallelGateway with more than one incoming flow is a real " +
-    "join, not the fake-join mistake above.",
+    "both. appendShape never removes or redirects a node's existing outgoing " +
+    "flow, so appendShape-ing a merge/fork gateway and connecting existing " +
+    "sources into it does NOT work -- each source keeps its old flow too, " +
+    "which is instantly an implicit split, and the shared target still ends " +
+    "up with the fake join you were trying to avoid. Use insertShape " +
+    "instead, which is the only op that redirects an existing flow:\n\n" +
+    "  To reconverge two paths without waiting for both (a retry path " +
+    "alongside a host activity's own normal continuation, say): insertShape " +
+    "a bpmn:ExclusiveGateway into the flow that already leads to the shared " +
+    'target (this retargets it into the gateway; its own continuation -- ' +
+    'name it "flowId" -- already carries on to that same target), then ' +
+    "connect the other, freshly-created source directly into the gateway. " +
+    "Example -- a retry path from an attachBoundaryEvent reconverging with " +
+    'gate\'s own continuation before "end": ' +
+    '[{"op":"attachBoundaryEvent","id":"err","attachedTo":"gate",' +
+    '"eventDefinitionType":"bpmn:ErrorEventDefinition"},' +
+    '{"op":"appendShape","type":"bpmn:ServiceTask","id":"retry","after":"err"},' +
+    '{"op":"insertShape","type":"bpmn:ExclusiveGateway","id":"gw","into":"<gate\'s own flow to end>"},' +
+    '{"op":"connect","from":"retry","to":"gw"}].\n\n' +
+    "  For a genuine parallel fork/join -- run several branches at once and " +
+    "wait for all of them -- insertShape a bpmn:ParallelGateway into the " +
+    'flow leading to the shared next step (naming its continuation ' +
+    '"flowId"), insertShape the first branch\'s own task into that named ' +
+    'flow (naming its own continuation "flowId" in turn), then insertShape ' +
+    "a second bpmn:ParallelGateway into THAT flow for the join. Every " +
+    "additional branch is one appendShape (its task, from the fork) plus " +
+    "one connect (that task, to the join). Example -- two branches: " +
+    '[{"op":"insertShape","type":"bpmn:ParallelGateway","id":"fk","into":"<the flow into the shared next step>","flowId":"fk_out"},' +
+    '{"op":"insertShape","type":"bpmn:ServiceTask","id":"b1","into":"fk_out","flowId":"to_join"},' +
+    '{"op":"insertShape","type":"bpmn:ParallelGateway","id":"jn","into":"to_join"},' +
+    '{"op":"appendShape","type":"bpmn:ServiceTask","id":"b2","after":"fk"},' +
+    '{"op":"connect","from":"b2","to":"jn"}]. A ParallelGateway with more ' +
+    "than one incoming flow is a real join, not the fake-join mistake " +
+    "above -- but only because every branch was routed into it this way; a " +
+    "bare appendShape from the fork alone leaves the join's other incoming " +
+    "unaccounted for.",
 };
 
 export function stripCodeFence(text: string): string {

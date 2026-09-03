@@ -26,6 +26,32 @@ harness returns: `status`, `summary`, `findings`, `artifacts`, `next_action`).
 | `graph:extend` | The self-mutation primitive: replaces the session graph with the (already merged, already laid out) document `fragment` now holds. Runs the same additive/job-type/element-type checks `graph:lint` does (`checkSplice`) independently, rather than trusting that something upstream already checked -- stricter than a studio edit's `checkMigration` (see below), which only protects elements the token has actually reached. Stable ids only -- `bpmn-engine` replays recovered child state by element id, so a fragment that renames or removes a live element cannot be recovered. Same reason `checkSplice` also confines a splice to the session's own (executable) process: recovery cannot replay a `callActivity`'s linked process once its definition has changed underneath it, so a target inside one is rejected -- `applyGraphOps` attaches into whichever process the target (`after`/`into`/`from`/`attachedTo`) already lives in, and `checkSplice` rejects the result if that is a linked one ([#86](https://github.com/datakurre/graph-agent/issues/86), [#94](https://github.com/datakurre/graph-agent/issues/94)). In practice this means a graph whose own process is a thin `callActivity` wrapper -- `session-default` around `pi-default-loop`, say -- can only gain or lose steps around what it calls, not edit inside it; a graph whose own process carries the interesting structure directly (`session-craft`'s) has more to work with. The running engine is stopped and resumed against the new graph immediately after (bounded to 5 re-entries per run), so an element the splice adds gets a chance to run in the same `run`/`resume` invocation rather than only the next one ([#45](https://github.com/datakurre/graph-agent/issues/45)). | in: `fragment` (a complete document); out: `added` |
 | `shell` | A deterministic step: runs a command and reports its exit status. No model call. | headers: `command` (required), `fail_on_error` (default `true`); out: `exit_code`, `stdout`, `stderr` |
 
+### What a splice can and cannot construct
+
+`graph:lint` runs the project's own bpmnlint ruleset against the merged
+document (minus the rules that only make sense once `graph:layout` has run --
+see `SEMANTIC_CONFIG` in `src/agent/bpmn-lint.ts`), and rejects a splice that
+introduces a `fake-join`: a plain task or event with more than one incoming
+flow, which `bpmn-elements` re-triggers once per arriving token instead of
+joining ([#104](https://github.com/datakurre/graph-agent/issues/104)).
+
+The op vocabulary is additive-only -- `appendShape` always adds a *new* flow
+without touching a node's existing one, and `insertShape` is the only op that
+redirects an existing flow (the one named `into`, which keeps its own id and
+now targets the new shape). That asymmetry rules out the naive way to build a
+merge or a fork/join: `appendShape`-ing a gateway and `connect`-ing existing
+sources into it leaves each source's old flow in place (an instant implicit
+split) and never actually detaches anything from the shared target (still a
+fake join). The working pattern is always to `insertShape` the gateway into
+whichever flow already reaches the shared target or next step, and reach it
+from any other, freshly-created branch with `appendShape`/`connect` instead
+([#107](https://github.com/datakurre/graph-agent/issues/107); the exact
+recipes and worked examples are in `AGENT_ROLES.graph_architect`,
+`src/agent/harnesses.ts`). `insertShape` also accepts an optional `flowId` to
+name the flow it auto-creates, so a later op in the same batch can target it
+without guessing a generated id -- needed for the second gateway a real
+fork/join's join side requires.
+
 ### Editing a running session's graph
 
 `PUT /api/sessions/:id/graph` (the studio's session page "Edit" button) checks
