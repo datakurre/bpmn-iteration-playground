@@ -1089,5 +1089,45 @@ describe("unknown CLI flags (issue #91)", () => {
     const result = await runCli(env, ["init", "--refresh"]);
     expect(result.code).toBe(0);
   });
+
+  it("`steer` rejects an unknown option instead of swallowing it into the session id/message (issue #102)", async () => {
+    const { env } = project();
+    const run = await runCli(env, ["run", "--dry-run", "hi"]);
+    const sessionId = /^session (\S+)/m.exec(run.stdout)?.[1];
+    expect(sessionId).toBeDefined();
+    const result = await runCli(env, ["steer", sessionId!, "--bogus", "x"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--bogus'");
+  });
+
+  it("`follow-up` rejects an unknown option instead of swallowing it into the session id/message (issue #102)", async () => {
+    const { env } = project();
+    const run = await runCli(env, ["run", "--dry-run", "hi"]);
+    const sessionId = /^session (\S+)/m.exec(run.stdout)?.[1];
+    expect(sessionId).toBeDefined();
+    const result = await runCli(env, ["follow-up", sessionId!, "--bogus", "x"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--bogus'");
+  });
+
+  it("`promote` rejects an unknown option instead of silently promoting anyway (issue #102)", async () => {
+    // The one with real consequences: --revision/--force/--as change what
+    // gets written, so a typo next to a real flag used to promote silently
+    // rather than error.
+    const { env } = project();
+    const run = await runCli(env, ["run", "--dry-run", "hi"]);
+    const sessionId = /^session (\S+)/m.exec(run.stdout)?.[1];
+    expect(sessionId).toBeDefined();
+    const result = await runCli(env, ["promote", sessionId!, "--as", "zz", "--bogus"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--bogus'");
+  });
+
+  it("`ui` rejects an unknown option instead of starting the server anyway (issue #102)", async () => {
+    const { env } = project();
+    const result = await runCli(env, ["ui", "--bogus"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--bogus'");
+  });
 });
 
