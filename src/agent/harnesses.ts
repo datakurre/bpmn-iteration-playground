@@ -145,15 +145,40 @@ export function stripCodeFence(text: string): string {
 const ROLES_NEEDING_CURRENT_GRAPH = new Set(["graph_architect"]);
 const MAX_CURRENT_GRAPH_CHARS = 100_000;
 
+/**
+ * `<bpmn:process>` ids `linkGraph` marked `isExecutable="false"` -- brought
+ * in via a `calledElement` rather than authored on this session. A cheap
+ * regex scan rather than a full moddle parse: `currentGraphBlock` already
+ * hands the model the raw XML text as-is, and this only needs to name the
+ * off-limits ids for the prompt, not validate anything (`checkSplice`'s own
+ * `checkProcessScope` is the actual enforcement).
+ */
+function linkedProcessIds(xml: string): string[] {
+  const ids: string[] = [];
+  for (const match of xml.matchAll(/<(?:bpmn:)?process\b([^>]*)>/g)) {
+    const attrs = match[1] ?? "";
+    const id = /\bid="([^"]+)"/.exec(attrs)?.[1];
+    const isExecutable = /\bisExecutable="([^"]+)"/.exec(attrs)?.[1];
+    if (id && isExecutable === "false") ids.push(id);
+  }
+  return ids;
+}
+
 function currentGraphBlock(xml: string): string {
   const truncated = xml.length > MAX_CURRENT_GRAPH_CHARS;
   const body = truncated ? xml.slice(0, MAX_CURRENT_GRAPH_CHARS) : xml;
+  const linked = linkedProcessIds(xml);
   return (
     "The current graph you are splicing into is:\n\n" +
     "```xml\n" +
     body +
     (truncated ? "\n... (truncated)" : "") +
-    "\n```"
+    "\n```" +
+    (linked.length > 0
+      ? `\n\nDo not target a flow inside ${linked.join(", ")} -- ${linked.length === 1 ? "it is" : "they are"} ` +
+        `linked in via calledElement (isExecutable="false"), and recovery cannot replay state there if the ` +
+        `session resumes after a splice lands: target a flow in the session's own (executable) process instead.`
+      : "")
   );
 }
 

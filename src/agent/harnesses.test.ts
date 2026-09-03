@@ -499,6 +499,62 @@ describe("agent:turn consumes agent_role and lint_feedback (issue #37)", () => {
 
     expect(sentUserText).toContain("craft_start");
     expect(sentUserText).toContain("current graph you are splicing into");
+    // A single-process graph has nothing linked in, so no warning is needed.
+    expect(sentUserText).not.toContain("Do not target a flow inside");
+  });
+
+  it("warns graph_architect away from a linked (isExecutable=false) process, which checkSplice would reject anyway (issue #86)", async () => {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-role-linked-"));
+    const paths = ensurePaths(
+      resolvePaths({ XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") } as NodeJS.ProcessEnv),
+    );
+    const store = new SessionStore(paths, "s1");
+    store.create("/tmp/some-project");
+
+    const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", name: "Faux" }] });
+    faux.setResponses([fauxAssistantMessage([fauxText("<bpmn:definitions />")], { stopReason: "stop" })] as never);
+
+    let sentUserText = "";
+    const pi = new PiSession({
+      model: faux.getModel(),
+      systemPrompt: "test",
+      tools: [],
+      sessionId: "s1",
+      streamFn: (m, c, o) => {
+        const messages = (c as { messages: Array<{ role: string; content: unknown }> }).messages;
+        const lastUser = [...messages].reverse().find((msg) => msg.role === "user");
+        sentUserText = typeof lastUser?.content === "string" ? lastUser.content : JSON.stringify(lastUser?.content);
+        return faux.provider.streamSimple(m, c, o);
+      },
+    });
+
+    const linkedGraph =
+      '<bpmn:definitions id="session">' +
+      '<bpmn:process id="session" isExecutable="true"><bpmn:startEvent id="root_start" /></bpmn:process>' +
+      '<bpmn:process id="craft_graph" isExecutable="false"><bpmn:startEvent id="craft_start" /></bpmn:process>' +
+      "</bpmn:definitions>";
+
+    const turn = createHarnesses({
+      pi,
+      tools: {} as HarnessDeps["tools"],
+      store,
+      getGraph: () => linkedGraph,
+      setGraph: () => {},
+      takeSteering: () => [],
+      takeFollowUp: () => [],
+    })["agent:turn"];
+    if (!turn) throw new Error("no 'agent:turn' harness registered");
+
+    await turn({
+      activityId: "draft_fragment",
+      harness: "agent:turn",
+      properties: { agent_role: "graph_architect" },
+      input: { prompt: "add a step after the extension is applied" },
+      variables: {},
+    });
+
+    expect(sentUserText).toContain("Do not target a flow inside");
+    expect(sentUserText).toContain("craft_graph");
   });
 
   it("gives graph_architect the real job-type vocabulary so it does not invent one (issue #40)", async () => {

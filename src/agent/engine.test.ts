@@ -555,4 +555,82 @@ describe("a callActivity's own zeebe:output (issue #66)", () => {
     expect(visited.has("end_normal")).toBe(true);
     expect(visited.has("end_breach")).toBe(false);
   });
+
+  it("interrupts a host subprocess once cost crosses the limit mid-run (issue #83)", async () => {
+    // Neither test above covers the case the feature exists for: a limit that
+    // is already breached before the subprocess starts never exercises the
+    // re-evaluation path at all, and a limit that never becomes true proves
+    // nothing about whether re-evaluation works. Here the subprocess starts
+    // under budget and three sequential agent:turn activities, each costing
+    // 0.04, push total_cost from 0 -> 0.04 -> 0.08 -> 0.12 -- crossing the
+    // 0.05 limit after the second turn, while the subprocess is still
+    // running. _session lives on the boundary event's own bpmn-elements
+    // Environment.clone() (subProcess gives its inner execution a fresh,
+    // disconnected .output), so this only works via the engine's own
+    // sharedOutput bridge now threaded into FEEL evaluation generally, not
+    // only into a harness activity's own input/output.
+    const costBoundaryXml = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions ${DEFS}>
+  <process id="p_boundary" isExecutable="true">
+    <startEvent id="start" />
+    <sequenceFlow id="f1" sourceRef="start" targetRef="sub" />
+    <subProcess id="sub">
+      <startEvent id="sub_start" />
+      <sequenceFlow id="sf1" sourceRef="sub_start" targetRef="turn1" />
+      <serviceTask id="turn1">
+        <extensionElements>
+          <zeebe:taskDefinition type="agent:turn" />
+        </extensionElements>
+      </serviceTask>
+      <sequenceFlow id="sf2" sourceRef="turn1" targetRef="turn2" />
+      <serviceTask id="turn2">
+        <extensionElements>
+          <zeebe:taskDefinition type="agent:turn" />
+        </extensionElements>
+      </serviceTask>
+      <sequenceFlow id="sf3" sourceRef="turn2" targetRef="turn3" />
+      <serviceTask id="turn3">
+        <extensionElements>
+          <zeebe:taskDefinition type="agent:turn" />
+        </extensionElements>
+      </serviceTask>
+      <sequenceFlow id="sf4" sourceRef="turn3" targetRef="sub_end" />
+      <endEvent id="sub_end" />
+    </subProcess>
+    <boundaryEvent id="cost_breach" attachedToRef="sub" cancelActivity="true">
+      <conditionalEventDefinition>
+        <condition xsi:type="tFormalExpression">=_session.total_cost &gt;= 0.05</condition>
+      </conditionalEventDefinition>
+    </boundaryEvent>
+    <sequenceFlow id="f_normal" sourceRef="sub" targetRef="end_normal" />
+    <sequenceFlow id="f_breach" sourceRef="cost_breach" targetRef="end_breach" />
+    <endEvent id="end_normal" />
+    <endEvent id="end_breach" />
+  </process>
+</definitions>`;
+
+    const visited = new Set<string>();
+    const harness: Harness = async () =>
+      ok("done turn", {
+        usage: {
+          input: 1000,
+          output: 500,
+          cost: { input: 0.02, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.04 },
+        },
+      });
+
+    const result = await runGraph(costBoundaryXml, {
+      harnesses: { "agent:turn": harness },
+      onTokens: (_tokens, v) => v.forEach((id) => visited.add(id)),
+    });
+
+    expect(result.outcome).toBe("completed");
+    expect(visited.has("turn1")).toBe(true);
+    expect(visited.has("turn2")).toBe(true);
+    expect(visited.has("turn3")).toBe(false);
+    expect(visited.has("cost_breach")).toBe(true);
+    expect(visited.has("end_breach")).toBe(true);
+    expect(visited.has("sub_end")).toBe(false);
+    expect(visited.has("end_normal")).toBe(false);
+  });
 });

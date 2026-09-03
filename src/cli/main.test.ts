@@ -5,7 +5,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { installEpipeGuard, parseAnswers, answersFor, boundedOnWait, reportWait } from "./main.ts";
+import { installEpipeGuard, parseAnswers, answersFor, boundedOnWait, reportWait, resumeModelSpec } from "./main.ts";
 import { bundledWorkflowsDir, ensurePaths, paths as resolvePaths } from "../agent/paths.ts";
 import { SessionStore } from "../agent/session-store.ts";
 import { stampModel } from "../agent/versioning.ts";
@@ -27,6 +27,20 @@ describe("installEpipeGuard", () => {
     installEpipeGuard([stream]);
     const other = Object.assign(new Error("write EACCES"), { code: "EACCES" });
     expect(() => (stream as unknown as EventEmitter).emit("error", other)).toThrow("write EACCES");
+  });
+});
+
+describe("resumeModelSpec (issue #88)", () => {
+  it("prefers an explicit --model over the session's recorded model", () => {
+    expect(resumeModelSpec("anthropic/claude-opus-4-5", "anthropic/claude-haiku-4-5")).toBe("anthropic/claude-opus-4-5");
+  });
+
+  it("falls back to the session's recorded model when --model is absent", () => {
+    expect(resumeModelSpec(undefined, "anthropic/claude-haiku-4-5")).toBe("anthropic/claude-haiku-4-5");
+  });
+
+  it("is undefined when neither --model nor a recorded model is present, so config/the resolver still get a turn", () => {
+    expect(resumeModelSpec(undefined, undefined)).toBeUndefined();
   });
 });
 
@@ -556,6 +570,15 @@ describe("--answer scoping (issue #44)", () => {
       expect(second.stdout).toContain("completed");
     }, 20000);
 
+    it("resume prints which model it picked, so a fallback is never silent (issue #88)", () => {
+      const { env } = project();
+      const first = runCli(env, ["run", "--graph", "two_gates", "--dry-run", "--answer", "gate_a:key=hello"]);
+      const sessionId = /^session (\S+)/m.exec(first.stdout)?.[1];
+      expect(sessionId).toBeDefined();
+      const second = runCli(env, ["resume", sessionId!, "--dry-run", "--answer", "gate_b:key=world"]);
+      expect(second.stdout).toContain("model  dry-run (no model called)");
+    }, 20000);
+
     it("caps how many times an unscoped answer auto-answers the same looping gate", () => {
       const { env } = project();
       const { stdout, stderr, code } = runCli(env, ["run", "--graph", "loop_gate", "--dry-run", "--answer", "key=hello"]);
@@ -915,7 +938,7 @@ describe("graph-agent model and headless flags", () => {
     const result = runCli(env, ["--no-tui", "--graph", "session-default", "--dry-run"]);
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("session");
-  });
+  }, 20000);
 
   it("removes a session with `graph-agent rm <id>`", () => {
     const { env } = project();
@@ -934,6 +957,52 @@ describe("graph-agent model and headless flags", () => {
 
     const afterLs = runCli(env, ["ls"]);
     expect(afterLs.stdout).toContain("no sessions in this project yet");
+  }, 20000);
+});
+
+describe("unknown CLI flags (issue #91)", () => {
+  const distFile = join(import.meta.dirname, "..", "..", "dist", "graph-agent.js");
+
+  function project(): { env: NodeJS.ProcessEnv } {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-cli-flags-"));
+    const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
+    execFileSync("node", [distFile, "init"], { env });
+    return { env };
+  }
+
+  function runCli(env: NodeJS.ProcessEnv, args: string[]): { stdout: string; stderr: string; code: number | null } {
+    const result = spawnSync("node", [distFile, ...args], { env, encoding: "utf8" });
+    return { stdout: result.stdout, stderr: result.stderr, code: result.status };
+  }
+
+  it("`report` rejects an unknown option with a clean message instead of a node:internal stack", () => {
+    const { env } = project();
+    const result = runCli(env, ["report", "somesession", "--output", "report.html"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--output' (did you mean '--out'?)");
+    expect(result.stderr).not.toContain("node:internal");
+    expect(result.stderr).not.toContain("ERR_PARSE_ARGS_UNKNOWN_OPTION");
+  });
+
+  it("`run` rejects an unknown option instead of silently ignoring it", () => {
+    const { env } = project();
+    const result = runCli(env, ["run", "--bogus", "--dry-run", "x"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--bogus'");
+  });
+
+  it("`ls` rejects an unknown option instead of silently ignoring it", () => {
+    const { env } = project();
+    const result = runCli(env, ["ls", "--bogus"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--bogus'");
+  });
+
+  it("`resume` rejects an unknown option instead of silently ignoring it", () => {
+    const { env } = project();
+    const result = runCli(env, ["resume", "--bogus", "somesession"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--bogus'");
   });
 });
 

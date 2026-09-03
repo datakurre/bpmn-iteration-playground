@@ -179,7 +179,9 @@ async function handle(
   }
   const sessionMatch = /^\/api\/sessions\/([^/]+)$/.exec(path);
   if (sessionMatch) {
-    const store = new SessionStore(paths, decodeURIComponent(sessionMatch[1] as string));
+    const id = decodeURIComponent(sessionMatch[1] as string);
+    if (!sessionIdOk(paths, id)) return sendJson(res, 400, { error: "bad session id" });
+    const store = new SessionStore(paths, id);
     if (!store.exists()) return sendJson(res, 404, { error: "unknown session" });
     if (req.method === "DELETE") {
       store.delete();
@@ -193,7 +195,9 @@ async function handle(
   // (issue #46) rather than the library's stricter, additive-only checkSplice.
   const sessionGraphMatch = /^\/api\/sessions\/([^/]+)\/graph$/.exec(path);
   if (sessionGraphMatch) {
-    const store = new SessionStore(paths, decodeURIComponent(sessionGraphMatch[1] as string));
+    const graphId = decodeURIComponent(sessionGraphMatch[1] as string);
+    if (!sessionIdOk(paths, graphId)) return sendJson(res, 400, { error: "bad session id" });
+    const store = new SessionStore(paths, graphId);
     if (!store.exists()) return sendJson(res, 404, { error: "unknown session" });
 
     if (req.method === "PUT") {
@@ -286,7 +290,9 @@ async function handle(
   // here for whichever process is -- or next is -- driving the session.
   const pendingMatch = /^\/api\/sessions\/([^/]+)\/pending$/.exec(path);
   if (pendingMatch) {
-    const store = new SessionStore(paths, decodeURIComponent(pendingMatch[1] as string));
+    const pendingId = decodeURIComponent(pendingMatch[1] as string);
+    if (!sessionIdOk(paths, pendingId)) return sendJson(res, 400, { error: "bad session id" });
+    const store = new SessionStore(paths, pendingId);
     if (!store.exists()) return sendJson(res, 404, { error: "unknown session" });
     const xml = store.currentGraph();
     if (xml === null) return sendJson(res, 200, []);
@@ -302,7 +308,9 @@ async function handle(
 
   const answerMatch = /^\/api\/sessions\/([^/]+)\/answer$/.exec(path);
   if (answerMatch && req.method === "POST") {
-    const store = new SessionStore(paths, decodeURIComponent(answerMatch[1] as string));
+    const answerId = decodeURIComponent(answerMatch[1] as string);
+    if (!sessionIdOk(paths, answerId)) return sendJson(res, 400, { error: "bad session id" });
+    const store = new SessionStore(paths, answerId);
     if (!store.exists()) return sendJson(res, 404, { error: "unknown session" });
     const body = (await readJson(req)) as { activityId?: string; payload?: Record<string, unknown> };
     if (!body.activityId || typeof body.payload !== "object" || body.payload === null) {
@@ -384,6 +392,19 @@ export function graphPath(paths: Paths, id: string): string | null {
 
 export function safeId(id: string): string {
   return id.replace(/[^A-Za-z0-9_-]/g, "_");
+}
+
+/**
+ * Reject any session id that doesn't survive an untouched safeId + safeJoin
+ * round-trip against paths.sessionsDir -- the same guard the library graph
+ * routes apply to their id. `safeJoin` alone is not enough here: it strips a
+ * leading `../` back into bounds rather than rejecting it, so a check that
+ * only inspects safeJoin's return value would pass a traversing id through
+ * to `SessionStore`, which joins `paths.sessionsDir` with the raw id itself,
+ * unguarded (issue #82).
+ */
+function sessionIdOk(paths: Paths, id: string): boolean {
+  return id.length > 0 && safeId(id) === id && safeJoin(paths.sessionsDir, id) !== null;
 }
 
 function elementTemplates(): unknown[] {

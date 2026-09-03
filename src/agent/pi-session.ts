@@ -300,7 +300,16 @@ export class PiSession {
       return { beforeCount: msgs.length, afterCount: msgs.length };
     }
     const beforeCount = msgs.length;
-    const splitIndex = msgs.length - keepRecent;
+    // The naive `length - keepRecent` boundary can land between an
+    // assistant message's tool_use and the toolResult answering it -- the
+    // tail would then start with a toolResult whose tool_use is now buried
+    // in the summary, which the API rejects on the next turn. Walk the
+    // boundary back until the tail starts with something other than a
+    // toolResult; since a tool_use's results always sit immediately after
+    // it, this also pulls that assistant message itself back into the tail
+    // (issue #85).
+    let splitIndex = msgs.length - keepRecent;
+    while (splitIndex > 0 && msgs[splitIndex]?.role === "toolResult") splitIndex--;
     const toCompact = msgs.slice(0, splitIndex);
     const tail = msgs.slice(splitIndex);
 

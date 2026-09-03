@@ -233,4 +233,59 @@ describe("PiSession", () => {
     expect(pi.messages[0]?.role).toBe("user");
     expect(String((pi.messages[0] as { content?: string })?.content)).toContain("Compacted conversation history");
   });
+
+  it("never leaves a toolResult as the first message after compaction (issue #85)", async () => {
+    // Three tool-calling turns followed by one text turn, all on the same
+    // transcript (beginTurn() with no prompt, the same as a graph driving
+    // turn after turn without a fresh user message each time) -- the default
+    // keepRecent (4) lands the naive `length - keepRecent` split right on a
+    // toolResult, orphaning it from the tool_use the compacted-away summary
+    // now hides. Any API expecting valid Anthropic-shaped transcripts rejects
+    // that with a 400 on the very next turn.
+    const { pi } = session([
+      fauxAssistantMessage([fauxToolCall("read", { path: "a.ts" })]),
+      fauxAssistantMessage([fauxToolCall("read", { path: "b.ts" })]),
+      fauxAssistantMessage([fauxToolCall("read", { path: "c.ts" })]),
+      fauxAssistantMessage([fauxText("Done.")]),
+    ]);
+
+    let turn = await pi.beginTurn("look at a.ts");
+    for (const path of ["a.ts", "b.ts", "c.ts"]) {
+      pi.resolveTool(turn.toolCalls[0]!.id, { content: `contents of ${path}` });
+      await pi.endTurn();
+      turn = await pi.beginTurn();
+    }
+    await pi.endTurn();
+
+    const roles = pi.messages.map((m) => (m as { role: string }).role);
+    expect(roles).toEqual([
+      "user",
+      "assistant",
+      "toolResult",
+      "assistant",
+      "toolResult",
+      "assistant",
+      "toolResult",
+      "assistant",
+    ]);
+
+    pi.compactHistory();
+
+    expect(pi.messages[0]?.role).toBe("user");
+    expect(pi.messages[1]?.role).not.toBe("toolResult");
+    // Every remaining toolResult still has its tool_use in the same (tail)
+    // half of the transcript -- not buried inside the summary message.
+    const toolUseIds = new Set(
+      pi.messages
+        .filter((m) => (m as { role: string }).role === "assistant")
+        .flatMap((m) => (m as { content: Array<{ type: string; id?: string }> }).content)
+        .filter((block) => block.type === "toolCall")
+        .map((block) => block.id),
+    );
+    for (const m of pi.messages) {
+      if ((m as { role: string }).role === "toolResult") {
+        expect(toolUseIds.has((m as { toolCallId: string }).toolCallId)).toBe(true);
+      }
+    }
+  });
 });

@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { validateZeebe, getZeebeSchemaPackage, getZeebeSchemaVersion } from "@bpmn-io/element-templates-validator";
 import { createHarnesses, HARNESS_IO, type HarnessDeps } from "../src/agent/harnesses.ts";
 import { HARNESS_RESULT_BASE_FIELDS } from "../src/agent/harness.ts";
+import { BpmnModdle } from "bpmn-moddle";
+import zeebe from "zeebe-bpmn-moddle/resources/zeebe.json" with { type: "json" };
 
 const DIR = import.meta.dirname;
 const files = readdirSync(DIR).filter((f) => f.endsWith(".json"));
@@ -172,5 +174,68 @@ describe("harness I/O contract (issue #49)", () => {
         }
       });
     }
+  });
+});
+
+/**
+ * `element-templates.test.ts`'s bindings coverage above is guarded by
+ * `if (!template.appliesTo.includes("bpmn:ServiceTask")) continue` in every
+ * check -- so a non-service-task template's binding was never exercised at
+ * all until issue #84's cost_limit_boundary_event.json bound its condition
+ * to a plain `property`, which bpmn-moddle silently drops on serialize
+ * because `condition` is not a property of `bpmn:BoundaryEvent` -- it
+ * belongs on the nested `bpmn:ConditionalEventDefinition`. Round-trips the
+ * value the way `bpmn-js-element-templates`' own
+ * `ConditionalEventDefinitionPropertyBindingProvider` does (wrap it in a
+ * `bpmn:FormalExpression` on the event definition) and proves the old
+ * binding shape really did lose the value.
+ */
+describe("cost_limit_boundary_event's condition binding (issue #84)", () => {
+  const template = templatesIn("cost_limit_boundary_event.json").find((t) => t.id === "graph-agent.cost-limit-boundary-event")!;
+  const conditionProperty = template.properties.find((p) => p.binding.name === "condition")!;
+
+  it("binds into bpmn:ConditionalEventDefinition, not a plain property of the boundary event itself", () => {
+    expect(conditionProperty.binding.type).toBe("bpmn:ConditionalEventDefinition#property");
+  });
+
+  it("round-trips the FEEL condition through serialize/parse when bound the way the fixed template binds it", async () => {
+    const moddle = new BpmnModdle({ zeebe });
+    const value = conditionProperty.value!;
+
+    const conditionalEventDefinition = moddle.create("bpmn:ConditionalEventDefinition", {
+      condition: moddle.create("bpmn:FormalExpression", { body: value }),
+    });
+    const boundaryEvent = moddle.create("bpmn:BoundaryEvent", {
+      id: "cost_limit",
+      cancelActivity: true,
+      eventDefinitions: [conditionalEventDefinition],
+    });
+    const process = moddle.create("bpmn:Process", { id: "p", isExecutable: true, flowElements: [boundaryEvent] });
+    const definitions = moddle.create("bpmn:Definitions", { id: "Defs", rootElements: [process] });
+
+    const { xml } = await moddle.toXML(definitions);
+    const { rootElement } = (await moddle.fromXML(xml)) as any;
+    const roundTripped = rootElement.rootElements[0].flowElements[0];
+
+    expect(roundTripped.eventDefinitions[0].condition.body).toBe(value);
+  });
+
+  it("would have silently lost the value under the old (broken) plain-property binding", async () => {
+    const moddle = new BpmnModdle({ zeebe });
+    const value = conditionProperty.value!;
+
+    // What `binding: { type: "property", name: "condition" }` actually did:
+    // set `condition` directly on the boundary event's own businessObject.
+    const boundaryEvent = moddle.create("bpmn:BoundaryEvent", { id: "cost_limit" });
+    (boundaryEvent as any).condition = value;
+    const process = moddle.create("bpmn:Process", { id: "p", isExecutable: true, flowElements: [boundaryEvent] });
+    const definitions = moddle.create("bpmn:Definitions", { id: "Defs", rootElements: [process] });
+
+    const { xml } = await moddle.toXML(definitions);
+    const { rootElement } = (await moddle.fromXML(xml)) as any;
+    const roundTripped = rootElement.rootElements[0].flowElements[0];
+
+    expect((roundTripped as any).condition).toBeUndefined();
+    expect(xml).not.toContain(value);
   });
 });

@@ -192,4 +192,58 @@ describe("bpmn-auto-layout", () => {
     // gw_craft_done has DOWN incoming flow from above, so label is below (y > 185 + 50)
     expect(gwCraftDone.label.bounds.y).toBeGreaterThan(185 + 50);
   });
+
+  it("lays out every bpmn:Process in a multi-process document as its own plane, without dropping or cross-wiring shapes (issue #87)", async () => {
+    // Mirrors what linkGraph produces for a real session: a root process
+    // with a callActivity plus a second, inlined process it calls -- the
+    // shape a session graph is in once graph:extend has spliced into it.
+    // layoutProcess used to hand the whole multi-process document to a
+    // single-process layout, which discarded the DI for every process past
+    // the first and, for whichever survived, mixed shapes from one process
+    // onto another's plane.
+    const NS =
+      'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"';
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_multi" ${NS}>
+  <bpmn:process id="root_process" isExecutable="true">
+    <bpmn:startEvent id="root_start"><bpmn:outgoing>rf1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="rf1" sourceRef="root_start" targetRef="root_call" />
+    <bpmn:callActivity id="root_call" calledElement="child_process">
+      <bpmn:incoming>rf1</bpmn:incoming><bpmn:outgoing>rf2</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:sequenceFlow id="rf2" sourceRef="root_call" targetRef="root_end" />
+    <bpmn:endEvent id="root_end"><bpmn:incoming>rf2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+  <bpmn:process id="child_process" isExecutable="true">
+    <bpmn:startEvent id="child_start"><bpmn:outgoing>cf1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="cf1" sourceRef="child_start" targetRef="child_task" />
+    <bpmn:serviceTask id="child_task" name="Check">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="shell" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>cf1</bpmn:incoming><bpmn:outgoing>cf2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="cf2" sourceRef="child_task" targetRef="child_end" />
+    <bpmn:endEvent id="child_end"><bpmn:incoming>cf2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+
+    const laidOut = await layoutProcess(xml);
+    const moddle = new BpmnModdle({ zeebe });
+    const { rootElement } = (await moddle.fromXML(laidOut)) as any;
+
+    expect(rootElement.diagrams).toHaveLength(2);
+
+    const planeByProcessId = new Map(rootElement.diagrams.map((d: any) => [d.plane.bpmnElement.id, d.plane]));
+    const rootPlane = planeByProcessId.get("root_process") as any;
+    const childPlane = planeByProcessId.get("child_process") as any;
+    expect(rootPlane, "root_process should have its own plane").toBeDefined();
+    expect(childPlane, "child_process should have its own plane").toBeDefined();
+
+    const shapeIds = (plane: any) =>
+      plane.planeElement.filter((e: any) => e.$type === "bpmndi:BPMNShape").map((s: any) => s.bpmnElement.id).sort();
+
+    expect(shapeIds(rootPlane)).toEqual(["root_call", "root_end", "root_start"]);
+    expect(shapeIds(childPlane)).toEqual(["child_end", "child_start", "child_task"]);
+  });
 });

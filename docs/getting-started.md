@@ -652,23 +652,34 @@ is complete.
 
 ## Keeping the graph library current
 
-`graph-agent init` seeds `$XDG_CONFIG_HOME/graph-agent/workflows` but **never
-overwrites without being asked**, by design: the library is yours and shared
-across projects. Running plain `graph-agent init` again reports any bundled
-graph whose content now differs from your library copy as stale, but leaves
-it alone; `graph-agent init --refresh` takes the bundled version of each one
-(backing up your copy as `.bak` first). A graph that "still" misbehaves after
-a fix landed is worth refreshing (or diffing) first
-([#35](https://github.com/datakurre/graph-agent/issues/35)):
+`graph-agent init` seeds `$XDG_CONFIG_HOME/graph-agent/workflows`, and
+running it again on an existing library compares each bundled graph against
+your copy by content hash, self-hashed at build time, giving one of three
+outcomes per graph:
+
+- **identical** -- nothing to do, nothing printed.
+- **unmodified but outdated** -- the hash proves you never touched your
+  copy, so plain `graph-agent init` upgrades it in place automatically,
+  with no `.bak`: there is nothing of yours to lose.
+- **modified** -- your copy's content doesn't match what it was bundled
+  as, so plain `graph-agent init` leaves it alone and reports it as
+  stale; only `graph-agent init --refresh` takes the bundled version
+  (backing up your copy as `.bak` first).
 
 ```
+$ graph-agent init
+upgraded 1 unmodified graph(s) to newer bundled version: pi-default-loop
+
 $ graph-agent init --refresh
-refreshed from the bundled version (old copy backed up as .bak): pi-default-loop
+refreshed from the bundled version (old copy backed up as .bak): session-craft
 ```
 
-This is not hypothetical: a stale library copy made a fixed defect look open
-here, and it once left the default graph running without a fix that had
-stopped it billing 110 turns.
+A graph that "still" misbehaves after a fix landed is worth diffing (or
+running plain `init`, if you never touched it) first
+([#35](https://github.com/datakurre/graph-agent/issues/35)). This is not
+hypothetical: a stale library copy made a fixed defect look open here, and
+it once left the default graph running without a fix that had stopped it
+billing 110 turns.
 
 ## Troubleshooting
 
