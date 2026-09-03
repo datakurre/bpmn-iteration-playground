@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { Engine } from "bpmn-engine";
 import { EventEmitter } from "node:events";
+import { BpmnModdle } from "bpmn-moddle";
 import {
   applyGraphOps,
   checkMigration,
@@ -593,6 +594,90 @@ describe("applyGraphOps", () => {
     expect(result.ok).toBe(true);
     expect(result.added).toContain("sub_graph");
     expect(result.added).toContain("call_sub");
+  });
+
+  describe("attaches into the process the target already lives in, not always the executable one (issue #94)", () => {
+    // A linked session document, the shape linkGraph produces for a real
+    // session: a root (executable) process plus a second, inlined process
+    // brought in via calledElement and marked isExecutable="false".
+    const linkedBase = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions ${NS} id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="root_start" />
+    <bpmn:sequenceFlow id="rf1" sourceRef="root_start" targetRef="call" />
+    <bpmn:callActivity id="call" calledElement="craft_graph" />
+    <bpmn:sequenceFlow id="rf2" sourceRef="call" targetRef="root_end" />
+    <bpmn:endEvent id="root_end" />
+  </bpmn:process>
+  <bpmn:process id="craft_graph" isExecutable="false">
+    <bpmn:startEvent id="craft_start" />
+    <bpmn:sequenceFlow id="cf1" sourceRef="craft_start" targetRef="craft_end" />
+    <bpmn:endEvent id="craft_end" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+    async function processFlowElementIds(xml: string, processId: string): Promise<string[]> {
+      const moddle = new BpmnModdle({});
+      const { rootElement } = (await moddle.fromXML(xml)) as any;
+      const process = rootElement.rootElements.find((el: any) => el.id === processId);
+      return (process.flowElements ?? []).map((el: any) => el.id);
+    }
+
+    it("insertShape into a flow inside the linked process attaches -- and rewires -- entirely within it", async () => {
+      // Exactly issue #94's repro: no explicit `process`, and the target
+      // ("into") lives in the linked process, not the root one. Before the
+      // fix, processFor(undefined) unconditionally returned mainProcess: the
+      // new shape landed in "session" while the retargeted flow "cf1" (and
+      // the new flow to craft_end) stayed wired to craft_graph's own
+      // elements -- a bpmn:SequenceFlow split across two processes.
+      const ops: GraphOp[] = [{ op: "insertShape", type: "bpmn:ServiceTask", id: "shell_echo", into: "cf1" }];
+      const merged = await applyGraphOps(linkedBase, ops);
+
+      const craftIds = await processFlowElementIds(merged, "craft_graph");
+      const sessionIds = await processFlowElementIds(merged, "session");
+      expect(craftIds).toContain("shell_echo");
+      expect(sessionIds).not.toContain("shell_echo");
+
+      // The document is well-formed (no cross-process flow), so checkSplice's
+      // own process-scope guard can now actually see the added shape landed
+      // in the linked process, and reject it with a redraftable reason.
+      const splice = await checkSplice(linkedBase, merged);
+      expect(splice.ok).toBe(false);
+      expect(splice.reason).toMatch(/craft_graph/);
+      expect(splice.reason).toMatch(/linked process/);
+    });
+
+    it("appendShape after a node inside the linked process attaches there too", async () => {
+      const ops: GraphOp[] = [{ op: "appendShape", type: "bpmn:ServiceTask", id: "shell_echo", after: "craft_start" }];
+      const merged = await applyGraphOps(linkedBase, ops);
+      const craftIds = await processFlowElementIds(merged, "craft_graph");
+      expect(craftIds).toContain("shell_echo");
+    });
+
+    it("connect between two nodes in the linked process attaches the new flow there too", async () => {
+      const ops: GraphOp[] = [
+        { op: "appendShape", type: "bpmn:ServiceTask", id: "a", after: "craft_start" },
+        { op: "appendShape", type: "bpmn:ServiceTask", id: "b", after: "craft_start" },
+        { op: "connect", from: "a", to: "b", id: "extra_flow" },
+      ];
+      const merged = await applyGraphOps(linkedBase, ops);
+      const craftIds = await processFlowElementIds(merged, "craft_graph");
+      expect(craftIds).toContain("extra_flow");
+    });
+
+    it("connect rejects wiring a node in the root process to one in the linked process", async () => {
+      await expect(applyGraphOps(linkedBase, [{ op: "connect", from: "root_start", to: "craft_start" }])).rejects.toThrow(
+        /cannot cross between processes/,
+      );
+    });
+
+    it("an explicit process that disagrees with where the target lives is rejected, not silently honoured", async () => {
+      await expect(
+        applyGraphOps(linkedBase, [
+          { op: "insertShape", type: "bpmn:ServiceTask", id: "shell_echo", into: "cf1", process: "session" },
+        ]),
+      ).rejects.toThrow(/does not match 'cf1'/);
+    });
   });
 
   it("throws a clear error for an unknown target id", async () => {

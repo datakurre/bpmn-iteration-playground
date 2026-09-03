@@ -203,9 +203,8 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   if (command === undefined || !KNOWN_COMMANDS.has(command)) {
-    if (argv.includes("--no-tui") || argv.includes("--print") || argv.includes("-p")) {
-      const cleanArgs = argv.filter((a) => a !== "--no-tui" && a !== "--print" && a !== "-p");
-      return cmdRun(cleanArgs);
+    if (argv.some((a) => HEADLESS_MODE_FLAGS.has(a))) {
+      return cmdRun(stripHeadlessModeFlags(argv));
     }
     return cmdTui(argv);
   }
@@ -214,7 +213,7 @@ export async function main(argv: string[]): Promise<number> {
     case "init":
       return cmdInit(argv.slice(1));
     case "where":
-      return cmdWhere();
+      return cmdWhere(argv.slice(1));
     case "ui":
       return cmdStudio(argv.slice(1));
     case "ls":
@@ -223,7 +222,7 @@ export async function main(argv: string[]): Promise<number> {
     case "delete":
       return cmdRm(argv[1]);
     case "show":
-      return cmdShow(argv[1]);
+      return cmdShow(argv.slice(1));
     case "report": {
       const parsed = parseArgsOrError(argv.slice(1), {
         format: { type: "string" },
@@ -310,8 +309,13 @@ function copyWorkflowFile(from: string, to: string): void {
 }
 
 function cmdInit(args: string[]): number {
+  const parsed = parseArgsOrError(args, {
+    refresh: { type: "boolean" },
+    force: { type: "boolean" },
+  });
+  if (!parsed) return 2;
   const p = ensurePaths(resolvePaths());
-  const refresh = args.includes("--refresh") || args.includes("--force");
+  const refresh = parsed.values.refresh === true || parsed.values.force === true;
 
   // Seed the library with the bundled graphs, but never silently overwrite a
   // graph the user has since edited -- the library is theirs, and it is
@@ -382,7 +386,8 @@ function cmdInit(args: string[]): number {
   return 0;
 }
 
-function cmdWhere(): number {
+function cmdWhere(args: string[]): number {
+  if (!parseArgsOrError(args, {})) return 2;
   const p = resolvePaths();
   process.stdout.write(`config   ${p.configDir}\ngraphs   ${p.workflowsDir}\nstate    ${p.stateDir}\nsessions ${p.sessionsDir}\nproject  ${projectId()}\n`);
   return 0;
@@ -547,8 +552,25 @@ type ScopedAnswers = Map<string, Record<string, unknown>>;
 
 const UNSCOPED = "*";
 
+/**
+ * `--no-tui`/`-p`/`--print` only ever mean anything at top-level dispatch
+ * (`main()` uses them to choose `cmdRun` over `cmdTui` when no command word
+ * is given, before `runFlags` ever sees the args) -- by the time an explicit
+ * `run`/`tui`/`resume` subcommand has been typed, the choice is already
+ * made and they are no-ops. Before 38356f1 they were silently accepted
+ * everywhere; strict parsing then rejected them outright on the one form
+ * `--help` itself documents (`graph-agent run --no-tui ...`), since
+ * `runFlags`'s own option set never named them (issue #96). Stripped here,
+ * once, rather than taught to every parser as a real (ignored) option.
+ */
+const HEADLESS_MODE_FLAGS = new Set(["--no-tui", "--print", "-p"]);
+
+function stripHeadlessModeFlags(args: string[]): string[] {
+  return args.filter((a) => !HEADLESS_MODE_FLAGS.has(a));
+}
+
 function runFlags(args: string[]): RunFlags | null {
-  const parsed = parseArgsOrError(args, {
+  const parsed = parseArgsOrError(stripHeadlessModeFlags(args), {
     graph: { type: "string", default: "session-default" },
     model: { type: "string" },
     "dry-run": { type: "boolean", default: false },
@@ -1122,7 +1144,10 @@ function cmdRm(id: string | undefined): number {
   return 0;
 }
 
-function cmdShow(id: string | undefined): number {
+function cmdShow(args: string[]): number {
+  const parsed = parseArgsOrError(args, {});
+  if (!parsed) return 2;
+  const id = parsed.positionals[0];
   const p = requirePaths();
   if (!p) return 1;
   if (!id) {

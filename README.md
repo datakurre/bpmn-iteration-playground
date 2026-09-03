@@ -69,10 +69,19 @@ out-of-the-box behaviour matches plain Pi while still being a diagram. Both
 graphs, and `shell-demo`, drive tool calls, parallel ones included.
 `craft-graph` drafts a BPMN fragment and splices it into the running session --
 verified end to end against real Haiku, approval gate and all -- so the agent
-really does rewrite its own control flow mid-session. `session-skeleton` asks
-for an intent before handing it to `craft-graph`, and `session-craft` (opt-in
-via `--graph session-craft`) goes straight from a prompt into `craft-graph`
-and runs whatever it builds in the same invocation -- see [the bundled
+really does rewrite its own control flow mid-session. That splice can only
+land in the session's own process, though, never inside a `calledElement` a
+`callActivity` brings in ([#86](https://github.com/datakurre/graph-agent/issues/86),
+[#94](https://github.com/datakurre/graph-agent/issues/94)): recovery cannot
+replay a linked process once its definition has changed underneath it, so
+`session-default` -- whose own process is just the three-element wrapper
+around a `callActivity` into `pi-default-loop` -- can only gain or lose steps
+around the Pi loop, not edit inside it. `session-craft` fares better only
+because its *own* process happens to carry the interesting structure (craft,
+`gw_more`, `await_intent`, `run_default`). `session-skeleton` asks for an
+intent before handing it to `craft-graph`, and `session-craft` (opt-in via
+`--graph session-craft`) goes straight from a prompt into `craft-graph` and
+runs whatever it builds in the same invocation -- see [the bundled
 graphs](docs/getting-started.md#the-bundled-graphs) for what each one is.
 
 One thing to know: plain `graph-agent init` auto-upgrades any library graph

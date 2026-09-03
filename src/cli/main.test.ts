@@ -89,7 +89,7 @@ describe("piping CLI output to a short consumer (issue #41)", () => {
 
     expect(stderr).not.toContain("Unhandled 'error' event");
     expect(stderr).not.toContain("EPIPE");
-  }, 20000);
+  });
 });
 
 describe("cmdStudio flags (issue #56)", () => {
@@ -131,23 +131,23 @@ describe("cmdStudio flags (issue #56)", () => {
     const { stderr } = await runStudio([]);
     expect(stderr).not.toContain("Unhandled 'error' event");
     expect(stderr).not.toContain("ENOENT");
-  }, 20000);
+  });
 
   it("--no-open is honoured (parseArgs has no built-in negation)", async () => {
     const { stderr } = await runStudio(["--no-open"]);
     expect(stderr).not.toContain("Unhandled 'error' event");
-  }, 20000);
+  });
 
   it("warns when --host binds off loopback, since the ui has no authentication", async () => {
     const { stderr } = await runStudio(["--host", "0.0.0.0", "--no-open"]);
     expect(stderr).toContain("0.0.0.0");
     expect(stderr).toMatch(/no authentication/);
-  }, 20000);
+  });
 
   it("does not warn for the loopback default", async () => {
     const { stderr } = await runStudio(["--host", "127.0.0.1", "--no-open"]);
     expect(stderr).not.toMatch(/no authentication/);
-  }, 20000);
+  });
 
   it("rejects a non-numeric --port instead of crashing with a NaN listen() error (issue #77)", () => {
     const home = mkdtempSync(join(tmpdir(), "graph-agent-studio-"));
@@ -186,7 +186,7 @@ describe("cmdInit and BPMN model versioning upgrades", () => {
     const result = spawnSync("node", [distFile, "init"], { env, encoding: "utf8" });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("upgraded 1 unmodified graph(s) to newer bundled version: session-default");
-  }, 20000);
+  });
 
   it("detects manual modifications and preserves them with an upgrade prompt", () => {
     const home = mkdtempSync(join(tmpdir(), "graph-agent-init-modified-"));
@@ -534,14 +534,25 @@ describe("--answer scoping (issue #44)", () => {
       return { env, workflowsDir };
     }
 
-    function runCli(env: NodeJS.ProcessEnv, args: string[]): { stdout: string; stderr: string; code: number | null } {
-      const result = spawnSync("node", [distFile, ...args], { env, encoding: "utf8" });
-      return { stdout: result.stdout, stderr: result.stderr, code: result.status };
+    function runCli(env: NodeJS.ProcessEnv, args: string[]): Promise<{ stdout: string; stderr: string; code: number | null }> {
+      // spawn + a promise, not spawnSync: a synchronous spawn blocks the
+      // vitest worker's event loop for the subprocess's whole lifetime, long
+      // enough that the worker can miss vitest's own onTaskUpdate RPC and
+      // fail the run even when every assertion passed (issue #95).
+      return new Promise((resolve, reject) => {
+        const child = spawn("node", [distFile, ...args], { env });
+        let stdout = "";
+        let stderr = "";
+        child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+        child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+        child.on("error", reject);
+        child.on("close", (code) => resolve({ stdout, stderr, code }));
+      });
     }
 
-    it("a scoped answer for gate_a does not also answer gate_b", () => {
+    it("a scoped answer for gate_a does not also answer gate_b", async () => {
       const { env } = project();
-      const { stdout } = runCli(env, ["run", "--graph", "two_gates", "--dry-run", "--answer", "gate_a:key=hello"]);
+      const { stdout } = await runCli(env, ["run", "--graph", "two_gates", "--dry-run", "--answer", "gate_a:key=hello"]);
       expect(stdout).toContain("stopped");
       // Not `toBe` -- `postponedIds(engine)`'s snapshot can still list the just
       // -answered gate_a for one more tick after it ends (a bpmn-elements
@@ -554,34 +565,34 @@ describe("--answer scoping (issue #44)", () => {
       expect(stdout).not.toContain("completed");
     });
 
-    it("an unscoped answer satisfies both gates in one run (documented, opt-in behaviour)", () => {
+    it("an unscoped answer satisfies both gates in one run (documented, opt-in behaviour)", async () => {
       const { env } = project();
-      const { stdout } = runCli(env, ["run", "--graph", "two_gates", "--dry-run", "--answer", "key=hello"]);
+      const { stdout } = await runCli(env, ["run", "--graph", "two_gates", "--dry-run", "--answer", "key=hello"]);
       expect(stdout).toContain("completed");
       expect(stdout).not.toContain("waiting on");
     });
 
-    it("resuming with a scoped answer for gate_b completes the session", () => {
+    it("resuming with a scoped answer for gate_b completes the session", async () => {
       const { env } = project();
-      const first = runCli(env, ["run", "--graph", "two_gates", "--dry-run", "--answer", "gate_a:key=hello"]);
+      const first = await runCli(env, ["run", "--graph", "two_gates", "--dry-run", "--answer", "gate_a:key=hello"]);
       const sessionId = /^session (\S+)/m.exec(first.stdout)?.[1];
       expect(sessionId).toBeDefined();
-      const second = runCli(env, ["resume", sessionId!, "--dry-run", "--answer", "gate_b:key=world"]);
+      const second = await runCli(env, ["resume", sessionId!, "--dry-run", "--answer", "gate_b:key=world"]);
       expect(second.stdout).toContain("completed");
-    }, 20000);
+    });
 
-    it("resume prints which model it picked, so a fallback is never silent (issue #88)", () => {
+    it("resume prints which model it picked, so a fallback is never silent (issue #88)", async () => {
       const { env } = project();
-      const first = runCli(env, ["run", "--graph", "two_gates", "--dry-run", "--answer", "gate_a:key=hello"]);
+      const first = await runCli(env, ["run", "--graph", "two_gates", "--dry-run", "--answer", "gate_a:key=hello"]);
       const sessionId = /^session (\S+)/m.exec(first.stdout)?.[1];
       expect(sessionId).toBeDefined();
-      const second = runCli(env, ["resume", sessionId!, "--dry-run", "--answer", "gate_b:key=world"]);
+      const second = await runCli(env, ["resume", sessionId!, "--dry-run", "--answer", "gate_b:key=world"]);
       expect(second.stdout).toContain("model  dry-run (no model called)");
-    }, 20000);
+    });
 
-    it("caps how many times an unscoped answer auto-answers the same looping gate", () => {
+    it("caps how many times an unscoped answer auto-answers the same looping gate", async () => {
       const { env } = project();
-      const { stdout, stderr, code } = runCli(env, ["run", "--graph", "loop_gate", "--dry-run", "--answer", "key=hello"]);
+      const { stdout, stderr, code } = await runCli(env, ["run", "--graph", "loop_gate", "--dry-run", "--answer", "key=hello"]);
       // Bounded and reported, not an infinite loop burning turns forever.
       expect(stderr).toMatch(/gate was auto-answered 5 times/);
       expect(stderr).toMatch(/scope your answer/);
@@ -590,9 +601,9 @@ describe("--answer scoping (issue #44)", () => {
       expect(code).toBe(0);
     });
 
-    it("caps a scoped answer too, without the (already-followed) advice to scope it (issue #62)", () => {
+    it("caps a scoped answer too, without the (already-followed) advice to scope it (issue #62)", async () => {
       const { env } = project();
-      const { stdout, stderr, code } = runCli(env, [
+      const { stdout, stderr, code } = await runCli(env, [
         "run",
         "--graph",
         "loop_gate",
@@ -607,9 +618,9 @@ describe("--answer scoping (issue #44)", () => {
       expect(code).toBe(0);
     });
 
-    it("--max-auto-answers lowers the cap, and the message names the flag to raise it (issue #71)", () => {
+    it("--max-auto-answers lowers the cap, and the message names the flag to raise it (issue #71)", async () => {
       const { env } = project();
-      const { stdout, stderr, code } = runCli(env, [
+      const { stdout, stderr, code } = await runCli(env, [
         "run",
         "--graph",
         "loop_gate",
@@ -626,9 +637,9 @@ describe("--answer scoping (issue #44)", () => {
       expect(code).toBe(0);
     });
 
-    it("rejects a non-positive-integer --max-auto-answers instead of silently ignoring it", () => {
+    it("rejects a non-positive-integer --max-auto-answers instead of silently ignoring it", async () => {
       const { env } = project();
-      const { stderr, code } = runCli(env, [
+      const { stderr, code } = await runCli(env, [
         "run",
         "--graph",
         "loop_gate",
@@ -642,9 +653,9 @@ describe("--answer scoping (issue #44)", () => {
       expect(code).toBe(1);
     });
 
-    it("echoes the raw value, not a coerced NaN, for a non-numeric --max-auto-answers (issue #77)", () => {
+    it("echoes the raw value, not a coerced NaN, for a non-numeric --max-auto-answers (issue #77)", async () => {
       const { env } = project();
-      const { stderr, code } = runCli(env, [
+      const { stderr, code } = await runCli(env, [
         "run",
         "--graph",
         "loop_gate",
@@ -774,9 +785,20 @@ describe("graph-agent promote (issue #55)", () => {
     return { env, workflowsDir };
   }
 
-  function runCli(env: NodeJS.ProcessEnv, args: string[]): { stdout: string; stderr: string; code: number | null } {
-    const result = spawnSync("node", [distFile, ...args], { env, encoding: "utf8" });
-    return { stdout: result.stdout, stderr: result.stderr, code: result.status };
+  function runCli(env: NodeJS.ProcessEnv, args: string[]): Promise<{ stdout: string; stderr: string; code: number | null }> {
+    // spawn + a promise, not spawnSync: a synchronous spawn blocks the
+    // vitest worker's event loop for the subprocess's whole lifetime, long
+    // enough that the worker can miss vitest's own onTaskUpdate RPC and
+    // fail the run even when every assertion passed (issue #95).
+    return new Promise((resolve, reject) => {
+      const child = spawn("node", [distFile, ...args], { env });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+      child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+      child.on("error", reject);
+      child.on("close", (code) => resolve({ stdout, stderr, code }));
+    });
   }
 
   function sessionIdOf(stdout: string): string {
@@ -785,12 +807,12 @@ describe("graph-agent promote (issue #55)", () => {
     return id;
   }
 
-  it("promotes a session's graph, unlinked, under a fresh definitions id", () => {
+  it("promotes a session's graph, unlinked, under a fresh definitions id", async () => {
     const { env, workflowsDir } = project();
-    const first = runCli(env, ["run", "--graph", "promote_caller", "--dry-run"]);
+    const first = await runCli(env, ["run", "--graph", "promote_caller", "--dry-run"]);
     const sessionId = sessionIdOf(first.stdout);
 
-    const promoted = runCli(env, ["promote", sessionId, "--as", "promoted_caller"]);
+    const promoted = await runCli(env, ["promote", sessionId, "--as", "promoted_caller"]);
     expect(promoted.code).toBe(0);
 
     const target = join(workflowsDir, "promoted_caller.bpmn");
@@ -808,18 +830,18 @@ describe("graph-agent promote (issue #55)", () => {
     expect(promoted.stdout).toContain('calledElement="promoted_caller"');
 
     // Runs as a fresh session, re-linking promote_callee on its own.
-    const rerun = runCli(env, ["run", "--graph", "promoted_caller", "--dry-run"]);
+    const rerun = await runCli(env, ["run", "--graph", "promoted_caller", "--dry-run"]);
     expect(rerun.stdout).toContain("completed");
-  }, 20000);
+  });
 
-  it("promotes the same session twice under two names without a process id collision (issue #64)", () => {
+  it("promotes the same session twice under two names without a process id collision (issue #64)", async () => {
     const { env, workflowsDir } = project();
-    const first = runCli(env, ["run", "--graph", "promote_caller", "--dry-run"]);
+    const first = await runCli(env, ["run", "--graph", "promote_caller", "--dry-run"]);
     const sessionId = sessionIdOf(first.stdout);
 
-    const p1 = runCli(env, ["promote", sessionId, "--as", "converged"]);
+    const p1 = await runCli(env, ["promote", sessionId, "--as", "converged"]);
     expect(p1.code).toBe(0);
-    const p2 = runCli(env, ["promote", sessionId, "--as", "converged2"]);
+    const p2 = await runCli(env, ["promote", sessionId, "--as", "converged2"]);
     expect(p2.code).toBe(0);
 
     const xml1 = readFileSync(join(workflowsDir, "converged.bpmn"), "utf8");
@@ -842,57 +864,57 @@ describe("graph-agent promote (issue #55)", () => {
   </bpmn:process>
 </bpmn:definitions>`;
     writeFileSync(join(workflowsDir, "third.bpmn"), thirdGraph);
-    const rerun = runCli(env, ["run", "--graph", "third", "--dry-run"]);
+    const rerun = await runCli(env, ["run", "--graph", "third", "--dry-run"]);
     expect(rerun.stdout).toContain("completed");
-  }, 20000);
+  });
 
-  it("refuses a process id already used by a different library file, without --force (issue #64)", () => {
+  it("refuses a process id already used by a different library file, without --force (issue #64)", async () => {
     const { env } = project();
-    const first = runCli(env, ["run", "--graph", "promote_caller", "--dry-run"]);
+    const first = await runCli(env, ["run", "--graph", "promote_caller", "--dry-run"]);
     const sessionId = sessionIdOf(first.stdout);
 
     // "promote-callee" is a different *file* from the existing
     // "promote_callee.bpmn" (so the file-existence check does not fire
     // first), but --as normalises '-' to '_' the same way `graph-agent
     // promote`'s own process id does -- both name the same process.
-    const collision = runCli(env, ["promote", sessionId, "--as", "promote-callee"]);
+    const collision = await runCli(env, ["promote", sessionId, "--as", "promote-callee"]);
     expect(collision.code).not.toBe(0);
     expect(collision.stderr).toMatch(/process id 'promote_callee' is already used/);
 
-    const withForce = runCli(env, ["promote", sessionId, "--as", "promote-callee", "--force"]);
+    const withForce = await runCli(env, ["promote", sessionId, "--as", "promote-callee", "--force"]);
     expect(withForce.code).toBe(0);
-  }, 20000);
+  });
 
-  it("requires --as", () => {
+  it("requires --as", async () => {
     const { env } = project();
-    const first = runCli(env, ["run", "--graph", "promote_caller", "--dry-run"]);
+    const first = await runCli(env, ["run", "--graph", "promote_caller", "--dry-run"]);
     const sessionId = sessionIdOf(first.stdout);
-    const result = runCli(env, ["promote", sessionId]);
+    const result = await runCli(env, ["promote", sessionId]);
     expect(result.code).not.toBe(0);
     expect(result.stderr).toMatch(/--as/);
-  }, 20000);
+  });
 
-  it("refuses an unknown session", () => {
+  it("refuses an unknown session", async () => {
     const { env } = project();
-    const result = runCli(env, ["promote", "nonexistent", "--as", "x"]);
+    const result = await runCli(env, ["promote", "nonexistent", "--as", "x"]);
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain("unknown session");
-  }, 20000);
+  });
 
-  it("refuses to overwrite an existing library graph without --force, and backs it up with --force", () => {
+  it("refuses to overwrite an existing library graph without --force, and backs it up with --force", async () => {
     const { env, workflowsDir } = project();
-    const first = runCli(env, ["run", "--graph", "promote_caller", "--dry-run"]);
+    const first = await runCli(env, ["run", "--graph", "promote_caller", "--dry-run"]);
     const sessionId = sessionIdOf(first.stdout);
-    runCli(env, ["promote", sessionId, "--as", "promoted_caller"]);
+    await runCli(env, ["promote", sessionId, "--as", "promoted_caller"]);
 
-    const withoutForce = runCli(env, ["promote", sessionId, "--as", "promoted_caller"]);
+    const withoutForce = await runCli(env, ["promote", sessionId, "--as", "promoted_caller"]);
     expect(withoutForce.code).not.toBe(0);
     expect(withoutForce.stderr).toMatch(/--force/);
 
-    const withForce = runCli(env, ["promote", sessionId, "--as", "promoted_caller", "--force"]);
+    const withForce = await runCli(env, ["promote", sessionId, "--as", "promoted_caller", "--force"]);
     expect(withForce.code).toBe(0);
     expect(existsSync(join(workflowsDir, "promoted_caller.bpmn.bak"))).toBe(true);
-  }, 20000);
+  });
 });
 
 describe("graph-agent model and headless flags", () => {
@@ -906,26 +928,37 @@ describe("graph-agent model and headless flags", () => {
     return { env, configFile };
   }
 
-  function runCli(env: NodeJS.ProcessEnv, args: string[]): { stdout: string; stderr: string; code: number | null } {
-    const result = spawnSync("node", [distFile, ...args], { env, encoding: "utf8" });
-    return { stdout: result.stdout, stderr: result.stderr, code: result.status };
+  function runCli(env: NodeJS.ProcessEnv, args: string[]): Promise<{ stdout: string; stderr: string; code: number | null }> {
+    // spawn + a promise, not spawnSync: a synchronous spawn blocks the
+    // vitest worker's event loop for the subprocess's whole lifetime, long
+    // enough that the worker can miss vitest's own onTaskUpdate RPC and
+    // fail the run even when every assertion passed (issue #95).
+    return new Promise((resolve, reject) => {
+      const child = spawn("node", [distFile, ...args], { env });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+      child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+      child.on("error", reject);
+      child.on("close", (code) => resolve({ stdout, stderr, code }));
+    });
   }
 
-  it("lists configured model with `graph-agent model`", () => {
+  it("lists configured model with `graph-agent model`", async () => {
     const { env } = project();
-    const result = runCli(env, ["model"]);
+    const result = await runCli(env, ["model"]);
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("configured default:");
   });
 
-  it("sets default model with `graph-agent model <provider/model>`", () => {
+  it("sets default model with `graph-agent model <provider/model>`", async () => {
     const { env, configFile } = project();
-    const setRes = runCli(env, ["model", "anthropic/claude-sonnet-4-5"]);
+    const setRes = await runCli(env, ["model", "anthropic/claude-sonnet-4-5"]);
     expect(setRes.code).toBe(0);
     expect(setRes.stdout).toContain("set default model");
     expect(setRes.stdout).toContain("anthropic/claude-sonnet-4-5");
 
-    const checkRes = runCli(env, ["model"]);
+    const checkRes = await runCli(env, ["model"]);
     expect(checkRes.code).toBe(0);
     expect(checkRes.stdout).toContain("configured default: anthropic/claude-sonnet-4-5");
 
@@ -933,31 +966,40 @@ describe("graph-agent model and headless flags", () => {
     expect(content).toContain('model = "anthropic/claude-sonnet-4-5"');
   });
 
-  it("supports running headlessly with --no-tui", () => {
+  it("supports running headlessly with --no-tui", async () => {
     const { env } = project();
-    const result = runCli(env, ["--no-tui", "--graph", "session-default", "--dry-run"]);
+    const result = await runCli(env, ["--no-tui", "--graph", "session-default", "--dry-run"]);
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("session");
-  }, 20000);
+  });
 
-  it("removes a session with `graph-agent rm <id>`", () => {
+  it("accepts --no-tui, -p and --print after an explicit `run` subcommand, not just before it (issue #96)", async () => {
+    const { env } = project();
+    for (const flag of ["--no-tui", "-p", "--print"]) {
+      const result = await runCli(env, ["run", flag, "--dry-run", "y"]);
+      expect(result.code, `${flag}: ${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain("session");
+    }
+  });
+
+  it("removes a session with `graph-agent rm <id>`", async () => {
     const { env } = project();
     // Run a dry session first to create one
-    const runRes = runCli(env, ["run", "--dry-run", "test prompt"]);
+    const runRes = await runCli(env, ["run", "--dry-run", "test prompt"]);
     expect(runRes.code).toBe(0);
 
-    const lsRes = runCli(env, ["ls"]);
+    const lsRes = await runCli(env, ["ls"]);
     expect(lsRes.code).toBe(0);
     const sessionId = lsRes.stdout.trim().split(/\s+/)[0];
     expect(sessionId).toBeDefined();
 
-    const rmRes = runCli(env, ["rm", sessionId!]);
+    const rmRes = await runCli(env, ["rm", sessionId!]);
     expect(rmRes.code).toBe(0);
     expect(rmRes.stdout).toContain(`removed session ${sessionId}`);
 
-    const afterLs = runCli(env, ["ls"]);
+    const afterLs = await runCli(env, ["ls"]);
     expect(afterLs.stdout).toContain("no sessions in this project yet");
-  }, 20000);
+  });
 });
 
 describe("unknown CLI flags (issue #91)", () => {
@@ -970,39 +1012,82 @@ describe("unknown CLI flags (issue #91)", () => {
     return { env };
   }
 
-  function runCli(env: NodeJS.ProcessEnv, args: string[]): { stdout: string; stderr: string; code: number | null } {
-    const result = spawnSync("node", [distFile, ...args], { env, encoding: "utf8" });
-    return { stdout: result.stdout, stderr: result.stderr, code: result.status };
+  function runCli(env: NodeJS.ProcessEnv, args: string[]): Promise<{ stdout: string; stderr: string; code: number | null }> {
+    // spawn + a promise, not spawnSync: a synchronous spawn blocks the
+    // vitest worker's event loop for the subprocess's whole lifetime, long
+    // enough that the worker can miss vitest's own onTaskUpdate RPC and
+    // fail the run even when every assertion passed (issue #95).
+    return new Promise((resolve, reject) => {
+      const child = spawn("node", [distFile, ...args], { env });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+      child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+      child.on("error", reject);
+      child.on("close", (code) => resolve({ stdout, stderr, code }));
+    });
   }
 
-  it("`report` rejects an unknown option with a clean message instead of a node:internal stack", () => {
+  it("`report` rejects an unknown option with a clean message instead of a node:internal stack", async () => {
     const { env } = project();
-    const result = runCli(env, ["report", "somesession", "--output", "report.html"]);
+    const result = await runCli(env, ["report", "somesession", "--output", "report.html"]);
     expect(result.code).toBe(2);
     expect(result.stderr).toContain("unknown option '--output' (did you mean '--out'?)");
     expect(result.stderr).not.toContain("node:internal");
     expect(result.stderr).not.toContain("ERR_PARSE_ARGS_UNKNOWN_OPTION");
   });
 
-  it("`run` rejects an unknown option instead of silently ignoring it", () => {
+  it("`run` rejects an unknown option instead of silently ignoring it", async () => {
     const { env } = project();
-    const result = runCli(env, ["run", "--bogus", "--dry-run", "x"]);
+    const result = await runCli(env, ["run", "--bogus", "--dry-run", "x"]);
     expect(result.code).toBe(2);
     expect(result.stderr).toContain("unknown option '--bogus'");
   });
 
-  it("`ls` rejects an unknown option instead of silently ignoring it", () => {
+  it("`ls` rejects an unknown option instead of silently ignoring it", async () => {
     const { env } = project();
-    const result = runCli(env, ["ls", "--bogus"]);
+    const result = await runCli(env, ["ls", "--bogus"]);
     expect(result.code).toBe(2);
     expect(result.stderr).toContain("unknown option '--bogus'");
   });
 
-  it("`resume` rejects an unknown option instead of silently ignoring it", () => {
+  it("`resume` rejects an unknown option instead of silently ignoring it", async () => {
     const { env } = project();
-    const result = runCli(env, ["resume", "--bogus", "somesession"]);
+    const result = await runCli(env, ["resume", "--bogus", "somesession"]);
     expect(result.code).toBe(2);
     expect(result.stderr).toContain("unknown option '--bogus'");
+  });
+
+  it("`show` rejects an unknown option instead of silently ignoring it (issue #97)", async () => {
+    const { env } = project();
+    const result = await runCli(env, ["show", "somesession", "--bogus"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--bogus'");
+  });
+
+  it("`where` rejects an unknown option instead of silently ignoring it (issue #97)", async () => {
+    const { env } = project();
+    const result = await runCli(env, ["where", "--bogus"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--bogus'");
+  });
+
+  it("`init` rejects an unknown option instead of silently running a plain init (issue #97)", async () => {
+    // The one that can actually mislead: init --refesh (a typo of --refresh)
+    // used to run a plain init and report nothing wrong, so the user
+    // believed they had refreshed a stale graph and had not.
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-cli-flags-init-"));
+    const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
+    const result = await runCli(env, ["init", "--refesh"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--refesh'");
+    expect(result.stderr).toContain("did you mean '--refresh'?");
+  });
+
+  it("`init --refresh` (correctly spelled) is still accepted", async () => {
+    const { env } = project();
+    const result = await runCli(env, ["init", "--refresh"]);
+    expect(result.code).toBe(0);
   });
 });
 

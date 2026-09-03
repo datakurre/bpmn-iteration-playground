@@ -498,6 +498,46 @@ export async function applyGraphOps(currentXml: string, ops: GraphOp[]): Promise
     if (!process) throw new Error(`op ${opIndex}: unknown process '${processId}' -- add it first with "createProcess"`);
     return process;
   };
+  /** The top-level `bpmn:Process` an already-existing element physically lives in, walking up `$parent`. */
+  const ownerProcessOf = (el: ModdleFlowElement, opIndex: number): ModdleFlowElement => {
+    let node: ModdleFlowElement | undefined = el;
+    while (node && node.$type !== "bpmn:Process") {
+      node = node.$parent as ModdleFlowElement | undefined;
+    }
+    if (!node) throw new Error(`op ${opIndex}: '${el.id}' is not inside any <bpmn:process>`);
+    return node;
+  };
+  /**
+   * Which process an op that wires into an *existing* element (`after`,
+   * `into`, `from`, `attachedTo`) attaches into: an explicit `process` id if
+   * given, otherwise wherever that target already lives -- never the
+   * unconditional `mainProcess` default `processFor` alone would give an op
+   * that never named one.
+   *
+   * `processFor(undefined, ...)` defaulting to `mainProcess` regardless of
+   * the target is exactly how issue #94's splice slipped past
+   * `checkProcessScope`: the *new* shape landed in the executable process
+   * (so the added-ids check had nothing to object to) while the flow it
+   * rewired stayed wired to elements that live in the *linked* process --
+   * a `bpmn:SequenceFlow` split across two different `bpmn:Process`
+   * containers, which is not valid BPMN and crashed the layout engine
+   * instead of ever reaching review. An explicit `process` that disagrees
+   * with where the target actually lives is rejected the same way, rather
+   * than silently producing the same malformed cross-process document by a
+   * different route.
+   */
+  const processForTarget = (processId: string | undefined, target: ModdleFlowElement, opIndex: number): ModdleFlowElement => {
+    const owner = ownerProcessOf(target, opIndex);
+    if (!processId) return owner;
+    const named = processFor(processId, opIndex);
+    if (named.id !== owner.id) {
+      throw new Error(
+        `op ${opIndex}: process '${processId}' does not match '${target.id}', which lives in '${owner.id}' -- ` +
+          `a shape and the element it connects to must be in the same process`,
+      );
+    }
+    return named;
+  };
   const requireSupportedType = (type: string, opIndex: number): void => {
     if (!SUPPORTED_ELEMENT_TYPES.has(type)) {
       const valid = [...SUPPORTED_ELEMENT_TYPES].sort().join(", ");
@@ -555,8 +595,8 @@ export async function applyGraphOps(currentXml: string, ops: GraphOp[]): Promise
       case "appendShape": {
         requireSupportedType(raw.type, opIndex);
         requireNewId(raw.id, opIndex);
-        const process = processFor(raw.process, opIndex);
         const source = resolve(raw.after, opIndex);
+        const process = processForTarget(raw.process, source, opIndex);
         const shape = create(raw.type, {
           id: raw.id,
           name: raw.name,
@@ -572,9 +612,9 @@ export async function applyGraphOps(currentXml: string, ops: GraphOp[]): Promise
       case "insertShape": {
         requireSupportedType(raw.type, opIndex);
         requireNewId(raw.id, opIndex);
-        const process = processFor(raw.process, opIndex);
         const flow = resolve(raw.into, opIndex);
         if (flow.$type !== "bpmn:SequenceFlow") throw new Error(`op ${opIndex}: '${raw.into}' is not a sequenceFlow`);
+        const process = processForTarget(raw.process, flow, opIndex);
         const shape = create(raw.type, {
           id: raw.id,
           name: raw.name,
@@ -596,9 +636,16 @@ export async function applyGraphOps(currentXml: string, ops: GraphOp[]): Promise
         break;
       }
       case "connect": {
-        const process = processFor(raw.process, opIndex);
         const source = resolve(raw.from, opIndex);
         const target = resolve(raw.to, opIndex);
+        const process = processForTarget(raw.process, source, opIndex);
+        const targetOwner = ownerProcessOf(target, opIndex);
+        if (targetOwner.id !== process.id) {
+          throw new Error(
+            `op ${opIndex}: '${raw.from}' lives in '${process.id}' but '${raw.to}' lives in '${targetOwner.id}' -- ` +
+              `a sequence flow cannot cross between processes`,
+          );
+        }
         if (raw.id) requireNewId(raw.id, opIndex);
         const extra: Record<string, unknown> = raw.condition
           ? { conditionExpression: create("bpmn:FormalExpression", { body: raw.condition }) }
@@ -625,8 +672,8 @@ export async function applyGraphOps(currentXml: string, ops: GraphOp[]): Promise
       case "attachBoundaryEvent": {
         requireSupportedType("bpmn:BoundaryEvent", opIndex);
         requireNewId(raw.id, opIndex);
-        const process = processFor(raw.process, opIndex);
         const host = resolve(raw.attachedTo, opIndex);
+        const process = processForTarget(raw.process, host, opIndex);
         const eventDefinition = buildEventDefinition(
           moddle,
           raw.eventDefinitionType,
