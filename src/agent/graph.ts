@@ -498,13 +498,23 @@ export async function applyGraphOps(currentXml: string, ops: GraphOp[]): Promise
     if (!process) throw new Error(`op ${opIndex}: unknown process '${processId}' -- add it first with "createProcess"`);
     return process;
   };
-  /** The top-level `bpmn:Process` an already-existing element physically lives in, walking up `$parent`. */
+  /**
+   * The nearest flow-element container an already-existing element
+   * physically lives in, walking up `$parent` -- a `bpmn:SubProcess` if the
+   * element is nested inside one, otherwise the top-level `bpmn:Process`.
+   * Stopping only at `bpmn:Process` (as this used to) walks straight past a
+   * `bpmn:SubProcess` boundary: attaching there instead of into the
+   * subprocess itself produces the identical cross-container malformation
+   * issue #94 fixed at the process level, one container down (issue #100) --
+   * `tool_batch` in `pi-default-loop.bpmn` is a real `bpmn:SubProcess` a
+   * splice can target this way.
+   */
   const ownerProcessOf = (el: ModdleFlowElement, opIndex: number): ModdleFlowElement => {
     let node: ModdleFlowElement | undefined = el;
-    while (node && node.$type !== "bpmn:Process") {
+    while (node && node.$type !== "bpmn:Process" && node.$type !== "bpmn:SubProcess") {
       node = node.$parent as ModdleFlowElement | undefined;
     }
-    if (!node) throw new Error(`op ${opIndex}: '${el.id}' is not inside any <bpmn:process>`);
+    if (!node) throw new Error(`op ${opIndex}: '${el.id}' is not inside any <bpmn:process> or <bpmn:subProcess>`);
     return node;
   };
   /**
@@ -963,6 +973,86 @@ async function checkProcessScope(
   return { ok: true };
 }
 
+interface FlowInContainer {
+  flow: ModdleFlowElement;
+  container: ModdleFlowElement;
+}
+
+/**
+ * Which immediate flow-element container (a `bpmn:Process` or a nested
+ * `bpmn:SubProcess`) each element directly belongs to, and every
+ * `bpmn:SequenceFlow` paired with its own container -- unlike `processOf`,
+ * this does not flatten through a nested `bpmn:SubProcess` boundary: a task
+ * inside `tool_batch` and `tool_batch` itself get different containers.
+ */
+function collectContainment(process: ModdleFlowElement): {
+  containerById: Map<string, ModdleFlowElement>;
+  flows: FlowInContainer[];
+} {
+  const containerById = new Map<string, ModdleFlowElement>();
+  const flows: FlowInContainer[] = [];
+  const visit = (container: ModdleFlowElement): void => {
+    for (const el of (container.flowElements as ModdleFlowElement[] | undefined) ?? []) {
+      containerById.set(el.id, container);
+      if (el.$type === "bpmn:SequenceFlow") flows.push({ flow: el, container });
+      if (el.$type === "bpmn:SubProcess") visit(el);
+    }
+  };
+  visit(process);
+  return { containerById, flows };
+}
+
+/**
+ * Rejects a `bpmn:SequenceFlow` whose `sourceRef`/`targetRef` lives in a
+ * different immediate container -- a `bpmn:Process` or a `bpmn:SubProcess`
+ * -- than the flow itself. Not valid BPMN, and exactly the shape a bad
+ * container default produces: the *new* shape lands in one container while
+ * the flow that reaches it (retargeted, or freshly connected) still points
+ * at an element one container over. `#94` found this at the `bpmn:Process`
+ * boundary (`ownerProcessOf` walking straight past a linked process); `#100`
+ * found the identical malformation one level down, at a `bpmn:SubProcess`
+ * boundary, which `checkProcessScope` alone cannot see since it only
+ * inspects which top-level process an *added* element lands in, not
+ * whether every flow it is wired to actually shares its container.
+ *
+ * Checked from the document alone, independent of how it was produced, so
+ * this also catches a hand-written fragment or a studio edit -- not only
+ * `applyGraphOps`'s own output.
+ */
+async function checkFlowContainment(xml: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const moddle = new BpmnModdle(MODDLE_OPTIONS);
+  const { rootElement } = await moddle.fromXML(xml.trim());
+  const processes = ((rootElement as unknown as { rootElements?: ModdleFlowElement[] }).rootElements ?? []).filter(
+    (node) => node.$type === "bpmn:Process",
+  );
+  for (const process of processes) {
+    const { containerById, flows } = collectContainment(process);
+    for (const { flow, container } of flows) {
+      const src = flow.sourceRef as ModdleFlowElement | undefined;
+      const tgt = flow.targetRef as ModdleFlowElement | undefined;
+      const srcContainer = src && containerById.get(src.id);
+      if (src && srcContainer && srcContainer.id !== container.id) {
+        return {
+          ok: false,
+          reason:
+            `${flow.id} belongs to '${container.id}' but its source '${src.id}' lives in '${srcContainer.id}' -- ` +
+            `a sequence flow cannot cross between processes or subprocesses`,
+        };
+      }
+      const tgtContainer = tgt && containerById.get(tgt.id);
+      if (tgt && tgtContainer && tgtContainer.id !== container.id) {
+        return {
+          ok: false,
+          reason:
+            `${flow.id} belongs to '${container.id}' but its target '${tgt.id}' lives in '${tgtContainer.id}' -- ` +
+            `a sequence flow cannot cross between processes or subprocesses`,
+        };
+      }
+    }
+  }
+  return { ok: true };
+}
+
 export async function checkSplice(
   previousXml: string,
   nextXml: string,
@@ -993,6 +1083,8 @@ export async function checkSplice(
   }
   const scope = await checkProcessScope(nextXml, new Set(added));
   if (!scope.ok) return { ok: false, added, removed, reason: scope.reason };
+  const containment = await checkFlowContainment(nextXml);
+  if (!containment.ok) return { ok: false, added, removed, reason: containment.reason };
   return { ok: true, added, removed };
 }
 
@@ -1108,6 +1200,9 @@ export async function checkMigration(
 
   const scope = await checkProcessScope(nextXml, added);
   if (!scope.ok) return { ok: false, removed: [], reason: scope.reason };
+
+  const containment = await checkFlowContainment(nextXml);
+  if (!containment.ok) return { ok: false, removed: [], reason: containment.reason };
 
   return { ok: true, removed: [] };
 }

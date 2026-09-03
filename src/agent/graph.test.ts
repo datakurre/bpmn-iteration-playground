@@ -680,6 +680,109 @@ describe("applyGraphOps", () => {
     });
   });
 
+  describe("attaches into a bpmn:SubProcess the target lives in, not the enclosing process (issue #100)", () => {
+    // A single executable process with a subprocess nested inside it --
+    // ownerProcessOf used to stop only at bpmn:Process, walking straight
+    // past the subprocess boundary the same way #94 found it walk straight
+    // past a linked process.
+    const subProcessBase = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions ${NS} id="Defs_sub">
+  <bpmn:process id="p" isExecutable="true">
+    <bpmn:startEvent id="s" />
+    <bpmn:sequenceFlow id="f1" sourceRef="s" targetRef="sub" />
+    <bpmn:subProcess id="sub">
+      <bpmn:startEvent id="ss" />
+      <bpmn:sequenceFlow id="sf1" sourceRef="ss" targetRef="st" />
+      <bpmn:task id="st" />
+      <bpmn:sequenceFlow id="sf2" sourceRef="st" targetRef="se" />
+      <bpmn:endEvent id="se" />
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="f2" sourceRef="sub" targetRef="e" />
+    <bpmn:endEvent id="e" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+    async function elementParentId(xml: string, elementId: string): Promise<string | undefined> {
+      const moddle = new BpmnModdle({});
+      const { elementsById } = (await moddle.fromXML(xml)) as any;
+      return elementsById[elementId]?.$parent?.id;
+    }
+
+    it("insertShape into a flow inside the subprocess attaches -- and rewires -- entirely within it", async () => {
+      // Exactly issue #100's repro: no explicit `process`, and the target
+      // ("into") lives inside the subprocess, not the enclosing process.
+      const ops: GraphOp[] = [{ op: "insertShape", type: "bpmn:ServiceTask", id: "inner", into: "sf1" }];
+      const merged = await applyGraphOps(subProcessBase, ops);
+
+      expect(await elementParentId(merged, "inner")).toBe("sub");
+      // The rewired original flow and the freshly connected one both stay
+      // inside the subprocess too.
+      expect(await elementParentId(merged, "sf1")).toBe("sub");
+
+      // The document is well-formed, so checkSplice accepts it: "p" is the
+      // one and only (executable) process either way, so this is a
+      // perfectly legal splice, unlike #94's linked-process case.
+      const splice = await checkSplice(subProcessBase, merged);
+      expect(splice.ok).toBe(true);
+      expect(splice.added).toContain("inner");
+    });
+
+    it("appendShape after a node inside the subprocess attaches there too", async () => {
+      const ops: GraphOp[] = [{ op: "appendShape", type: "bpmn:ServiceTask", id: "inner", after: "ss" }];
+      const merged = await applyGraphOps(subProcessBase, ops);
+      expect(await elementParentId(merged, "inner")).toBe("sub");
+    });
+
+    it("connect between two nodes inside the subprocess attaches the new flow there too", async () => {
+      const ops: GraphOp[] = [
+        { op: "appendShape", type: "bpmn:ServiceTask", id: "a", after: "ss" },
+        { op: "appendShape", type: "bpmn:ServiceTask", id: "b", after: "ss" },
+        { op: "connect", from: "a", to: "b", id: "extra_flow" },
+      ];
+      const merged = await applyGraphOps(subProcessBase, ops);
+      expect(await elementParentId(merged, "extra_flow")).toBe("sub");
+    });
+
+    it("connect rejects wiring a node outside the subprocess to one inside it", async () => {
+      await expect(applyGraphOps(subProcessBase, [{ op: "connect", from: "s", to: "ss" }])).rejects.toThrow(
+        /cannot cross between processes/,
+      );
+    });
+
+    it("checkSplice/checkMigration reject a hand-written fragment with a cross-subprocess flow directly, independent of applyGraphOps", async () => {
+      // The general containment invariant: checked from the document alone,
+      // so a hand-written fragment or a studio edit is caught the same way
+      // applyGraphOps's own output now is.
+      const malformed = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions ${NS} id="Defs_sub">
+  <bpmn:process id="p" isExecutable="true">
+    <bpmn:startEvent id="s" />
+    <bpmn:sequenceFlow id="f1" sourceRef="s" targetRef="sub" />
+    <bpmn:subProcess id="sub">
+      <bpmn:startEvent id="ss" />
+      <bpmn:sequenceFlow id="sf1" sourceRef="ss" targetRef="st" />
+      <bpmn:task id="st" />
+      <bpmn:sequenceFlow id="sf2" sourceRef="st" targetRef="se" />
+      <bpmn:endEvent id="se" />
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="f2" sourceRef="sub" targetRef="e" />
+    <bpmn:endEvent id="e" />
+    <bpmn:task id="outer_task" />
+    <bpmn:sequenceFlow id="bad_flow" sourceRef="ss" targetRef="outer_task" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+      const splice = await checkSplice(subProcessBase, malformed);
+      expect(splice.ok).toBe(false);
+      expect(splice.reason).toMatch(/bad_flow/);
+      expect(splice.reason).toMatch(/cannot cross between processes or subprocesses/);
+
+      const migration = await checkMigration(subProcessBase, malformed, new Set());
+      expect(migration.ok).toBe(false);
+      expect(migration.reason).toMatch(/bad_flow/);
+    });
+  });
+
   it("throws a clear error for an unknown target id", async () => {
     await expect(applyGraphOps(base, [{ op: "appendShape", type: "bpmn:ServiceTask", id: "x", after: "nope" }])).rejects.toThrow(
       /unknown element id 'nope'/,

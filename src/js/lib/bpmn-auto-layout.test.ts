@@ -273,4 +273,31 @@ describe("bpmn-auto-layout", () => {
 
     await expect(layoutProcess(xml)).rejects.toThrow(/crossing.*cannot cross between processes/s);
   });
+
+  it("names the problem for a sequence flow that crosses a bpmn:SubProcess boundary within the same process, instead of crashing (issue #100)", async () => {
+    // The same malformation #94 found at the process boundary, one
+    // container down: attributing every element to its top-level process id
+    // (rather than its immediate container) let a cross-subprocess flow
+    // slip through even though process.test.ts's own root_process/
+    // child_process test above already caught the process-level case.
+    const NS =
+      'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"';
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_cross_sub" ${NS}>
+  <bpmn:process id="p" isExecutable="true">
+    <bpmn:startEvent id="s"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="s" targetRef="sub" />
+    <bpmn:subProcess id="sub">
+      <bpmn:startEvent id="ss" />
+      <bpmn:sequenceFlow id="crossing" sourceRef="ss" targetRef="outer_task" />
+      <bpmn:endEvent id="se" />
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="f2" sourceRef="sub" targetRef="e" />
+    <bpmn:endEvent id="e" />
+    <bpmn:task id="outer_task" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+    await expect(layoutProcess(xml)).rejects.toThrow(/crossing.*cannot cross between processes or subprocesses/s);
+  });
 });

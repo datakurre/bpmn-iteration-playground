@@ -1089,5 +1089,94 @@ describe("unknown CLI flags (issue #91)", () => {
     const result = await runCli(env, ["init", "--refresh"]);
     expect(result.code).toBe(0);
   });
+
+  it("`steer` rejects an unknown option instead of swallowing it into the session id/message (issue #102)", async () => {
+    const { env } = project();
+    const run = await runCli(env, ["run", "--dry-run", "hi"]);
+    const sessionId = /^session (\S+)/m.exec(run.stdout)?.[1];
+    expect(sessionId).toBeDefined();
+    const result = await runCli(env, ["steer", sessionId!, "--bogus", "x"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--bogus'");
+  });
+
+  it("`follow-up` rejects an unknown option instead of swallowing it into the session id/message (issue #102)", async () => {
+    const { env } = project();
+    const run = await runCli(env, ["run", "--dry-run", "hi"]);
+    const sessionId = /^session (\S+)/m.exec(run.stdout)?.[1];
+    expect(sessionId).toBeDefined();
+    const result = await runCli(env, ["follow-up", sessionId!, "--bogus", "x"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--bogus'");
+  });
+
+  it("`promote` rejects an unknown option instead of silently promoting anyway (issue #102)", async () => {
+    // The one with real consequences: --revision/--force/--as change what
+    // gets written, so a typo next to a real flag used to promote silently
+    // rather than error.
+    const { env } = project();
+    const run = await runCli(env, ["run", "--dry-run", "hi"]);
+    const sessionId = /^session (\S+)/m.exec(run.stdout)?.[1];
+    expect(sessionId).toBeDefined();
+    const result = await runCli(env, ["promote", sessionId!, "--as", "zz", "--bogus"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--bogus'");
+  });
+
+  it("`ui` rejects an unknown option instead of starting the server anyway (issue #102)", async () => {
+    const { env } = project();
+    const result = await runCli(env, ["ui", "--bogus"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--bogus'");
+  });
+});
+
+describe("--help/-h after a subcommand (issue #101)", () => {
+  const distFile = join(import.meta.dirname, "..", "..", "dist", "graph-agent.js");
+
+  function project(): { env: NodeJS.ProcessEnv } {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-cli-help-"));
+    const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
+    execFileSync("node", [distFile, "init"], { env });
+    return { env };
+  }
+
+  function runCli(env: NodeJS.ProcessEnv, args: string[]): Promise<{ stdout: string; stderr: string; code: number | null }> {
+    return new Promise((resolve, reject) => {
+      const child = spawn("node", [distFile, ...args], { env });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+      child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+      child.on("error", reject);
+      child.on("close", (code) => resolve({ stdout, stderr, code }));
+    });
+  }
+
+  it.each(["run", "resume", "show", "ls", "report", "export", "init", "where", "tui", "promote", "steer"])(
+    "`%s --help` prints help and exits 0, instead of 'unknown option'",
+    async (command) => {
+      const { env } = project();
+      const result = await runCli(env, [command, "--help"]);
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain("graph-agent - a Pi coding agent whose control flow is a BPMN graph");
+      expect(result.stderr).not.toContain("unknown option");
+    },
+  );
+
+  it("`run -h` (short form) also prints help and exits 0", async () => {
+    const { env } = project();
+    const result = await runCli(env, ["run", "-h"]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("graph-agent - a Pi coding agent whose control flow is a BPMN graph");
+  });
+
+  it("`ui --help` prints help and exits 0 without starting the server", async () => {
+    const { env } = project();
+    const result = await runCli(env, ["ui", "--help"]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("graph-agent - a Pi coding agent whose control flow is a BPMN graph");
+    expect(result.stdout).not.toContain("graph-agent ui  http");
+  });
 });
 

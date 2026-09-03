@@ -209,6 +209,18 @@ export async function main(argv: string[]): Promise<number> {
     return cmdTui(argv);
   }
 
+  // Strict per-subcommand parsing (#91, #96, #97) never registered --help/-h
+  // on any of them, so the single most reflexive thing a user types --
+  // `graph-agent <command> --help` -- became `unknown option '--help'`
+  // instead of the help text one word to the left already promises. Worse
+  // for `ui`, which would otherwise start the server before ever reaching
+  // its own argument parsing. Caught here, once, before any subcommand's
+  // own parser ever sees the args (issue #101).
+  if (argv.slice(1).some((a) => a === "--help" || a === "-h")) {
+    process.stdout.write(USAGE);
+    return 0;
+  }
+
   switch (command) {
     case "init":
       return cmdInit(argv.slice(1));
@@ -423,19 +435,16 @@ async function cmdStudio(args: string[]): Promise<number> {
   if (!p) return 1;
   const project = projectId();
 
-  const { values } = parseArgs({
-    args,
-    options: {
-      port: { type: "string" },
-      host: { type: "string" },
-      open: { type: "boolean", default: true },
-      // parseArgs has no built-in `--no-<flag>` negation; a bare `no-open`
-      // key is how a boolean's negation shows up (see also #56).
-      "no-open": { type: "boolean", default: false },
-    },
-    allowPositionals: true,
-    strict: false,
+  const parsed = parseArgsOrError(args, {
+    port: { type: "string" },
+    host: { type: "string" },
+    open: { type: "boolean", default: true },
+    // parseArgs has no built-in `--no-<flag>` negation; a bare `no-open`
+    // key is how a boolean's negation shows up (see also #56).
+    "no-open": { type: "boolean", default: false },
   });
+  if (!parsed) return 2;
+  const { values } = parsed;
   const shouldOpen = Boolean(values.open) && !values["no-open"];
 
   const host = values.host === undefined ? undefined : String(values.host);
@@ -1035,7 +1044,9 @@ function cmdLs(args: string[]): number {
 function cmdQueue(kind: "steer" | "follow-up", args: string[]): number {
   const p = requirePaths();
   if (!p) return 1;
-  const [id, ...rest] = args;
+  const parsed = parseArgsOrError(args, {});
+  if (!parsed) return 2;
+  const [id, ...rest] = parsed.positionals;
   const text = rest.join(" ");
   if (!id || !text) {
     process.stderr.write(`graph-agent: ${kind} requires a session id and a message\n`);
@@ -1068,16 +1079,13 @@ function sanitizeId(name: string): string {
 async function cmdPromote(args: string[]): Promise<number> {
   const p = requirePaths();
   if (!p) return 1;
-  const { values, positionals } = parseArgs({
-    args,
-    options: {
-      as: { type: "string" },
-      revision: { type: "string" },
-      force: { type: "boolean", default: false },
-    },
-    allowPositionals: true,
-    strict: false,
+  const parsedArgs = parseArgsOrError(args, {
+    as: { type: "string" },
+    revision: { type: "string" },
+    force: { type: "boolean", default: false },
   });
+  if (!parsedArgs) return 2;
+  const { values, positionals } = parsedArgs;
 
   const sessionId = positionals[0];
   if (!sessionId) {

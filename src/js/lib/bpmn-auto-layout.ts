@@ -72,42 +72,46 @@ interface ProcessLayoutResult {
 }
 
 /**
- * A `bpmn:SequenceFlow` whose `sourceRef`/`targetRef` belong to two
- * different top-level `bpmn:Process` elements is not valid BPMN -- a flow
- * can only connect elements within the process (or nested subprocess) that
- * owns it. Left undetected, this used to surface as a bare `Cannot read
- * properties of undefined (reading '$type')` deep in track/waypoint
- * computation, which named neither the flow nor why it was malformed
- * (issue #94). `applyGraphOps`/`checkSplice` (graph.ts) now refuse to
- * produce this shape in the first place, but a hand-written or
- * externally-supplied document could still reach here, so this names the
- * problem up front rather than crashing partway through layout.
+ * A `bpmn:SequenceFlow` whose `sourceRef`/`targetRef` belong to a different
+ * immediate flow-element container -- a `bpmn:Process`, or a nested
+ * `bpmn:SubProcess` -- than the flow itself, is not valid BPMN: a flow can
+ * only connect elements within the exact container that owns it. Left
+ * undetected, this used to surface as a bare `Cannot read properties of
+ * undefined (reading '$type')` deep in track/waypoint computation, which
+ * named neither the flow nor why it was malformed -- first at the
+ * `bpmn:Process` boundary (issue #94), then one container down at a
+ * `bpmn:SubProcess` boundary (issue #100), since attributing every element
+ * to its top-level process id (rather than its *immediate* container) means
+ * a cross-subprocess-but-same-process flow slips straight through.
+ * `applyGraphOps`/`checkSplice` (graph.ts) now refuse to produce this shape
+ * in the first place, but a hand-written or externally-supplied document
+ * could still reach here, so this names the problem up front rather than
+ * crashing partway through layout.
  */
 function assertNoCrossProcessFlows(processes: any[]): void {
-  const processIdOf = new Map<string, string>();
-  const flattenIds = (nodes: any[], processId: string): void => {
+  const containerOf = new Map<string, string>();
+  const visit = (nodes: any[], containerId: string): void => {
     for (const node of nodes) {
-      processIdOf.set(node.id, processId);
-      if (node.flowElements) flattenIds(node.flowElements, processId);
+      containerOf.set(node.id, containerId);
+      if (node.flowElements) visit(node.flowElements, node.$type === "bpmn:SubProcess" ? node.id : containerId);
     }
   };
   for (const process of processes) {
-    flattenIds(process.flowElements || [], process.id);
+    visit(process.flowElements || [], process.id);
   }
-  for (const process of processes) {
-    for (const flow of flattenFlowsOf(process.flowElements || [])) {
-      const srcProcess = flow.sourceRef && processIdOf.get(flow.sourceRef.id);
-      const tgtProcess = flow.targetRef && processIdOf.get(flow.targetRef.id);
-      if (srcProcess && srcProcess !== process.id) {
-        throw new Error(
-          `${flow.id} belongs to process '${process.id}' but its source '${flow.sourceRef.id}' lives in '${srcProcess}' -- a sequence flow cannot cross between processes`,
-        );
-      }
-      if (tgtProcess && tgtProcess !== process.id) {
-        throw new Error(
-          `${flow.id} belongs to process '${process.id}' but its target '${flow.targetRef.id}' lives in '${tgtProcess}' -- a sequence flow cannot cross between processes`,
-        );
-      }
+  for (const flow of processes.flatMap((process) => flattenFlowsOf(process.flowElements || []))) {
+    const ownContainer = containerOf.get(flow.id);
+    const srcContainer = flow.sourceRef && containerOf.get(flow.sourceRef.id);
+    const tgtContainer = flow.targetRef && containerOf.get(flow.targetRef.id);
+    if (srcContainer && srcContainer !== ownContainer) {
+      throw new Error(
+        `${flow.id} belongs to '${ownContainer}' but its source '${flow.sourceRef.id}' lives in '${srcContainer}' -- a sequence flow cannot cross between processes or subprocesses`,
+      );
+    }
+    if (tgtContainer && tgtContainer !== ownContainer) {
+      throw new Error(
+        `${flow.id} belongs to '${ownContainer}' but its target '${flow.targetRef.id}' lives in '${tgtContainer}' -- a sequence flow cannot cross between processes or subprocesses`,
+      );
     }
   }
 }
