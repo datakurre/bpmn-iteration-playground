@@ -75,8 +75,11 @@ via `--graph session-craft`) goes straight from a prompt into `craft-graph`
 and runs whatever it builds in the same invocation -- see [the bundled
 graphs](docs/getting-started.md#the-bundled-graphs) for what each one is.
 
-One thing to know: `init` never overwrites your graph library without
-`--refresh`, so a stale library copy can predate a fix upstream
+One thing to know: plain `graph-agent init` auto-upgrades any library graph
+that is unchanged from what it was bundled as -- no `.bak`, since the hash
+proves you never touched it -- but leaves a graph you *have* modified alone
+and just reports it as stale. Only a modified copy needs `--refresh` (which
+backs it up as `.bak` first) to pick up a fix upstream
 ([#35](https://github.com/datakurre/graph-agent/issues/35)) -- run
 `graph-agent init --refresh`, or diff `workflows/` against `graph-agent
 where`'s graphs directory, before concluding a graph is still broken.
