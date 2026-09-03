@@ -405,7 +405,13 @@ describe("a splice executes in the same run that drafted it (issue #45)", () => 
 <bpmn:definitions id="Defs_loop_splice" ${NS}>
   <bpmn:process id="loop_splice" isExecutable="true">
     <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
-    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="draft" />
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="gw_loop" />
+    <bpmn:exclusiveGateway id="gw_loop">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:incoming>loop</bpmn:incoming>
+      <bpmn:outgoing>to_draft</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="to_draft" sourceRef="gw_loop" targetRef="draft" />
     <bpmn:serviceTask id="draft" name="Draft">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="agent:turn" />
@@ -414,8 +420,7 @@ describe("a splice executes in the same run that drafted it (issue #45)", () => 
           <zeebe:output source="=text" target="fragment" />
         </zeebe:ioMapping>
       </bpmn:extensionElements>
-      <bpmn:incoming>f1</bpmn:incoming>
-      <bpmn:incoming>loop</bpmn:incoming>
+      <bpmn:incoming>to_draft</bpmn:incoming>
       <bpmn:outgoing>f2</bpmn:outgoing>
     </bpmn:serviceTask>
     <bpmn:sequenceFlow id="f2" sourceRef="draft" targetRef="extend" />
@@ -426,7 +431,7 @@ describe("a splice executes in the same run that drafted it (issue #45)", () => 
       </bpmn:extensionElements>
       <bpmn:incoming>f2</bpmn:incoming><bpmn:outgoing>loop</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:sequenceFlow id="loop" sourceRef="extend" targetRef="draft" />
+    <bpmn:sequenceFlow id="loop" sourceRef="extend" targetRef="gw_loop" />
     ${Array.from(
       { length: n },
       // A plain <bpmn:task> used to work as a throwaway "something new" marker,

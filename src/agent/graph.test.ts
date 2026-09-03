@@ -2,6 +2,8 @@
 import { describe, expect, it } from "vitest";
 import { Engine } from "bpmn-engine";
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { BpmnModdle } from "bpmn-moddle";
 import {
   applyGraphOps,
@@ -26,11 +28,11 @@ const EngineCtor = Engine as unknown as EngineConstructor;
 const v1 = `<?xml version="1.0" encoding="UTF-8"?>
 <definitions id="Defs_session" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:camunda="http://camunda.org/schema/1.0/bpmn">
   <process id="session" isExecutable="true">
-    <startEvent id="start" />
+    <startEvent id="start"><outgoing>f1</outgoing></startEvent>
     <sequenceFlow id="f1" sourceRef="start" targetRef="gate" />
-    <userTask id="gate" name="await turn" />
+    <userTask id="gate" name="await turn"><incoming>f1</incoming><outgoing>f2</outgoing></userTask>
     <sequenceFlow id="f2" sourceRef="gate" targetRef="end" />
-    <endEvent id="end" />
+    <endEvent id="end"><incoming>f2</incoming></endEvent>
   </process>
 </definitions>`;
 
@@ -38,17 +40,19 @@ const v1 = `<?xml version="1.0" encoding="UTF-8"?>
 const v2 = `<?xml version="1.0" encoding="UTF-8"?>
 <definitions id="Defs_session" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:camunda="http://camunda.org/schema/1.0/bpmn">
   <process id="session" isExecutable="true">
-    <startEvent id="start" />
+    <startEvent id="start"><outgoing>f1</outgoing></startEvent>
     <sequenceFlow id="f1" sourceRef="start" targetRef="gate" />
-    <userTask id="gate" name="await turn" />
+    <userTask id="gate" name="await turn"><incoming>f1</incoming><outgoing>f2</outgoing></userTask>
     <sequenceFlow id="f2" sourceRef="gate" targetRef="spliced" />
     <serviceTask id="spliced" name="agent turn" implementation="\${environment.services.turn}">
       <extensionElements>
         <camunda:properties><camunda:property name="harness" value="agent:turn" /></camunda:properties>
       </extensionElements>
+      <incoming>f2</incoming>
+      <outgoing>f3</outgoing>
     </serviceTask>
     <sequenceFlow id="f3" sourceRef="spliced" targetRef="end" />
-    <endEvent id="end" />
+    <endEvent id="end"><incoming>f3</incoming></endEvent>
   </process>
 </definitions>`;
 
@@ -110,7 +114,7 @@ describe("checkSplice", () => {
   });
 
   it("rejects a mutation that drops an element carrying live state", async () => {
-    const withoutGate = v1.replace('<userTask id="gate" name="await turn" />', "");
+    const withoutGate = v1.replace('<userTask id="gate" name="await turn"><incoming>f1</incoming><outgoing>f2</outgoing></userTask>', "");
     const result = await checkSplice(v1, withoutGate);
     expect(result.ok).toBe(false);
     expect(result.removed).toContain("gate");
@@ -132,15 +136,17 @@ describe("checkSplice with a known job-type set (issue #40)", () => {
     return `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_session">
   <bpmn:process id="session" isExecutable="true">
-    <bpmn:startEvent id="start" />
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
     <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="run_it" />
     <bpmn:serviceTask id="run_it">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="${jobType}" />
       </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
     </bpmn:serviceTask>
     <bpmn:sequenceFlow id="f2" sourceRef="run_it" targetRef="end" />
-    <bpmn:endEvent id="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>
   </bpmn:process>
 </bpmn:definitions>`;
   }
@@ -203,7 +209,7 @@ describe("checkSplice validates a new activity's I/O against a harness contract 
     return `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Defs_session">
   <bpmn:process id="session" isExecutable="true">
-    <bpmn:startEvent id="start" />
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
     <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="t" />
     <bpmn:serviceTask id="t">
       <bpmn:extensionElements>
@@ -211,9 +217,11 @@ describe("checkSplice validates a new activity's I/O against a harness contract 
         ${headers}
         ${ioMapping}
       </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
     </bpmn:serviceTask>
     <bpmn:sequenceFlow id="f2" sourceRef="t" targetRef="end" />
-    <bpmn:endEvent id="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>
   </bpmn:process>
 </bpmn:definitions>`;
   }
@@ -323,7 +331,7 @@ describe("checkSplice validates a new activity's I/O against a harness contract 
 
 describe("checkMigration (issue #46)", () => {
   it("accepts deleting an element the token has never reached, unlike checkSplice", async () => {
-    const withoutGate = v1.replace('<userTask id="gate" name="await turn" />', "");
+    const withoutGate = v1.replace('<userTask id="gate" name="await turn"><incoming>f1</incoming><outgoing>f2</outgoing></userTask>', "");
     // checkSplice rejects this outright -- gate is a real removal.
     expect((await checkSplice(v1, withoutGate)).ok).toBe(false);
     // checkMigration allows it as long as "gate" never carried live state.
@@ -333,7 +341,7 @@ describe("checkMigration (issue #46)", () => {
   });
 
   it("rejects deleting an element that does carry live state", async () => {
-    const withoutGate = v1.replace('<userTask id="gate" name="await turn" />', "");
+    const withoutGate = v1.replace('<userTask id="gate" name="await turn"><incoming>f1</incoming><outgoing>f2</outgoing></userTask>', "");
     const result = await checkMigration(v1, withoutGate, new Set(["gate"]));
     expect(result.ok).toBe(false);
     expect(result.removed).toEqual(["gate"]);
@@ -468,9 +476,11 @@ describe("checkSplice with an element-type allowlist", () => {
     return `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Defs_session">
   <bpmn:process id="session" isExecutable="true">
-    <bpmn:startEvent id="start" />
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
     <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="gw" />
-    <bpmn:inclusiveGateway id="gw" />
+    <bpmn:exclusiveGateway id="gw"><bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing></bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="f2" sourceRef="gw" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>
   </bpmn:process>
 </bpmn:definitions>`;
   }
@@ -478,9 +488,11 @@ describe("checkSplice with an element-type allowlist", () => {
     return `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Defs_session">
   <bpmn:process id="session" isExecutable="true">
-    <bpmn:startEvent id="start" />
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
     <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="t" />
-    <bpmn:serviceTask id="t" />
+    <bpmn:serviceTask id="t"><bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing></bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="t" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>
   </bpmn:process>
 </bpmn:definitions>`;
   }
@@ -493,7 +505,7 @@ describe("checkSplice with an element-type allowlist", () => {
   it("rejects a new element whose type is not allowed, naming the allowed set", async () => {
     const result = await checkSplice(base, withGateway(), undefined, undefined, allowed);
     expect(result.ok).toBe(false);
-    expect(result.reason).toMatch(/bpmn:InclusiveGateway/);
+    expect(result.reason).toMatch(/bpmn:ExclusiveGateway/);
     expect(result.reason).toMatch(/bpmn:ServiceTask/);
   });
 
@@ -511,7 +523,7 @@ describe("checkSplice with an element-type allowlist", () => {
   it("checkMigration applies the same allowlist to a genuinely new element", async () => {
     const result = await checkMigration(base, withGateway(), new Set(), undefined, undefined, allowed);
     expect(result.ok).toBe(false);
-    expect(result.reason).toMatch(/bpmn:InclusiveGateway/);
+    expect(result.reason).toMatch(/bpmn:ExclusiveGateway/);
   });
 });
 
@@ -520,9 +532,9 @@ describe("applyGraphOps", () => {
   const base = `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions ${NS} id="Defs_session">
   <bpmn:process id="session" isExecutable="true">
-    <bpmn:startEvent id="start" />
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
     <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="gate" />
-    <bpmn:userTask id="gate" />
+    <bpmn:userTask id="gate"><bpmn:incoming>f1</bpmn:incoming></bpmn:userTask>
   </bpmn:process>
 </bpmn:definitions>`;
 
@@ -567,18 +579,31 @@ describe("applyGraphOps", () => {
   });
 
   it("connect wires two nodes created earlier in the same op list", async () => {
+    // A real diamond, not two parallel flows onto the same plain end event:
+    // "connect" adds gw's second branch straight into "merge", which -- being
+    // a gateway -- genuinely joins it with the branch routed through "b1"
+    // (issue #104: two incoming into a plain node would be a fake join).
     const ops: GraphOp[] = [
       { op: "appendShape", type: "bpmn:ExclusiveGateway", id: "gw", after: "gate" },
-      { op: "appendShape", type: "bpmn:EndEvent", id: "a_end", after: "gw" },
-      { op: "connect", from: "gw", to: "a_end", id: "extra_flow" },
+      { op: "appendShape", type: "bpmn:ServiceTask", id: "b1", after: "gw" },
+      { op: "appendShape", type: "bpmn:ExclusiveGateway", id: "merge", after: "b1" },
+      { op: "appendShape", type: "bpmn:EndEvent", id: "a_end", after: "merge" },
+      { op: "connect", from: "gw", to: "merge", id: "extra_flow" },
     ];
     const merged = await applyGraphOps(base, ops);
     const result = await checkSplice(base, merged);
     expect(result.ok).toBe(true);
-    // appendShape wires its own connecting flow each time (Flow_ops_1 for gw,
-    // Flow_ops_2 for a_end); "connect" adds one more, explicitly-named, flow
-    // between the two on top of that.
-    expect(result.added.sort()).toEqual(["Flow_ops_1", "Flow_ops_2", "a_end", "extra_flow", "gw"]);
+    expect(result.added.sort()).toEqual([
+      "Flow_ops_1",
+      "Flow_ops_2",
+      "Flow_ops_3",
+      "Flow_ops_4",
+      "a_end",
+      "b1",
+      "extra_flow",
+      "gw",
+      "merge",
+    ]);
   });
 
   it("createProcess + insertShape(CallActivity) adds a sibling process reachable by calledElement", async () => {
@@ -688,17 +713,17 @@ describe("applyGraphOps", () => {
     const subProcessBase = `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions ${NS} id="Defs_sub">
   <bpmn:process id="p" isExecutable="true">
-    <bpmn:startEvent id="s" />
+    <bpmn:startEvent id="s"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
     <bpmn:sequenceFlow id="f1" sourceRef="s" targetRef="sub" />
-    <bpmn:subProcess id="sub">
-      <bpmn:startEvent id="ss" />
+    <bpmn:subProcess id="sub"><bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="ss"><bpmn:outgoing>sf1</bpmn:outgoing></bpmn:startEvent>
       <bpmn:sequenceFlow id="sf1" sourceRef="ss" targetRef="st" />
-      <bpmn:task id="st" />
+      <bpmn:serviceTask id="st"><bpmn:incoming>sf1</bpmn:incoming><bpmn:outgoing>sf2</bpmn:outgoing></bpmn:serviceTask>
       <bpmn:sequenceFlow id="sf2" sourceRef="st" targetRef="se" />
-      <bpmn:endEvent id="se" />
+      <bpmn:endEvent id="se"><bpmn:incoming>sf2</bpmn:incoming></bpmn:endEvent>
     </bpmn:subProcess>
     <bpmn:sequenceFlow id="f2" sourceRef="sub" targetRef="e" />
-    <bpmn:endEvent id="e" />
+    <bpmn:endEvent id="e"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>
   </bpmn:process>
 </bpmn:definitions>`;
 
@@ -926,9 +951,9 @@ describe("checkSplice/checkMigration reject a disallowed event definition", () =
     return `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Defs_session">
   <bpmn:process id="session" isExecutable="true">
-    <bpmn:startEvent id="start" />
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
     <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="end" />
-    <bpmn:endEvent id="end">${eventDefTag}</bpmn:endEvent>
+    <bpmn:endEvent id="end"><bpmn:incoming>f1</bpmn:incoming>${eventDefTag}</bpmn:endEvent>
   </bpmn:process>
 </bpmn:definitions>`;
   }
@@ -960,7 +985,11 @@ describe("checkSplice/checkMigration reject a disallowed event definition", () =
   });
 
   it("does not check event definitions when no allowlist is given -- existing callers are unaffected", async () => {
-    const result = await checkSplice(base, withEndEvent("<bpmn:messageEventDefinition />"), undefined, undefined, allowedTypes);
+    // errorEventDefinition, not messageEventDefinition: this only needs to be
+    // outside allowedEventDefs, not outside SUPPORTED_EVENT_DEFINITIONS --
+    // bpmnlint's own always-on runtime-support check (issue #104) would
+    // reject an unsupported event definition regardless of this allowlist.
+    const result = await checkSplice(base, withEndEvent("<bpmn:errorEventDefinition />"), undefined, undefined, allowedTypes);
     expect(result.ok).toBe(true);
   });
 
@@ -1008,18 +1037,18 @@ describe("checkSplice/checkMigration reject a splice into a linked process (issu
   const splicedInRoot = `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Defs_session">
   <bpmn:process id="session" isExecutable="true">
-    <bpmn:startEvent id="root_start" />
+    <bpmn:startEvent id="root_start"><bpmn:outgoing>rf1</bpmn:outgoing></bpmn:startEvent>
     <bpmn:sequenceFlow id="rf1" sourceRef="root_start" targetRef="new_task" />
-    <bpmn:task id="new_task" />
+    <bpmn:serviceTask id="new_task"><bpmn:incoming>rf1</bpmn:incoming><bpmn:outgoing>rf1b</bpmn:outgoing></bpmn:serviceTask>
     <bpmn:sequenceFlow id="rf1b" sourceRef="new_task" targetRef="call" />
-    <bpmn:callActivity id="call" calledElement="craft_graph" />
+    <bpmn:callActivity id="call" calledElement="craft_graph"><bpmn:incoming>rf1b</bpmn:incoming><bpmn:outgoing>rf2</bpmn:outgoing></bpmn:callActivity>
     <bpmn:sequenceFlow id="rf2" sourceRef="call" targetRef="root_end" />
-    <bpmn:endEvent id="root_end" />
+    <bpmn:endEvent id="root_end"><bpmn:incoming>rf2</bpmn:incoming></bpmn:endEvent>
   </bpmn:process>
   <bpmn:process id="craft_graph" isExecutable="false">
-    <bpmn:startEvent id="craft_start" />
+    <bpmn:startEvent id="craft_start"><bpmn:outgoing>cf1</bpmn:outgoing></bpmn:startEvent>
     <bpmn:sequenceFlow id="cf1" sourceRef="craft_start" targetRef="craft_end" />
-    <bpmn:endEvent id="craft_end" />
+    <bpmn:endEvent id="craft_end"><bpmn:incoming>cf1</bpmn:incoming></bpmn:endEvent>
   </bpmn:process>
 </bpmn:definitions>`;
 
@@ -1231,5 +1260,35 @@ describe("firstActivity sees through a plain merge gateway (issue: forbid implic
 </definitions>`;
 
     expect(await firstActivity(xml)).toEqual({ id: "gw_decide", type: "bpmn:ExclusiveGateway" });
+  });
+});
+
+describe("checkSplice runs bpmnlint, catching a fake-join before approval (issue #104)", () => {
+  // Exactly issue #104's own reproduction: workflows/shell-demo.bpmn lints
+  // clean, but wiring "turn" straight into "end_verified" -- which already
+  // has an incoming flow from the gateway -- makes it a plain node with two
+  // incoming flows. bpmn-elements re-triggers that node once per arriving
+  // token instead of joining (a real double-execution hazard, not a style
+  // nit), and `make lint`/`promote` both already reject it; before this fix,
+  // checkSplice was the one place in the round trip that didn't.
+  const shellDemo = readFileSync(join(process.cwd(), "workflows", "shell-demo.bpmn"), "utf8");
+
+  it("rejects a connect that turns an existing end event into a fake join", async () => {
+    const ops: GraphOp[] = [{ op: "connect", from: "turn", to: "end_verified" }];
+    const merged = await applyGraphOps(shellDemo, ops);
+    const result = await checkSplice(shellDemo, merged);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/fake-join/);
+    expect(result.reason).toMatch(/end_verified/);
+  });
+
+  it("still accepts a genuine additive splice on the same graph", async () => {
+    // insertShape, not appendShape: "turn" already has an outgoing flow, so
+    // appending a second one from it would itself be an implicit split.
+    const ops: GraphOp[] = [{ op: "insertShape", type: "bpmn:ServiceTask", id: "extra_step", into: "to_verify" }];
+    const merged = await applyGraphOps(shellDemo, ops);
+    const result = await checkSplice(shellDemo, merged);
+    expect(result.ok).toBe(true);
+    expect(result.added).toContain("extra_step");
   });
 });

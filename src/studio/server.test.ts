@@ -255,7 +255,8 @@ describe("PUT /api/sessions/:id/graph (issue #46)", () => {
     .replace(
       /<bpmn:serviceTask id="c_turn">[\s\S]*?<\/bpmn:serviceTask>\s*<bpmn:sequenceFlow id="cf2" sourceRef="c_turn" targetRef="c_end" \/>\s*/,
       "",
-    );
+    )
+    .replace('<bpmn:endEvent id="c_end"><bpmn:incoming>cf2</bpmn:incoming></bpmn:endEvent>', '<bpmn:endEvent id="c_end"><bpmn:incoming>cf1</bpmn:incoming></bpmn:endEvent>');
 
   /** Removes gate2 -- rejected: it is where the run is actually parked. */
   const graphWithCompletedCalleeMinusGate2 = graphWithCompletedCallee
