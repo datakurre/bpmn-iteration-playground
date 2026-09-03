@@ -578,6 +578,15 @@ describe("applyGraphOps", () => {
     expect(merged).toMatch(/<bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="mid"/);
   });
 
+  it("insertShape honours an explicit flowId for its auto-created continuation flow (issue #107)", async () => {
+    const ops: GraphOp[] = [{ op: "insertShape", type: "bpmn:ServiceTask", id: "mid", into: "f1", flowId: "named_flow" }];
+    const merged = await applyGraphOps(base, ops);
+    const result = await checkSplice(base, merged);
+    expect(result.ok).toBe(true);
+    expect(result.added.sort()).toEqual(["mid", "named_flow"]);
+    expect(merged).toMatch(/<bpmn:sequenceFlow id="named_flow" sourceRef="mid" targetRef="gate"/);
+  });
+
   it("connect wires two nodes created earlier in the same op list", async () => {
     // A real diamond, not two parallel flows onto the same plain end event:
     // "connect" adds gw's second branch straight into "merge", which -- being
@@ -1290,5 +1299,75 @@ describe("checkSplice runs bpmnlint, catching a fake-join before approval (issue
     const result = await checkSplice(shellDemo, merged);
     expect(result.ok).toBe(true);
     expect(result.added).toContain("extra_step");
+  });
+
+  // local/label-layout reads <bpmndi:*> shapes -- exactly like no-bpmndi and
+  // local/expanded-subprocesses, both already off in SEMANTIC_CONFIG for the
+  // same reason -- but it only fires for a *named* gateway or event (a
+  // task's label lives inside its own bounds, so it never trips), so the
+  // failure was easy to miss (issue #106).
+  it("accepts a splice adding a named gateway and a named end event, not just unnamed ones", async () => {
+    const ops: GraphOp[] = [
+      { op: "insertShape", type: "bpmn:ExclusiveGateway", id: "gw_new", into: "to_verify", name: "Which?" },
+      { op: "appendShape", type: "bpmn:EndEvent", id: "end_new", after: "gw_new", name: "Bailed" },
+    ];
+    const merged = await applyGraphOps(shellDemo, ops);
+    const result = await checkSplice(shellDemo, merged);
+    expect(result.ok).toBe(true);
+    expect(result.added).toEqual(expect.arrayContaining(["gw_new", "end_new"]));
+  });
+});
+
+describe("checkSplice accepts the fork/join and merge recipes AGENT_ROLES documents (issue #107)", () => {
+  const shellDemo = readFileSync(join(process.cwd(), "workflows", "shell-demo.bpmn"), "utf8");
+
+  it("builds a genuine parallel fork/join with two real branches, exactly what the drafting prompt asks for", async () => {
+    // insertShape the fork into the existing flow, naming its own
+    // auto-continuation (flowId) so it can be insertShape'd into again for
+    // branch one's own real step -- then the join, then appendShape/connect
+    // branch two. No id-guessing (issue #107): every id either comes from
+    // the op that creates it or is named explicitly via flowId.
+    const ops: GraphOp[] = [
+      { op: "insertShape", type: "bpmn:ParallelGateway", id: "fk", into: "to_verify", flowId: "fk_out" },
+      { op: "insertShape", type: "bpmn:ServiceTask", id: "echo_one", into: "fk_out", flowId: "to_join" },
+      { op: "insertShape", type: "bpmn:ParallelGateway", id: "jn", into: "to_join" },
+      { op: "appendShape", type: "bpmn:ServiceTask", id: "echo_two", after: "fk" },
+      { op: "connect", from: "echo_two", to: "jn" },
+    ];
+    const merged = await applyGraphOps(shellDemo, ops);
+    const result = await checkSplice(shellDemo, merged);
+    expect(result.ok).toBe(true);
+    expect(result.added).toEqual(expect.arrayContaining(["fk", "echo_one", "jn", "echo_two"]));
+  });
+
+  it("merges a fresh entry into an existing flow through an exclusive gateway, without a fake join", async () => {
+    // "A loop-back alongside a fresh entry" (AGENT_ROLES): an error-boundary
+    // retry path (the fresh entry -- a boundary event has no outgoing of its
+    // own to begin with, so wiring one is never an implicit split) needs to
+    // reconverge with the host activity's own normal continuation before a
+    // shared target. insertShape the merge gateway into that pre-existing
+    // flow (the only side that needs retargeting), then connect the fresh
+    // entry straight into it.
+    const NS = 'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"';
+    const base = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions ${NS} id="Defs_merge_test">
+  <bpmn:process id="merge_test" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="gate" />
+    <bpmn:serviceTask id="gate"><bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing></bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="gate" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>`;
+    const ops: GraphOp[] = [
+      { op: "attachBoundaryEvent", id: "err_boundary", attachedTo: "gate", eventDefinitionType: "bpmn:ErrorEventDefinition" },
+      { op: "appendShape", type: "bpmn:ServiceTask", id: "handle_error", after: "err_boundary" },
+      { op: "insertShape", type: "bpmn:ExclusiveGateway", id: "gw_merge", into: "f2" },
+      { op: "connect", from: "handle_error", to: "gw_merge" },
+    ];
+    const merged = await applyGraphOps(base, ops);
+    const result = await checkSplice(base, merged);
+    expect(result.ok).toBe(true);
+    expect(result.added).toEqual(expect.arrayContaining(["err_boundary", "handle_error", "gw_merge"]));
   });
 });
