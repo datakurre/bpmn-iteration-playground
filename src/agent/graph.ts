@@ -858,6 +858,64 @@ async function checkElementTypes(
   return { ok: true };
 }
 
+/** Which top-level `bpmn:Process` each flow element directly belongs to, and whether that process is executable. */
+async function processOf(xml: string): Promise<Map<string, { id: string; isExecutable: boolean }>> {
+  const moddle = new BpmnModdle(MODDLE_OPTIONS);
+  const { rootElement } = await moddle.fromXML(xml.trim());
+  const processes = ((rootElement as unknown as { rootElements?: ModdleFlowElement[] }).rootElements ?? []).filter(
+    (node) => node.$type === "bpmn:Process",
+  );
+  const map = new Map<string, { id: string; isExecutable: boolean }>();
+  for (const process of processes) {
+    const info = {
+      id: process.id,
+      isExecutable: (process as unknown as { isExecutable?: boolean }).isExecutable !== false,
+    };
+    for (const el of flattenFlowElements(process.flowElements)) {
+      map.set(el.id, info);
+    }
+  }
+  return map;
+}
+
+/**
+ * Rejects a *new* element (one in `addedIds`) that lands in a process
+ * `linkGraph` marked `isExecutable="false"` -- one inlined from the graph
+ * library via a `calledElement`, rather than the session's own process.
+ *
+ * `Definition.recover()` cannot replay a `bpmn:CallActivity`'s child process
+ * once that child's own definition has changed underneath it: a splice into
+ * the session's own (root, executable) process resumes cleanly, but the
+ * exact same kind of splice into a linked process leaves the session
+ * permanently stuck the moment the token reaches (or already occupies) it --
+ * `note: the engine dispatched nothing at all within 5000ms ... this usually
+ * means the resumed snapshot could not be recovered`, with no way back short
+ * of abandoning the session (issue #86). `graph:lint` passing a splice is
+ * supposed to mean it is wired correctly or rejected before it ever reaches
+ * that state, the same way #40 and #65 already do for a job type invented or
+ * wired wrong.
+ */
+async function checkProcessScope(
+  nextXml: string,
+  addedIds: ReadonlySet<string>,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const byId = await processOf(nextXml);
+  for (const id of addedIds) {
+    const info = byId.get(id);
+    if (info && !info.isExecutable) {
+      return {
+        ok: false,
+        reason:
+          `${id} splices into '${info.id}', a linked process brought in by calledElement -- ` +
+          `recovery cannot replay state there once that process's definition changes, so a splice into it ` +
+          `leaves the session permanently stuck if the token ever reaches (or already occupies) it. Target the ` +
+          `session's own process instead.`,
+      };
+    }
+  }
+  return { ok: true };
+}
+
 export async function checkSplice(
   previousXml: string,
   nextXml: string,
@@ -886,6 +944,8 @@ export async function checkSplice(
     const types = await checkElementTypes(nextXml, new Set(added), allowedElementTypes, allowedEventDefinitions);
     if (!types.ok) return { ok: false, added, removed, reason: types.reason };
   }
+  const scope = await checkProcessScope(nextXml, new Set(added));
+  if (!scope.ok) return { ok: false, added, removed, reason: scope.reason };
   return { ok: true, added, removed };
 }
 
@@ -998,6 +1058,9 @@ export async function checkMigration(
     const types = await checkElementTypes(nextXml, added, allowedElementTypes, allowedEventDefinitions);
     if (!types.ok) return { ok: false, removed: [], reason: types.reason };
   }
+
+  const scope = await checkProcessScope(nextXml, added);
+  if (!scope.ok) return { ok: false, removed: [], reason: scope.reason };
 
   return { ok: true, removed: [] };
 }

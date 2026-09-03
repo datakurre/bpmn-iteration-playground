@@ -791,6 +791,91 @@ describe("checkSplice/checkMigration reject a disallowed event definition", () =
   });
 });
 
+describe("checkSplice/checkMigration reject a splice into a linked process (issue #86)", () => {
+  // Mirrors what linkGraph produces for a real session: a root (executable)
+  // process plus a second, inlined process brought in via calledElement and
+  // marked isExecutable="false" -- Definition.recover() cannot replay that
+  // second process's child state once its own definition has changed
+  // underneath it, so a splice landing there leaves the session permanently
+  // stuck if the token ever reaches (or already occupies) it.
+  const base = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="root_start" />
+    <bpmn:sequenceFlow id="rf1" sourceRef="root_start" targetRef="call" />
+    <bpmn:callActivity id="call" calledElement="craft_graph" />
+    <bpmn:sequenceFlow id="rf2" sourceRef="call" targetRef="root_end" />
+    <bpmn:endEvent id="root_end" />
+  </bpmn:process>
+  <bpmn:process id="craft_graph" isExecutable="false">
+    <bpmn:startEvent id="craft_start" />
+    <bpmn:sequenceFlow id="cf1" sourceRef="craft_start" targetRef="craft_end" />
+    <bpmn:endEvent id="craft_end" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+  // Same base graph, plus a task spliced between root_start and call --
+  // additive: root_start's flow is re-pointed at it, and a new flow carries
+  // on to call, exactly like v1 -> v2's own shape above.
+  const splicedInRoot = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="root_start" />
+    <bpmn:sequenceFlow id="rf1" sourceRef="root_start" targetRef="new_task" />
+    <bpmn:task id="new_task" />
+    <bpmn:sequenceFlow id="rf1b" sourceRef="new_task" targetRef="call" />
+    <bpmn:callActivity id="call" calledElement="craft_graph" />
+    <bpmn:sequenceFlow id="rf2" sourceRef="call" targetRef="root_end" />
+    <bpmn:endEvent id="root_end" />
+  </bpmn:process>
+  <bpmn:process id="craft_graph" isExecutable="false">
+    <bpmn:startEvent id="craft_start" />
+    <bpmn:sequenceFlow id="cf1" sourceRef="craft_start" targetRef="craft_end" />
+    <bpmn:endEvent id="craft_end" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+  // Same shape, but the new task lands in craft_graph (the linked process)
+  // instead -- between craft_start and craft_end.
+  const splicedInLinked = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Defs_session">
+  <bpmn:process id="session" isExecutable="true">
+    <bpmn:startEvent id="root_start" />
+    <bpmn:sequenceFlow id="rf1" sourceRef="root_start" targetRef="call" />
+    <bpmn:callActivity id="call" calledElement="craft_graph" />
+    <bpmn:sequenceFlow id="rf2" sourceRef="call" targetRef="root_end" />
+    <bpmn:endEvent id="root_end" />
+  </bpmn:process>
+  <bpmn:process id="craft_graph" isExecutable="false">
+    <bpmn:startEvent id="craft_start" />
+    <bpmn:sequenceFlow id="cf1" sourceRef="craft_start" targetRef="new_task" />
+    <bpmn:task id="new_task" />
+    <bpmn:sequenceFlow id="cf1b" sourceRef="new_task" targetRef="craft_end" />
+    <bpmn:endEvent id="craft_end" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+  it("accepts a new element spliced into the session's own (root, executable) process", async () => {
+    const result = await checkSplice(base, splicedInRoot);
+    expect(result.ok).toBe(true);
+    expect(result.added).toContain("new_task");
+  });
+
+  it("rejects a new element spliced into a linked (isExecutable=false) process, naming it", async () => {
+    const result = await checkSplice(base, splicedInLinked);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/new_task/);
+    expect(result.reason).toMatch(/craft_graph/);
+    expect(result.reason).toMatch(/linked process/);
+  });
+
+  it("checkMigration applies the same rejection to a human edit into the linked process", async () => {
+    const result = await checkMigration(base, splicedInLinked, new Set());
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/craft_graph/);
+  });
+});
+
 describe("bpmn-elements really executes a parallel gateway and a timer boundary event (issue: parallel gateway and boundary event support)", () => {
   it("a parallel gateway forks into both branches and joins only once both have arrived", async () => {
     const parallelGraph = `<?xml version="1.0" encoding="UTF-8"?>
