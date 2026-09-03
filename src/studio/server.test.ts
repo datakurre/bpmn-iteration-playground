@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startStudio, type Studio } from "./server.ts";
@@ -131,6 +131,17 @@ describe("DELETE /api/sessions/:id", () => {
   it("404s for an unknown session", async () => {
     const res = await fetch(`${studio.url}/api/sessions/nonexistent`, { method: "DELETE" });
     expect(res.status).toBe(404);
+  });
+
+  it("400s a traversing session id and leaves the target directory alone (issue #82)", async () => {
+    const victim = join(paths.sessionsDir, "..", "victim");
+    mkdirSync(victim, { recursive: true });
+    writeFileSync(join(victim, "meta.json"), "{}");
+    writeFileSync(join(victim, "precious.txt"), "do not delete me");
+
+    const res = await fetch(`${studio.url}/api/sessions/${encodeURIComponent("../victim")}`, { method: "DELETE" });
+    expect(res.status).toBe(400);
+    expect(existsSync(join(victim, "precious.txt"))).toBe(true);
   });
 });
 
