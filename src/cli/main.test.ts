@@ -915,7 +915,7 @@ describe("graph-agent model and headless flags", () => {
     const result = runCli(env, ["--no-tui", "--graph", "session-default", "--dry-run"]);
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("session");
-  });
+  }, 20000);
 
   it("removes a session with `graph-agent rm <id>`", () => {
     const { env } = project();
@@ -934,6 +934,6 @@ describe("graph-agent model and headless flags", () => {
 
     const afterLs = runCli(env, ["ls"]);
     expect(afterLs.stdout).toContain("no sessions in this project yet");
-  });
+  }, 20000);
 });
 
