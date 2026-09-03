@@ -83,7 +83,7 @@ human approves it, and the running engine is stopped and resumed against the
 new graph so that what was just spliced in runs in the *same* invocation
 ([#45](https://github.com/datakurre/graph-agent/issues/45)).
 
-Two properties keep this from being reckless rather than merely impressive:
+Three properties keep this from being reckless rather than merely impressive:
 
 - **Every splice is a revision, never an overwrite.** A session's graph
   directory is an append-only history, so "what did it change, and when" is
@@ -91,6 +91,17 @@ Two properties keep this from being reckless rather than merely impressive:
 - **Ids are stable.** `bpmn-engine` replays recovered state by element id, so
   a splice may add but never rename or remove a live element -- which is also
   why the machine's rule is stricter than a human's (see below).
+- **The splice stays in the session's own process.** Recovery cannot replay a
+  `callActivity`'s linked process once its definition has changed underneath
+  it, so a target inside one is rejected rather than left to brick the
+  session later ([#86](https://github.com/datakurre/graph-agent/issues/86),
+  [#94](https://github.com/datakurre/graph-agent/issues/94)). In practice
+  this means "the agent extends its own control flow" is scoped to whatever
+  structure the session's *own* process carries -- `session-default`'s is
+  just a three-element wrapper around a `callActivity` into
+  `pi-default-loop`, so it can gain or lose steps around that loop but not
+  edit inside it; `session-craft`'s own process carries the interesting
+  structure directly, so it fares better.
 
 ### 4. Mechanical correctness is checked, so review can be about judgement
 
