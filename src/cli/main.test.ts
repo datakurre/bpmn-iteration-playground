@@ -937,3 +937,49 @@ describe("graph-agent model and headless flags", () => {
   }, 20000);
 });
 
+describe("unknown CLI flags (issue #91)", () => {
+  const distFile = join(import.meta.dirname, "..", "..", "dist", "graph-agent.js");
+
+  function project(): { env: NodeJS.ProcessEnv } {
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-cli-flags-"));
+    const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
+    execFileSync("node", [distFile, "init"], { env });
+    return { env };
+  }
+
+  function runCli(env: NodeJS.ProcessEnv, args: string[]): { stdout: string; stderr: string; code: number | null } {
+    const result = spawnSync("node", [distFile, ...args], { env, encoding: "utf8" });
+    return { stdout: result.stdout, stderr: result.stderr, code: result.status };
+  }
+
+  it("`report` rejects an unknown option with a clean message instead of a node:internal stack", () => {
+    const { env } = project();
+    const result = runCli(env, ["report", "somesession", "--output", "report.html"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--output' (did you mean '--out'?)");
+    expect(result.stderr).not.toContain("node:internal");
+    expect(result.stderr).not.toContain("ERR_PARSE_ARGS_UNKNOWN_OPTION");
+  });
+
+  it("`run` rejects an unknown option instead of silently ignoring it", () => {
+    const { env } = project();
+    const result = runCli(env, ["run", "--bogus", "--dry-run", "x"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--bogus'");
+  });
+
+  it("`ls` rejects an unknown option instead of silently ignoring it", () => {
+    const { env } = project();
+    const result = runCli(env, ["ls", "--bogus"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--bogus'");
+  });
+
+  it("`resume` rejects an unknown option instead of silently ignoring it", () => {
+    const { env } = project();
+    const result = runCli(env, ["resume", "--bogus", "somesession"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--bogus'");
+  });
+});
+

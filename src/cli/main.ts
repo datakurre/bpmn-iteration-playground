@@ -130,6 +130,66 @@ const KNOWN_COMMANDS = new Set([
   "model",
 ]);
 
+/**
+ * A mistyped flag should read the same everywhere: a clean stderr message
+ * and exit 2, never a raw `node:internal` stack (issue #91's `report
+ * --output`) and never silent acceptance (issue #91's `run`/`ls --bogus`,
+ * where a typo'd `--dry-run` or `--model` changes what the command does and
+ * bills for). This wraps `parseArgs` with `strict: true` and turns
+ * `ERR_PARSE_ARGS_UNKNOWN_OPTION` into that message instead, suggesting the
+ * nearest known option name when one is close enough to be the obvious typo.
+ */
+function parseArgsOrError<O extends NonNullable<Parameters<typeof parseArgs>[0]>["options"]>(
+  args: string[],
+  options: O,
+) {
+  try {
+    return parseArgs(
+      { args, options, allowPositionals: true, strict: true } as {
+        args: string[];
+        options: O;
+        allowPositionals: true;
+        strict: true;
+      },
+    );
+  } catch (error) {
+    if (error instanceof Error && (error as NodeJS.ErrnoException).code === "ERR_PARSE_ARGS_UNKNOWN_OPTION") {
+      const flag = /Unknown option '(.+?)'/.exec(error.message)?.[1] ?? "?";
+      const suggestion = suggestOption(flag, Object.keys(options ?? {}));
+      process.stderr.write(
+        `graph-agent: unknown option '${flag}'${suggestion ? ` (did you mean '${suggestion}'?)` : ""}\n`,
+      );
+      return null;
+    }
+    throw error;
+  }
+}
+
+/** Nearest known long-option name for an unrecognised flag, or undefined if nothing is close enough to be the obvious typo. */
+function suggestOption(unknownFlag: string, known: string[]): string | undefined {
+  const name = unknownFlag.replace(/^--?/, "");
+  let best: { name: string; score: number } | undefined;
+  for (const k of known) {
+    let score = levenshtein(name, k);
+    if (name.startsWith(k) || k.startsWith(name)) score = Math.min(score, 1);
+    if (!best || score < best.score) best = { name: k, score };
+  }
+  return best && best.score <= 2 ? `--${best.name}` : undefined;
+}
+
+function levenshtein(a: string, b: string): number {
+  const dp: number[][] = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+  for (let i = 0; i <= a.length; i++) dp[i]![0] = i;
+  for (let j = 0; j <= b.length; j++) dp[0]![j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i]![j] =
+        a[i - 1] === b[j - 1] ? dp[i - 1]![j - 1]! : 1 + Math.min(dp[i - 1]![j]!, dp[i]![j - 1]!, dp[i - 1]![j - 1]!);
+    }
+  }
+  return dp[a.length]![b.length]!;
+}
+
 export async function main(argv: string[]): Promise<number> {
   const command = argv[0];
 
@@ -158,26 +218,23 @@ export async function main(argv: string[]): Promise<number> {
     case "ui":
       return cmdStudio(argv.slice(1));
     case "ls":
-      return cmdLs(argv.includes("--all"));
+      return cmdLs(argv.slice(1));
     case "rm":
     case "delete":
       return cmdRm(argv[1]);
     case "show":
       return cmdShow(argv[1]);
     case "report": {
-      const parsed = parseArgs({
-        args: argv.slice(1),
-        options: {
-          format: { type: "string" },
-          out: { type: "string" },
-          "embed-svg": { type: "boolean" },
-          "embed-data-uri": { type: "boolean" },
-          "image-format": { type: "string" },
-          scale: { type: "string" },
-          verbose: { type: "boolean", short: "v" },
-        },
-        allowPositionals: true,
+      const parsed = parseArgsOrError(argv.slice(1), {
+        format: { type: "string" },
+        out: { type: "string" },
+        "embed-svg": { type: "boolean" },
+        "embed-data-uri": { type: "boolean" },
+        "image-format": { type: "string" },
+        scale: { type: "string" },
+        verbose: { type: "boolean", short: "v" },
       });
+      if (!parsed) return 2;
       const { cmdReport } = await import("./report.ts");
       return cmdReport(parsed.positionals[0], {
         format: parsed.values.format,
@@ -190,17 +247,14 @@ export async function main(argv: string[]): Promise<number> {
       });
     }
     case "export": {
-      const parsed = parseArgs({
-        args: argv.slice(1),
-        options: {
-          format: { type: "string" },
-          out: { type: "string" },
-          "data-uri": { type: "boolean" },
-          scale: { type: "string" },
-          background: { type: "string" },
-        },
-        allowPositionals: true,
+      const parsed = parseArgsOrError(argv.slice(1), {
+        format: { type: "string" },
+        out: { type: "string" },
+        "data-uri": { type: "boolean" },
+        scale: { type: "string" },
+        background: { type: "string" },
       });
+      if (!parsed) return 2;
       const { cmdExport } = await import("./report.ts");
       return cmdExport(parsed.positionals[0], {
         format: parsed.values.format as "png" | "svg" | undefined,
@@ -493,23 +547,20 @@ type ScopedAnswers = Map<string, Record<string, unknown>>;
 
 const UNSCOPED = "*";
 
-function runFlags(args: string[]): RunFlags {
-  const { values, positionals } = parseArgs({
-    args,
-    options: {
-      graph: { type: "string", default: "session-default" },
-      model: { type: "string" },
-      "dry-run": { type: "boolean", default: false },
-      name: { type: "string" },
-      answer: { type: "string", multiple: true },
-      steer: { type: "string", multiple: true },
-      "follow-up": { type: "string", multiple: true },
-      resume: { type: "string" },
-      "max-auto-answers": { type: "string" },
-    },
-    allowPositionals: true,
-    strict: false,
+function runFlags(args: string[]): RunFlags | null {
+  const parsed = parseArgsOrError(args, {
+    graph: { type: "string", default: "session-default" },
+    model: { type: "string" },
+    "dry-run": { type: "boolean", default: false },
+    name: { type: "string" },
+    answer: { type: "string", multiple: true },
+    steer: { type: "string", multiple: true },
+    "follow-up": { type: "string", multiple: true },
+    resume: { type: "string" },
+    "max-auto-answers": { type: "string" },
   });
+  if (!parsed) return null;
+  const { values, positionals } = parsed;
   return {
     graph: String(values.graph ?? "session-default"),
     ...(values.model === undefined ? {} : { model: String(values.model) }),
@@ -660,6 +711,7 @@ async function cmdRun(args: string[]): Promise<number> {
   const p = requirePaths();
   if (!p) return 1;
   const flags = runFlags(args);
+  if (!flags) return 2;
   const project = projectId();
 
   const graphFile = graphPath(p, flags.graph);
@@ -741,6 +793,7 @@ async function cmdTui(args: string[]): Promise<number> {
   const p = requirePaths();
   if (!p) return 1;
   const flags = runFlags(args);
+  if (!flags) return 2;
   const project = projectId();
 
   let start: TuiStart;
@@ -818,6 +871,7 @@ async function cmdResume(args: string[]): Promise<number> {
   const p = requirePaths();
   if (!p) return 1;
   const flags = runFlags(args);
+  if (!flags) return 2;
   const sessionId = flags.positionals[0];
   if (!sessionId) {
     process.stderr.write("graph-agent: resume requires a session id\n");
@@ -910,9 +964,12 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
-function cmdLs(all: boolean): number {
+function cmdLs(args: string[]): number {
   const p = requirePaths();
   if (!p) return 1;
+  const parsed = parseArgsOrError(args, { all: { type: "boolean" } });
+  if (!parsed) return 2;
+  const all = parsed.values.all === true;
   const sessions = listSessions(p, all ? undefined : projectId());
   if (sessions.length === 0) {
     process.stdout.write(all ? "no sessions yet\n" : "no sessions in this project yet\n");
