@@ -203,9 +203,8 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   if (command === undefined || !KNOWN_COMMANDS.has(command)) {
-    if (argv.includes("--no-tui") || argv.includes("--print") || argv.includes("-p")) {
-      const cleanArgs = argv.filter((a) => a !== "--no-tui" && a !== "--print" && a !== "-p");
-      return cmdRun(cleanArgs);
+    if (argv.some((a) => HEADLESS_MODE_FLAGS.has(a))) {
+      return cmdRun(stripHeadlessModeFlags(argv));
     }
     return cmdTui(argv);
   }
@@ -547,8 +546,25 @@ type ScopedAnswers = Map<string, Record<string, unknown>>;
 
 const UNSCOPED = "*";
 
+/**
+ * `--no-tui`/`-p`/`--print` only ever mean anything at top-level dispatch
+ * (`main()` uses them to choose `cmdRun` over `cmdTui` when no command word
+ * is given, before `runFlags` ever sees the args) -- by the time an explicit
+ * `run`/`tui`/`resume` subcommand has been typed, the choice is already
+ * made and they are no-ops. Before 38356f1 they were silently accepted
+ * everywhere; strict parsing then rejected them outright on the one form
+ * `--help` itself documents (`graph-agent run --no-tui ...`), since
+ * `runFlags`'s own option set never named them (issue #96). Stripped here,
+ * once, rather than taught to every parser as a real (ignored) option.
+ */
+const HEADLESS_MODE_FLAGS = new Set(["--no-tui", "--print", "-p"]);
+
+function stripHeadlessModeFlags(args: string[]): string[] {
+  return args.filter((a) => !HEADLESS_MODE_FLAGS.has(a));
+}
+
 function runFlags(args: string[]): RunFlags | null {
-  const parsed = parseArgsOrError(args, {
+  const parsed = parseArgsOrError(stripHeadlessModeFlags(args), {
     graph: { type: "string", default: "session-default" },
     model: { type: "string" },
     "dry-run": { type: "boolean", default: false },

@@ -940,6 +940,15 @@ describe("graph-agent model and headless flags", () => {
     expect(result.stdout).toContain("session");
   }, 20000);
 
+  it("accepts --no-tui, -p and --print after an explicit `run` subcommand, not just before it (issue #96)", () => {
+    const { env } = project();
+    for (const flag of ["--no-tui", "-p", "--print"]) {
+      const result = runCli(env, ["run", flag, "--dry-run", "y"]);
+      expect(result.code, `${flag}: ${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain("session");
+    }
+  }, 20000);
+
   it("removes a session with `graph-agent rm <id>`", () => {
     const { env } = project();
     // Run a dry session first to create one
