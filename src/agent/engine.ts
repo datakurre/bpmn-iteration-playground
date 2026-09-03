@@ -314,9 +314,10 @@ function engineOptions(
     variables: options.variables ?? {},
     // Gateways in Camunda-flavoured diagrams compare values; the default
     // handler only does truthy lookups. See src/agent/expressions.ts.
-    expressions: camundaExpressions(
-      options.onExpressionWarning ? { onWarning: options.onExpressionWarning } : {},
-    ),
+    expressions: camundaExpressions({
+      ...(options.onExpressionWarning ? { onWarning: options.onExpressionWarning } : {}),
+      sharedOutput,
+    }),
     extensions: { harness: makeExtension(options, activities, byId, sharedOutput) },
   };
 }

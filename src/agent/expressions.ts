@@ -47,6 +47,20 @@ export interface CamundaExpressionOptions {
    * modelling mistake on a gateway, and invisible otherwise since FEEL is total.
    */
   onWarning?: (warning: FeelWarning) => void;
+  /**
+   * The engine's cross-scope output bridge (`sharedOutput` in engine.ts).
+   * `bpmn-elements`' `Environment.clone()` -- what a `bpmn:SubProcess` gives its
+   * inner execution -- gives the clone a fresh, empty `.output`, disconnected
+   * from the outer one; a plain gateway condition or a boundary event's
+   * `bpmn:ConditionalEventDefinition` reads only `context.environment.output`,
+   * so a value a harness inside the subprocess published (chiefly `_session`,
+   * kept current on every model turn) is invisible to a condition evaluated one
+   * scope up, however soon after. Merging it in here, under whatever the local
+   * `environment.output` already has, closes that gap for every FEEL
+   * expression the engine evaluates, not just harness activities (which already
+   * had their own copy of this same bridge) (issue #83).
+   */
+  sharedOutput?: Record<string, unknown>;
 }
 
 /**
@@ -102,7 +116,16 @@ const SAFE_SHADOWS = [
 /** Everything a FEEL expression in a diagram may see. */
 export function feelContext(context: unknown): Record<string, unknown> {
   const scope = (context ?? {}) as {
-    environment?: { variables?: Record<string, unknown>; output?: Record<string, unknown> };
+    environment?: {
+      variables?: Record<string, unknown>;
+      output?: Record<string, unknown>;
+      /**
+       * The engine's cross-scope output bridge, at the lowest priority of the
+       * three: a real, local `variables` or `output` value always wins over
+       * it, so it only ever fills in a name neither has (issue #83).
+       */
+      sharedOutput?: Record<string, unknown>;
+    };
     content?: Record<string, unknown>;
   };
 
@@ -114,6 +137,7 @@ export function feelContext(context: unknown): Record<string, unknown> {
   }
 
   return Object.assign(safe, {
+    ...(scope.environment?.sharedOutput ?? {}),
     // Bare names resolve to process variables, matching how a modeller thinks.
     ...(scope.environment?.variables ?? {}),
     // Values published by earlier activities live in the shared `output` scope
@@ -154,6 +178,34 @@ export function evaluateFeel(
 }
 
 /**
+ * Attaches `sharedOutput` to `context.environment`, so a value only visible
+ * through the engine's own cross-scope bridge still reaches a FEEL
+ * evaluation whose `context.environment` is a `bpmn-elements` `Environment`
+ * clone (a subprocess's own, disconnected from its parent's) rather than the
+ * process-wide instance a harness activity's `context.variables` is built
+ * from. Kept as its own field rather than merged into `environment.output`
+ * directly: `feelContext` reads `sharedOutput` at the lowest priority of the
+ * three, so a real local `variables` or `output` value -- even one
+ * `sharedOutput` itself has no current value for, like a fresh session's
+ * `_session` seeded only via top-level `variables` before any harness has
+ * run -- still wins, rather than a merged-in `output` key beating a
+ * `variables` one it would otherwise lose to.
+ */
+function withSharedOutput(context: unknown, sharedOutput: Record<string, unknown> | undefined): unknown {
+  if (!sharedOutput) return context;
+  const scope = (context ?? {}) as { environment?: { variables?: unknown; output?: Record<string, unknown> } };
+  if (!scope.environment) return context;
+  return {
+    ...(scope as object),
+    environment: {
+      variables: scope.environment.variables,
+      output: scope.environment.output,
+      sharedOutput,
+    },
+  };
+}
+
+/**
  * The engine's expression handler: FEEL for diagram expressions, bpmn-elements'
  * own handler for engine-internal references and string interpolation.
  */
@@ -173,7 +225,7 @@ export function camundaExpressions(options: CamundaExpressionOptions = {}): Expr
     resolveExpression(expression: string, context?: unknown, fnContext?: unknown): unknown {
       const body = expressionBody(expression);
       if (body !== null && !isEngineExpression(body)) {
-        return evaluateFeel(body, context, options.onWarning);
+        return evaluateFeel(body, withSharedOutput(context, options.sharedOutput), options.onWarning);
       }
       // Interpolated strings and engine-internal references.
       return base.resolveExpression(expression, context, fnContext);
