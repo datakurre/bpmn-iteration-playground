@@ -209,6 +209,18 @@ export async function main(argv: string[]): Promise<number> {
     return cmdTui(argv);
   }
 
+  // Strict per-subcommand parsing (#91, #96, #97) never registered --help/-h
+  // on any of them, so the single most reflexive thing a user types --
+  // `graph-agent <command> --help` -- became `unknown option '--help'`
+  // instead of the help text one word to the left already promises. Worse
+  // for `ui`, which would otherwise start the server before ever reaching
+  // its own argument parsing. Caught here, once, before any subcommand's
+  // own parser ever sees the args (issue #101).
+  if (argv.slice(1).some((a) => a === "--help" || a === "-h")) {
+    process.stdout.write(USAGE);
+    return 0;
+  }
+
   switch (command) {
     case "init":
       return cmdInit(argv.slice(1));
