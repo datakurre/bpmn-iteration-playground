@@ -690,6 +690,19 @@ async function resolveRunModel(flags: RunFlags, p: Paths): Promise<Awaited<Retur
 }
 
 /**
+ * An explicit --model still wins on resume (switching model mid-session is
+ * legitimate), but absent that, fall back to the model the session itself
+ * ran on rather than silently picking up whatever config.toml's default (or
+ * the credentialed-subset resolver) currently says -- otherwise `resume`'s
+ * own hint after a park (`resume with: graph-agent resume <id>`) fails on an
+ * unconfigured machine, and on a configured one can continue a transcript on
+ * a different model with no warning (issue #88).
+ */
+export function resumeModelSpec(explicit: string | undefined, sessionModel: string | undefined): string | undefined {
+  return explicit ?? sessionModel;
+}
+
+/**
  * Ctrl-C (or a TERM) aborts the signal `runSession`/`resumeSession` thread down
  * into the engine instead of leaving a runaway graph to keep spending model
  * calls after the terminal looks like it gave control back (issue #30).
@@ -878,13 +891,17 @@ async function cmdResume(args: string[]): Promise<number> {
     return 2;
   }
 
+  const store = new SessionStore(p, sessionId);
+  const sessionModel = store.exists() ? store.readMeta().model : undefined;
+
   let chosen;
   try {
-    chosen = await resolveRunModel(flags, p);
+    chosen = await resolveRunModel({ ...flags, model: resumeModelSpec(flags.model, sessionModel) }, p);
   } catch (error) {
     process.stderr.write(`graph-agent: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
   }
+  process.stdout.write(`model  ${chosen.label}\n\n`);
 
   const maxAutoAnswers = resolveMaxAutoAnswers(flags);
   if (typeof maxAutoAnswers !== "number") {

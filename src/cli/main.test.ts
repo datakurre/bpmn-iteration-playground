@@ -5,7 +5,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { installEpipeGuard, parseAnswers, answersFor, boundedOnWait, reportWait } from "./main.ts";
+import { installEpipeGuard, parseAnswers, answersFor, boundedOnWait, reportWait, resumeModelSpec } from "./main.ts";
 import { bundledWorkflowsDir, ensurePaths, paths as resolvePaths } from "../agent/paths.ts";
 import { SessionStore } from "../agent/session-store.ts";
 import { stampModel } from "../agent/versioning.ts";
@@ -27,6 +27,20 @@ describe("installEpipeGuard", () => {
     installEpipeGuard([stream]);
     const other = Object.assign(new Error("write EACCES"), { code: "EACCES" });
     expect(() => (stream as unknown as EventEmitter).emit("error", other)).toThrow("write EACCES");
+  });
+});
+
+describe("resumeModelSpec (issue #88)", () => {
+  it("prefers an explicit --model over the session's recorded model", () => {
+    expect(resumeModelSpec("anthropic/claude-opus-4-5", "anthropic/claude-haiku-4-5")).toBe("anthropic/claude-opus-4-5");
+  });
+
+  it("falls back to the session's recorded model when --model is absent", () => {
+    expect(resumeModelSpec(undefined, "anthropic/claude-haiku-4-5")).toBe("anthropic/claude-haiku-4-5");
+  });
+
+  it("is undefined when neither --model nor a recorded model is present, so config/the resolver still get a turn", () => {
+    expect(resumeModelSpec(undefined, undefined)).toBeUndefined();
   });
 });
 
@@ -554,6 +568,15 @@ describe("--answer scoping (issue #44)", () => {
       expect(sessionId).toBeDefined();
       const second = runCli(env, ["resume", sessionId!, "--dry-run", "--answer", "gate_b:key=world"]);
       expect(second.stdout).toContain("completed");
+    }, 20000);
+
+    it("resume prints which model it picked, so a fallback is never silent (issue #88)", () => {
+      const { env } = project();
+      const first = runCli(env, ["run", "--graph", "two_gates", "--dry-run", "--answer", "gate_a:key=hello"]);
+      const sessionId = /^session (\S+)/m.exec(first.stdout)?.[1];
+      expect(sessionId).toBeDefined();
+      const second = runCli(env, ["resume", sessionId!, "--dry-run", "--answer", "gate_b:key=world"]);
+      expect(second.stdout).toContain("model  dry-run (no model called)");
     }, 20000);
 
     it("caps how many times an unscoped answer auto-answers the same looping gate", () => {
