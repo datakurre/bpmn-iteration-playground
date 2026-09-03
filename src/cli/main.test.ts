@@ -1013,5 +1013,37 @@ describe("unknown CLI flags (issue #91)", () => {
     expect(result.code).toBe(2);
     expect(result.stderr).toContain("unknown option '--bogus'");
   });
+
+  it("`show` rejects an unknown option instead of silently ignoring it (issue #97)", () => {
+    const { env } = project();
+    const result = runCli(env, ["show", "somesession", "--bogus"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--bogus'");
+  });
+
+  it("`where` rejects an unknown option instead of silently ignoring it (issue #97)", () => {
+    const { env } = project();
+    const result = runCli(env, ["where", "--bogus"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--bogus'");
+  });
+
+  it("`init` rejects an unknown option instead of silently running a plain init (issue #97)", () => {
+    // The one that can actually mislead: init --refesh (a typo of --refresh)
+    // used to run a plain init and report nothing wrong, so the user
+    // believed they had refreshed a stale graph and had not.
+    const home = mkdtempSync(join(tmpdir(), "graph-agent-cli-flags-init-"));
+    const env = { ...process.env, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
+    const result = runCli(env, ["init", "--refesh"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option '--refesh'");
+    expect(result.stderr).toContain("did you mean '--refresh'?");
+  });
+
+  it("`init --refresh` (correctly spelled) is still accepted", () => {
+    const { env } = project();
+    const result = runCli(env, ["init", "--refresh"]);
+    expect(result.code).toBe(0);
+  });
 });
 

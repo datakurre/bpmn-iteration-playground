@@ -213,7 +213,7 @@ export async function main(argv: string[]): Promise<number> {
     case "init":
       return cmdInit(argv.slice(1));
     case "where":
-      return cmdWhere();
+      return cmdWhere(argv.slice(1));
     case "ui":
       return cmdStudio(argv.slice(1));
     case "ls":
@@ -222,7 +222,7 @@ export async function main(argv: string[]): Promise<number> {
     case "delete":
       return cmdRm(argv[1]);
     case "show":
-      return cmdShow(argv[1]);
+      return cmdShow(argv.slice(1));
     case "report": {
       const parsed = parseArgsOrError(argv.slice(1), {
         format: { type: "string" },
@@ -309,8 +309,13 @@ function copyWorkflowFile(from: string, to: string): void {
 }
 
 function cmdInit(args: string[]): number {
+  const parsed = parseArgsOrError(args, {
+    refresh: { type: "boolean" },
+    force: { type: "boolean" },
+  });
+  if (!parsed) return 2;
   const p = ensurePaths(resolvePaths());
-  const refresh = args.includes("--refresh") || args.includes("--force");
+  const refresh = parsed.values.refresh === true || parsed.values.force === true;
 
   // Seed the library with the bundled graphs, but never silently overwrite a
   // graph the user has since edited -- the library is theirs, and it is
@@ -381,7 +386,8 @@ function cmdInit(args: string[]): number {
   return 0;
 }
 
-function cmdWhere(): number {
+function cmdWhere(args: string[]): number {
+  if (!parseArgsOrError(args, {})) return 2;
   const p = resolvePaths();
   process.stdout.write(`config   ${p.configDir}\ngraphs   ${p.workflowsDir}\nstate    ${p.stateDir}\nsessions ${p.sessionsDir}\nproject  ${projectId()}\n`);
   return 0;
@@ -1138,7 +1144,10 @@ function cmdRm(id: string | undefined): number {
   return 0;
 }
 
-function cmdShow(id: string | undefined): number {
+function cmdShow(args: string[]): number {
+  const parsed = parseArgsOrError(args, {});
+  if (!parsed) return 2;
+  const id = parsed.positionals[0];
   const p = requirePaths();
   if (!p) return 1;
   if (!id) {
