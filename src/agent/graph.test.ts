@@ -1291,4 +1291,20 @@ describe("checkSplice runs bpmnlint, catching a fake-join before approval (issue
     expect(result.ok).toBe(true);
     expect(result.added).toContain("extra_step");
   });
+
+  // local/label-layout reads <bpmndi:*> shapes -- exactly like no-bpmndi and
+  // local/expanded-subprocesses, both already off in SEMANTIC_CONFIG for the
+  // same reason -- but it only fires for a *named* gateway or event (a
+  // task's label lives inside its own bounds, so it never trips), so the
+  // failure was easy to miss (issue #106).
+  it("accepts a splice adding a named gateway and a named end event, not just unnamed ones", async () => {
+    const ops: GraphOp[] = [
+      { op: "insertShape", type: "bpmn:ExclusiveGateway", id: "gw_new", into: "to_verify", name: "Which?" },
+      { op: "appendShape", type: "bpmn:EndEvent", id: "end_new", after: "gw_new", name: "Bailed" },
+    ];
+    const merged = await applyGraphOps(shellDemo, ops);
+    const result = await checkSplice(shellDemo, merged);
+    expect(result.ok).toBe(true);
+    expect(result.added).toEqual(expect.arrayContaining(["gw_new", "end_new"]));
+  });
 });

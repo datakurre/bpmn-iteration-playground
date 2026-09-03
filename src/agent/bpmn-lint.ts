@@ -52,13 +52,20 @@ const CONFIG = { extends: "bpmnlint:recommended", rules: BASE_RULES };
  * a later turn. Rejecting that would break every incremental build, not
  * just bad ones.
  *
- *  - `no-bpmndi` / `local/expanded-subprocesses`: both read `<bpmndi:*>`
- *    shapes to do their job -- inherited (or, for the local rule, applied)
- *    as `'error'` in `CONFIG` above since `promote` (and `make lint-bpmn`)
- *    only ever see a document that has already been through `graph:layout`,
- *    so every element genuinely should have a diagram shape by then.
- *    Pre-layout there is no DI at all yet, by construction, so both would
- *    reject every splice outright, DI-complete or not.
+ *  - `no-bpmndi` / `local/expanded-subprocesses` / `local/label-layout`: all
+ *    three read `<bpmndi:*>` shapes to do their job -- inherited (or, for
+ *    the local rules, applied) as `'error'` in `CONFIG` above since
+ *    `promote` (and `make lint-bpmn`) only ever see a document that has
+ *    already been through `graph:layout`, so every element genuinely should
+ *    have a diagram shape by then. Pre-layout there is no DI at all yet, by
+ *    construction, so all three would reject every splice outright,
+ *    DI-complete or not. `local/label-layout` specifically (issue #106):
+ *    it only fires for a named gateway or event (a task's label lives
+ *    inside its own bounds, so it never trips), so the failure was
+ *    selective -- a splice could add a gateway or event only by leaving it
+ *    unnamed, fighting `label-required` telling the model to name it.
+ *    `ensureLabelDi` runs as part of `graph:layout`, so by then the DI
+ *    genuinely should be there, same as `no-bpmndi`.
  *  - `end-event-required` / `no-implicit-end` / `start-event-required` /
  *    `no-disconnected` / `no-implicit-start`: flag a process, or a flow
  *    node, that doesn't yet reach an end event, or a process with no start
@@ -84,6 +91,7 @@ const SEMANTIC_CONFIG = {
     ...BASE_RULES,
     "no-bpmndi": "off",
     "local/expanded-subprocesses": "off",
+    "local/label-layout": "off",
     "end-event-required": "off",
     "no-implicit-end": "off",
     "start-event-required": "off",
