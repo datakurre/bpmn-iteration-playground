@@ -71,6 +71,54 @@ interface ProcessLayoutResult {
   allFlows: any[];
 }
 
+/**
+ * A `bpmn:SequenceFlow` whose `sourceRef`/`targetRef` belong to two
+ * different top-level `bpmn:Process` elements is not valid BPMN -- a flow
+ * can only connect elements within the process (or nested subprocess) that
+ * owns it. Left undetected, this used to surface as a bare `Cannot read
+ * properties of undefined (reading '$type')` deep in track/waypoint
+ * computation, which named neither the flow nor why it was malformed
+ * (issue #94). `applyGraphOps`/`checkSplice` (graph.ts) now refuse to
+ * produce this shape in the first place, but a hand-written or
+ * externally-supplied document could still reach here, so this names the
+ * problem up front rather than crashing partway through layout.
+ */
+function assertNoCrossProcessFlows(processes: any[]): void {
+  const processIdOf = new Map<string, string>();
+  const flattenIds = (nodes: any[], processId: string): void => {
+    for (const node of nodes) {
+      processIdOf.set(node.id, processId);
+      if (node.flowElements) flattenIds(node.flowElements, processId);
+    }
+  };
+  for (const process of processes) {
+    flattenIds(process.flowElements || [], process.id);
+  }
+  for (const process of processes) {
+    for (const flow of flattenFlowsOf(process.flowElements || [])) {
+      const srcProcess = flow.sourceRef && processIdOf.get(flow.sourceRef.id);
+      const tgtProcess = flow.targetRef && processIdOf.get(flow.targetRef.id);
+      if (srcProcess && srcProcess !== process.id) {
+        throw new Error(
+          `${flow.id} belongs to process '${process.id}' but its source '${flow.sourceRef.id}' lives in '${srcProcess}' -- a sequence flow cannot cross between processes`,
+        );
+      }
+      if (tgtProcess && tgtProcess !== process.id) {
+        throw new Error(
+          `${flow.id} belongs to process '${process.id}' but its target '${flow.targetRef.id}' lives in '${tgtProcess}' -- a sequence flow cannot cross between processes`,
+        );
+      }
+    }
+  }
+}
+
+function flattenFlowsOf(nodes: any[]): any[] {
+  return nodes.flatMap((node) => [
+    ...(node.$type === "bpmn:SequenceFlow" ? [node] : []),
+    ...(node.flowElements ? flattenFlowsOf(node.flowElements) : []),
+  ]);
+}
+
 export async function layoutProcess(xml: string, options: AutoLayoutOptions = {}): Promise<string> {
   const opts = { ...DEFAULT_OPTIONS, ...options };
   const moddle = new BpmnModdle({ zeebe });
@@ -79,6 +127,8 @@ export async function layoutProcess(xml: string, options: AutoLayoutOptions = {}
 
   const processes = (root.rootElements || []).filter((el: any) => el.$type === "bpmn:Process");
   if (processes.length === 0) return xml;
+
+  assertNoCrossProcessFlows(processes);
 
   // Clean existing diagrams
   root.diagrams = [];

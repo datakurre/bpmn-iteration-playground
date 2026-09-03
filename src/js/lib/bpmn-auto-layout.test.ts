@@ -246,4 +246,31 @@ describe("bpmn-auto-layout", () => {
     expect(shapeIds(rootPlane)).toEqual(["root_call", "root_end", "root_start"]);
     expect(shapeIds(childPlane)).toEqual(["child_end", "child_start", "child_task"]);
   });
+
+  it("names the problem for a sequence flow that crosses between two processes, instead of crashing on undefined (issue #94)", async () => {
+    // applyGraphOps/checkSplice (graph.ts) now refuse to produce this shape,
+    // but a hand-written or externally-supplied document could still reach
+    // layoutProcess directly -- this used to fail deep in track/waypoint
+    // computation with a bare "Cannot read properties of undefined (reading
+    // '$type')", naming neither the flow nor why it was malformed.
+    const NS =
+      'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"';
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions id="Defs_cross" ${NS}>
+  <bpmn:process id="root_process" isExecutable="true">
+    <bpmn:startEvent id="root_start"><bpmn:outgoing>rf1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="rf1" sourceRef="root_start" targetRef="root_call" />
+    <bpmn:callActivity id="root_call" calledElement="child_process">
+      <bpmn:incoming>rf1</bpmn:incoming>
+    </bpmn:callActivity>
+  </bpmn:process>
+  <bpmn:process id="child_process" isExecutable="false">
+    <bpmn:startEvent id="child_start" />
+    <bpmn:sequenceFlow id="crossing" sourceRef="child_start" targetRef="root_call" />
+    <bpmn:endEvent id="child_end" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+    await expect(layoutProcess(xml)).rejects.toThrow(/crossing.*cannot cross between processes/s);
+  });
 });
