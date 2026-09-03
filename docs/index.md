@@ -13,6 +13,9 @@ agent itself can extend mid-session by splicing in new elements. Every
 activity in the diagram dispatches to a **harness**: a small piece of
 TypeScript that actually does the work an activity names.
 
+- [Vision](vision.html) -- why the loop is a diagram at all, the five
+  commitments that follow from it, and how to tell whether a change serves
+  them.
 - [Getting started](getting-started.html) -- build the project, run the bundled
   Pi demo loop, pair it with a deterministic `shell` step, point it at a real
   model, drive single-task runs or continuous multi-prompt sessions, and read a

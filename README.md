@@ -14,7 +14,8 @@ so on.
 
 **Docs:** https://datakurre.github.io/graph-agent/ (source in
 [`docs/`](docs/), with [screenshots](docs/screenshots/) driven from a real
-run of the studio).
+run of the studio). [`docs/vision.md`](docs/vision.md) is why the loop is a
+diagram at all, and what that commits the project to.
 
 ## Quickstart
 
