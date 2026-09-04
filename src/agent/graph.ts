@@ -15,6 +15,20 @@ import { lintBpmnSemantics } from "./bpmn-lint.ts";
 
 export const MODDLE_OPTIONS = { zeebe: zeebeDescriptor };
 
+// Close enough for BPMN: every element/attribute id in the schema is
+// xsd:ID, which XSD defines as an NCName. A space or other invalid
+// character still serializes fine -- well-formed XML tolerates far more in
+// an attribute value than an NCName allows -- and the resulting document is
+// invalid against the BPMN XSD. Worse, an id naming a real dispatch target
+// (a task/gateway/event id, not a flow id) that bpmn-elements' own
+// sanitizing rejects at runtime leaves the token parked on the node forever
+// with no harness ever invoked -- the same permanent-stall failure #86 and
+// #100 hit by other routes (issue #109). `applyGraphOps`'s own
+// `requireNewId` and `checkSplice`/`checkMigration`'s `checkIdSyntax`
+// (below) both enforce this, since a hand-written fragment or a studio edit
+// never goes through `applyGraphOps` at all (issue #111).
+const NCNAME = /^[A-Za-z_][\w.-]*$/;
+
 // bpmn-elements exports a few event-definition objects that do not satisfy
 // TypeResolver's `NewableFunction` index signature, though the resolver accepts
 // them at runtime. The cast keeps the call honest without loosening the module.
@@ -563,17 +577,6 @@ export async function applyGraphOps(currentXml: string, ops: GraphOp[]): Promise
       throw new Error(`op ${opIndex}: type '${type}' is not supported -- allowed types are: ${valid}`);
     }
   };
-  // Close enough for BPMN: every element/attribute id in the schema is
-  // xsd:ID, which XSD defines as an NCName. Nothing upstream of this checks
-  // that -- a space or other invalid character still passes checkSplice and
-  // graph:layout, still serializes (well-formed XML tolerates far more in an
-  // attribute value than an NCName allows), and the resulting document is
-  // invalid against the BPMN XSD. Worse, an id naming a real dispatch target
-  // (a task/gateway/event id, not a flow id) that bpmn-elements' own
-  // sanitizing rejects at runtime leaves the token parked on the node
-  // forever with no harness ever invoked -- the same permanent-stall failure
-  // #86 and #100 hit by other routes (issue #109).
-  const NCNAME = /^[A-Za-z_][\w.-]*$/;
   const requireNewId = (id: string, opIndex: number): void => {
     if (!NCNAME.test(id)) throw new Error(`op ${opIndex}: id '${id}' is not a valid XML id (letters, digits, '_', '.', '-' only, and cannot start with a digit)`);
     if (registry.has(id)) throw new Error(`op ${opIndex}: id '${id}' already exists`);
@@ -1076,6 +1079,41 @@ async function checkFlowContainment(xml: string): Promise<{ ok: true } | { ok: f
 }
 
 /**
+ * Rejects a document containing an `id="..."` attribute that isn't
+ * NCName-shaped -- the same rule `applyGraphOps`'s own `requireNewId`
+ * enforces (issue #109), applied here to the document `checkSplice`/
+ * `checkMigration` are asked to accept rather than only the drafting path
+ * that runs through `applyGraphOps` (issue #111).
+ *
+ * Deliberately a raw-text scan, not a walk over `moddle.fromXML`'s parsed
+ * result the way every other check here works: `moddle-xml` (bpmn-moddle's
+ * own XML parser) already validates `xsd:ID`-typed attributes on parse, but
+ * silently -- an element with an illegal id is dropped from the tree
+ * entirely (as an "unparsable content" warning `fromXML` never surfaces to
+ * a caller that isn't reading `warnings`), while any flow that referenced
+ * it keeps the raw, now-dangling, id string in its own `sourceRef`/
+ * `targetRef`. So a hand-written fragment with an invalid id never shows up
+ * in an `elementIds()` diff at all -- the malformed element is already gone
+ * by the time anything here could compare it -- and the resulting document
+ * doesn't just have an unreachable node (issue #109's own failure mode), it
+ * has a broken reference. Scanning the text directly catches it before
+ * `moddle.fromXML` ever gets to make it disappear.
+ */
+const XML_ID_ATTR = /\bid="([^"]*)"/g;
+function checkIdSyntax(xml: string): { ok: true } | { ok: false; reason: string } {
+  for (const match of xml.matchAll(XML_ID_ATTR)) {
+    const id = match[1] ?? "";
+    if (!NCNAME.test(id)) {
+      return {
+        ok: false,
+        reason: `id '${id}' is not a valid XML id (letters, digits, '_', '.', '-' only, and cannot start with a digit)`,
+      };
+    }
+  }
+  return { ok: true };
+}
+
+/**
  * Runs the project's own bpmnlint ruleset (minus `no-bpmndi`, not yet
  * meaningful before `graph:layout` has run -- see `lintBpmnSemantics`'s own
  * comment) against the merged document, and rejects on any error.
@@ -1132,6 +1170,8 @@ export async function checkSplice(
   }
   const scope = await checkProcessScope(nextXml, new Set(added));
   if (!scope.ok) return { ok: false, added, removed, reason: scope.reason };
+  const idSyntax = checkIdSyntax(nextXml);
+  if (!idSyntax.ok) return { ok: false, added, removed, reason: idSyntax.reason };
   const containment = await checkFlowContainment(nextXml);
   if (!containment.ok) return { ok: false, added, removed, reason: containment.reason };
   const lint = await checkBpmnlintSemantics(nextXml);
@@ -1251,6 +1291,9 @@ export async function checkMigration(
 
   const scope = await checkProcessScope(nextXml, added);
   if (!scope.ok) return { ok: false, removed: [], reason: scope.reason };
+
+  const idSyntax = checkIdSyntax(nextXml);
+  if (!idSyntax.ok) return { ok: false, removed: [], reason: idSyntax.reason };
 
   const containment = await checkFlowContainment(nextXml);
   if (!containment.ok) return { ok: false, removed: [], reason: containment.reason };

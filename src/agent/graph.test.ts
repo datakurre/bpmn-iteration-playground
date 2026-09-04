@@ -1394,3 +1394,31 @@ describe("checkSplice accepts the fork/join and merge recipes AGENT_ROLES docume
     expect(result.added).toEqual(expect.arrayContaining(["err_boundary", "handle_error", "gw_merge"]));
   });
 });
+
+describe("checkSplice/checkMigration reject an id that is not a valid XML id (issue #111)", () => {
+  // Hand-written, additive, otherwise well-formed -- never goes through
+  // applyGraphOps's own requireNewId (issue #109), the only place this rule
+  // lived before. moddle-xml itself silently drops an element with an
+  // illegal id on parse (an "unparsable content" warning, not a thrown
+  // error), so "bad id" never shows up in an elementIds() diff at all --
+  // checkIdSyntax has to scan the raw text before that happens.
+  const shellDemo = readFileSync(join(process.cwd(), "workflows", "shell-demo.bpmn"), "utf8");
+  const withBadId = shellDemo.replace(
+    '<bpmn:sequenceFlow id="to_verify" sourceRef="turn" targetRef="verify" />',
+    '<bpmn:sequenceFlow id="to_verify" sourceRef="turn" targetRef="bad id" />' +
+      '<bpmn:serviceTask id="bad id"><bpmn:incoming>to_verify</bpmn:incoming><bpmn:outgoing>to_bad_end</bpmn:outgoing></bpmn:serviceTask>' +
+      '<bpmn:sequenceFlow id="to_bad_end" sourceRef="bad id" targetRef="verify" />',
+  );
+
+  it("checkSplice rejects it, naming the offending id", async () => {
+    const result = await checkSplice(shellDemo, withBadId);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/'bad id' is not a valid XML id/);
+  });
+
+  it("checkMigration rejects it the same way", async () => {
+    const result = await checkMigration(shellDemo, withBadId, new Set());
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/'bad id' is not a valid XML id/);
+  });
+});
