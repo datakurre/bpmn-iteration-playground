@@ -101,6 +101,8 @@ interface ChannelPlan {
 }
 
 const CHANNEL_CLEARANCE = 40;
+/** How far an edge label may sit past the ends of its own segment. */
+const LABEL_SLIDE_SLACK = 45;
 const CHANNEL_LANE_GAP = 30;
 
 /**
@@ -1046,11 +1048,101 @@ function shouldUseUpsideRoute(
   return false;
 }
 
+/**
+ * A sequence flow's own label. Candidates are filtered against other labels
+ * *and* against the elements themselves: checking only labels is how
+ * `pi-default-loop.bpmn`'s "hit token limit" ended up printed across
+ * `gw_truncated` and `fail_tool_batch`, since neither of those carries a label
+ * of its own at that spot.
+ */
+/**
+ * The first candidate that clears every element and every label already
+ * placed; failing that, whichever overlaps least, so a crowded diagram
+ * degrades to "slightly close" rather than "printed on top of a task".
+ */
+function pickLabel(
+  candidates: LabelBounds[],
+  fallback: LabelBounds,
+  flow: any,
+  placedLabels: LabelBounds[],
+  nodes: Map<string, NodeLayout>,
+  edgeWaypoints: Map<string, Array<{ x: number; y: number }>> = new Map(),
+): LabelBounds {
+  // A line drawn through the text is as unreadable as a box behind it, but a
+  // label *near* a line is normal, so this is weighted below a real overlap
+  // rather than treated as disqualifying.
+  const crossedByEdge = (bounds: LabelBounds): number => {
+    let crossings = 0;
+    for (const [flowId, pts] of edgeWaypoints) {
+      if (flowId === flow?.id) continue;
+      for (let i = 0; i < pts.length - 1; i += 1) {
+        const a = pts[i]!;
+        const b = pts[i + 1]!;
+        if (Math.abs(a.y - b.y) < 0.5) {
+          if (a.y <= bounds.y || a.y >= bounds.y + bounds.height) continue;
+          if (Math.max(Math.min(a.x, b.x), bounds.x) < Math.min(Math.max(a.x, b.x), bounds.x + bounds.width)) {
+            crossings += 1;
+          }
+        } else if (Math.abs(a.x - b.x) < 0.5) {
+          if (a.x <= bounds.x || a.x >= bounds.x + bounds.width) continue;
+          if (Math.max(Math.min(a.y, b.y), bounds.y) < Math.min(Math.max(a.y, b.y), bounds.y + bounds.height)) {
+            crossings += 1;
+          }
+        }
+      }
+    }
+    return crossings;
+  };
+  const overlapArea = (bounds: LabelBounds): number => {
+    let area = 0;
+    for (const node of nodes.values()) {
+      if (node.isSubProcessChild || node.element?.$type === "bpmn:SubProcess") continue;
+      const overlap = boxOverlap(bounds, node);
+      const isOwnEndpoint = node.id === flow?.sourceRef?.id || node.id === flow?.targetRef?.id;
+      const rendersNameOutside =
+        node.element?.$type?.endsWith("Event") || node.element?.$type?.endsWith("Gateway");
+      if (isOwnEndpoint && rendersNameOutside && overlap < 100) {
+        // Clipping the corner of its own gateway or event is the usual case for
+        // a short stub, and those render their own name outside the shape.
+        area += 0.1 * overlap;
+        continue;
+      }
+      area += overlap;
+      continue;
+    }
+    for (const other of placedLabels) area += boxOverlap(bounds, other);
+    return area + crossedByEdge(bounds) * 120;
+  };
+
+  let best = fallback;
+  let bestArea = overlapArea(fallback);
+  for (const cand of candidates) {
+    if (cand.x < 0 || cand.y < 0) continue;
+    const area = overlapArea(cand);
+    if (area === 0) return cand;
+    if (area < bestArea) {
+      best = cand;
+      bestArea = area;
+    }
+  }
+  return best;
+}
+
+function boxOverlap(
+  a: { x: number; y: number; width: number; height: number },
+  b: { x: number; y: number; width: number; height: number },
+): number {
+  const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+  return w > 0 && h > 0 ? w * h : 0;
+}
+
 function computeEdgeLabelBounds(
   flow: any,
   waypoints: Array<{ x: number; y: number }>,
   edgeWaypoints: Map<string, Array<{ x: number; y: number }>>,
   placedLabels: LabelBounds[] = [],
+  nodes: Map<string, NodeLayout> = new Map(),
 ): LabelBounds | null {
   if (!flow.name || typeof flow.name !== "string" || flow.name.trim().length === 0) {
     return null;
@@ -1108,14 +1200,38 @@ function computeEdgeLabelBounds(
     const altY = hasFlowAbove ? Math.round(bestSeg.p1.y - height - 2) : Math.round(bestSeg.p1.y + 4);
     const centeredX = Math.round(midX - width / 2);
 
+    // A short stub between two elements has no room on either side of the line
+    // -- the line runs through their middles, so "just above the segment" is
+    // still inside them. Offer the clear band above and below whatever the
+    // segment passes between as well.
+    const straddled = Array.from(nodes.values()).filter(
+      (n) =>
+        !n.isSubProcessChild &&
+        n.element?.$type !== "bpmn:SubProcess" &&
+        // The label is centred on the segment and wider than a short stub, so
+        // the elements it can foul are the ones at either end too, not only
+        // those strictly inside the segment's own span.
+        n.x <= maxX + width / 2 &&
+        minX - width / 2 <= n.x + n.width &&
+        n.y < bestSeg!.p1.y + height &&
+        bestSeg!.p1.y - height < n.y + n.height,
+    );
+    const clearAbove = straddled.length ? Math.min(...straddled.map((n) => n.y)) - height - 4 : primaryY;
+    const clearBelow = straddled.length ? Math.max(...straddled.map((n) => n.y + n.height)) + 4 : altY;
+
     const candidates: LabelBounds[] = [];
-    for (const y of [primaryY, altY]) {
-      for (const dx of [0, 20, -20, 40, -40]) {
-        candidates.push({ x: centeredX + dx, y, width, height });
+    for (const y of [primaryY, altY, clearAbove, clearBelow]) {
+      for (const dx of [0, 20, -20, 40, -40, 60, -60, 80, -80]) {
+        const x = centeredX + dx;
+        // Keep the label over its own segment rather than sliding off the end
+        // of it, where it would read as belonging to a different edge -- with a
+        // little slack, since a stub between two adjacent elements is shorter
+        // than the text and would otherwise have exactly one candidate per row.
+        if (x + width / 2 < minX - LABEL_SLIDE_SLACK || x + width / 2 > maxX + LABEL_SLIDE_SLACK) continue;
+        candidates.push({ x, y, width, height });
       }
     }
-    const chosen = candidates.find((cand) => cand.y >= 0 && !labelCollidesWithOtherLabels(cand, placedLabels));
-    return chosen ?? { x: centeredX, y: primaryY, width, height };
+    return pickLabel(candidates, { x: centeredX, y: primaryY, width, height }, flow, placedLabels, nodes, edgeWaypoints);
   } else {
     // Vertical segment: sit 4px to the right of the vertical line, or to the left
     // if that collides with an already-placed label.
@@ -1126,12 +1242,12 @@ function computeEdgeLabelBounds(
     const rightX = Math.round(bestSeg.p1.x + 4);
     const leftX = Math.round(bestSeg.p1.x - width - 4);
 
-    const candidates: LabelBounds[] = [
-      { x: rightX, y, width, height },
-      { x: leftX, y, width, height },
-    ];
-    const chosen = candidates.find((cand) => cand.x >= 0 && !labelCollidesWithOtherLabels(cand, placedLabels));
-    return chosen ?? { x: rightX, y, width, height };
+    const candidates: LabelBounds[] = [];
+    for (const dy of [0, -18, 18, -36, 36]) {
+      candidates.push({ x: rightX, y: y + dy, width, height });
+      candidates.push({ x: leftX, y: y + dy, width, height });
+    }
+    return pickLabel(candidates, { x: rightX, y, width, height }, flow, placedLabels, nodes, edgeWaypoints);
   }
 }
 
@@ -1238,7 +1354,7 @@ function createProcessDi(
   for (const flow of layout.allFlows) {
     const waypoints = edgeWaypoints.get(flow.id);
     if (!waypoints) continue;
-    const edgeLabel = computeEdgeLabelBounds(flow, waypoints, edgeWaypoints, placedLabels);
+    const edgeLabel = computeEdgeLabelBounds(flow, waypoints, edgeWaypoints, placedLabels, layout.nodes);
     if (edgeLabel) {
       edgeLabelBounds.set(flow.id, edgeLabel);
       placedLabels.push(edgeLabel);

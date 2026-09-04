@@ -370,6 +370,68 @@ describe("routing invariants over the bundled graphs", () => {
       expect([...new Set(through)]).toEqual([]);
     });
 
+    it(`${id}.bpmn: no label is printed over an element or another label`, async () => {
+      const xml = readFileSync(join(process.cwd(), "workflows", `${id}.bpmn`), "utf8");
+      const boxes: Box[] = [];
+      const labels: Array<Box & { kind: string }> = [];
+      for (const m of xml.matchAll(
+        /<bpmndi:BPMNShape id="[^"]*" bpmnElement="([^"]+)"[^>]*>([\s\S]*?)<\/bpmndi:BPMNShape>/g,
+      )) {
+        const b = /<dc:Bounds x="(-?[\d.]+)" y="(-?[\d.]+)" width="([\d.]+)" height="([\d.]+)"/.exec(m[2]!);
+        if (b) boxes.push({ id: m[1]!, x: +b[1]!, y: +b[2]!, width: +b[3]!, height: +b[4]! });
+        const l = /<bpmndi:BPMNLabel>\s*<dc:Bounds x="(-?[\d.]+)" y="(-?[\d.]+)" width="([\d.]+)" height="([\d.]+)"/.exec(m[2]!);
+        if (l) labels.push({ id: m[1]!, kind: "shape", x: +l[1]!, y: +l[2]!, width: +l[3]!, height: +l[4]! });
+      }
+      for (const m of xml.matchAll(
+        /<bpmndi:BPMNEdge id="[^"]*" bpmnElement="([^"]+)"[^>]*>([\s\S]*?)<\/bpmndi:BPMNEdge>/g,
+      )) {
+        const l = /<bpmndi:BPMNLabel>\s*<dc:Bounds x="(-?[\d.]+)" y="(-?[\d.]+)" width="([\d.]+)" height="([\d.]+)"/.exec(m[2]!);
+        if (l) labels.push({ id: m[1]!, kind: "edge", x: +l[1]!, y: +l[2]!, width: +l[3]!, height: +l[4]! });
+      }
+      const area = (a: Box, b: Box): number => {
+        const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+        const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+        return w > 0 && h > 0 ? w * h : 0;
+      };
+      const clashes: string[] = [];
+      for (const label of labels) {
+        for (const box of boxes) {
+          if (box.id === label.id) continue;
+          if (box.width > 300) continue; // an expanded subprocess contains things by design
+          if (area(label, box) > 4) clashes.push(`${label.kind} label ${label.id} over ${box.id}`);
+        }
+      }
+      for (let i = 0; i < labels.length; i += 1) {
+        for (let j = i + 1; j < labels.length; j += 1) {
+          if (area(labels[i]!, labels[j]!) > 4) clashes.push(`label ${labels[i]!.id} over label ${labels[j]!.id}`);
+        }
+      }
+      // ...and no edge is drawn through the middle of a label, which reads the
+      // same way as a box behind it.
+      const { segs } = readGeometry(xml);
+      for (const label of labels) {
+        for (const seg of segs) {
+          if (seg.flowId === label.id) continue;
+          const horizontal = Math.abs(seg.a.y - seg.b.y) < 0.5;
+          const vertical = Math.abs(seg.a.x - seg.b.x) < 0.5;
+          if (horizontal && seg.a.y > label.y && seg.a.y < label.y + label.height) {
+            if (
+              Math.max(Math.min(seg.a.x, seg.b.x), label.x) < Math.min(Math.max(seg.a.x, seg.b.x), label.x + label.width)
+            ) {
+              clashes.push(`${seg.flowId} drawn through label ${label.id}`);
+            }
+          } else if (vertical && seg.a.x > label.x && seg.a.x < label.x + label.width) {
+            if (
+              Math.max(Math.min(seg.a.y, seg.b.y), label.y) < Math.min(Math.max(seg.a.y, seg.b.y), label.y + label.height)
+            ) {
+              clashes.push(`${seg.flowId} drawn through label ${label.id}`);
+            }
+          }
+        }
+      }
+      expect([...new Set(clashes)]).toEqual([]);
+    });
+
     it(`${id}.bpmn: no two edges are drawn on top of each other`, async () => {
       const xml = readFileSync(join(process.cwd(), "workflows", `${id}.bpmn`), "utf8");
       const { segs, ends } = readGeometry(xml);

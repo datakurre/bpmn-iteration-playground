@@ -402,7 +402,7 @@ the same reasoning as gw_inject_entry above.</bpmn:documentation>
         <di:waypoint x="1150" y="270" />
         <di:waypoint x="1225" y="270" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="1143" y="254" width="90" height="14" />
+          <dc:Bounds x="1183" y="212" width="90" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="not_truncated_di" bpmnElement="not_truncated">
@@ -412,7 +412,7 @@ the same reasoning as gw_inject_entry above.</bpmn:documentation>
         <di:waypoint x="1198" y="70" />
         <di:waypoint x="1245" y="70" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="1130" y="192" width="62" height="14" />
+          <dc:Bounds x="1170" y="192" width="62" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="failed_to_prepare_di" bpmnElement="failed_to_prepare">
@@ -466,7 +466,7 @@ the same reasoning as gw_inject_entry above.</bpmn:documentation>
         <di:waypoint x="229" y="350" />
         <di:waypoint x="229" y="295" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="1383" y="334" width="88" height="14" />
+          <dc:Bounds x="1443" y="334" width="88" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="to_gw_followup_di" bpmnElement="to_gw_followup">
@@ -505,5 +505,5 @@ the same reasoning as gw_inject_entry above.</bpmn:documentation>
       </bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>
-  <!-- ga:modelHash:b0574961ef5e6dcd334547e05dfecdd7668aa0d9cf386ea74011fc47c47a0f27 -->
+  <!-- ga:modelHash:64df65b7143b94dcabcec598adb568051dcedfdf47d41e125ed9031707d66cc2 -->
 </bpmn:definitions>
