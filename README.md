@@ -94,10 +94,17 @@ backs it up as `.bak` first) to pick up a fix upstream
 where`'s graphs directory, before concluding a graph is still broken.
 
 `graph:lint` checks that a fragment is valid and additive, that every new
-activity's `zeebe:taskDefinition type` names a real harness, *and* that its
+activity's `zeebe:taskDefinition type` names a real harness, that its
 `zeebe:input`/`zeebe:taskHeaders`/`zeebe:output` bindings match what that
 harness actually reads and publishes
-([#65](https://github.com/datakurre/graph-agent/issues/65)) -- an approved
+([#65](https://github.com/datakurre/graph-agent/issues/65)), that every id it
+introduces is a usable XML id
+([#109](https://github.com/datakurre/graph-agent/issues/109)), that no flow it
+adds crosses a process or subprocess boundary
+([#100](https://github.com/datakurre/graph-agent/issues/100)), *and* that the
+result passes this project's own bpmnlint ruleset -- so a splice cannot
+introduce, say, the fake join that would silently double-run a billed turn
+([#104](https://github.com/datakurre/graph-agent/issues/104)). An approved
 splice is wired correctly or it is rejected with a redraftable reason before
 it ever applies. What review at the approval gate is still for: whether the
 splice does the *right thing*, not whether it is plumbed correctly.
@@ -137,6 +144,23 @@ from -- the graph library (shared across projects) on one side, this
 project's sessions on the other, with the Camunda 8 element templates under
 [`element_templates/`](element_templates/) available from the properties
 panel.
+
+## Reports
+
+```
+graph-agent ls                                   # sessions, with tokens and cost
+graph-agent show <session>                       # turns and the current graph revision
+graph-agent report <session> --format html --out report.html
+graph-agent export <session> --out session.svg
+```
+
+Every `agent:turn` reports what it cost, and the engine accumulates that into
+a `_session` FEEL variable the graph itself can read -- which is what makes a
+budget expressible as a boundary event (`element_templates/cost_limit_boundary_event.json`,
+see [the harness reference](docs/harnesses.md#session-cost-and-stopping-on-it)).
+The same totals are what `ls`, `show` and `report` print. The HTML report is
+one self-contained file: prompts, turns, tool calls, graph revisions, and a
+diagram per process shaded by where the session's cost went.
 
 ## Development
 

@@ -344,6 +344,23 @@ when one is parked; otherwise it queues -- bare text as a steering message,
 would from another terminal, since it goes through the same
 `SessionStore.queueInbox`.
 
+Slash commands cover what you would otherwise leave the session for
+(`/help` lists them, and tab completes them):
+
+| Command | What it does |
+|---|---|
+| `/model [provider/model]` | show the active model, or switch it -- with no argument you pick from the models you have credentials for |
+| `/graph [name]` | the workflow outline: the running session's, or a named library graph's |
+| `/graphs` | list the library |
+| `/rail` | toggle the side rail showing the live sequence-flow tree |
+| `/promote <name> [--force]` | write the session's graph into the library, without leaving the session |
+| `/diff [args]` | the workspace's uncommitted `git diff` |
+| `/compact` | summarise older messages to reclaim context |
+| `/sessions` | recent sessions |
+| `/studio` | launch (or print the URL of) the studio for this project |
+| `/steer <text>`, `/follow <text>` | queue a steering or follow-up message explicitly |
+| `/clear`, `/help`, `/exit` | clear the transcript, show help and keybindings, quit |
+
 `graph-agent run` is unchanged: non-interactive, scriptable, what CI uses.
 The TUI is a new command, not a flag on `run`.
 
@@ -378,6 +395,65 @@ what ran, not the original messages) -- and whatever the session is still
 parked on gets prompted for immediately, the same `onWait` seam a fresh run
 uses, since a resumed engine re-announces its own postponed activity as soon
 as it resumes.
+
+## Reading a session afterwards
+
+A finished (or parked) session is still on disk under `$XDG_STATE_HOME`, and
+four commands read it back.
+
+```
+$ graph-agent ls
+e8750873  completed    2 turns  $0.0013  work
+```
+
+`ls` lists this project's sessions, newest first, with the token and cost
+totals the engine accumulated (`--all` for every project on the machine).
+`graph-agent rm <session>` deletes one.
+
+```
+$ graph-agent show e8750873
+e8750873  completed  2 turns · tokens 1.3k (0% cached) · cost $0.0013
+project: /home/you/work
+graph revisions: 1
+
+  1  llm_turn  agent:turn  stop [in:1268 out:6 cache:0] ($0.0013)
+```
+
+`show` prints the turns and the current graph revision -- the quickest way to
+see what a run actually did and what it cost.
+
+```
+$ graph-agent report e8750873 --format html --out report.html
+wrote report to report.html
+```
+
+`report` renders the whole session: the prompt, every turn with its inputs,
+outputs and tool calls, the graph revisions, and a diagram per process with
+the activities that ran shaded by how much of the session's cost they
+accounted for. `--format` takes `markdown` (the default, written to stdout),
+`html` or `json`; `--out <file>` writes to a file instead; `-v`/`--verbose`
+includes full prompts, thinking and tool payloads. The HTML report embeds its
+diagrams, so it is one self-contained file you can send to someone.
+
+```
+$ graph-agent export e8750873 --out session.svg
+exported diagram to session.svg
+```
+
+`export` writes just the diagram -- of a session, or of a `.bpmn` file you
+name instead. `--format svg` (default) or `png`, `--background <color>`,
+`--scale <n>`.
+
+`graph-agent model` lists the models you have credentials for, and
+`graph-agent model <provider/model>` pins a default into `config.toml` so you
+need not repeat `--model`. A `resume` with no `--model` reuses whatever the
+session itself ran on ([#88](https://github.com/datakurre/graph-agent/issues/88)).
+
+Every command takes `--help`, and an unknown flag is an error rather than
+being silently ignored -- `--out` mistyped as `--output` gets you a "did you
+mean" rather than a surprise
+([#91](https://github.com/datakurre/graph-agent/issues/91),
+[#101](https://github.com/datakurre/graph-agent/issues/101)).
 
 ## The bundled graphs
 
@@ -563,9 +639,13 @@ same allowlist the editor's own palette is restricted to
 (`src/js/lib/supported-bpmn-elements.ts`), so a drafted
 `{"op":"appendShape","type":"bpmn:InclusiveGateway",...}` is rejected the same
 way a human trying to drop one on the canvas is blocked from creating it in
-the first place. A real parallel fork/join (`bpmn:ParallelGateway`) and a
-timeout or business-error handler on an activity (`attachBoundaryEvent` with
-`bpmn:TimerEventDefinition`/`bpmn:ErrorEventDefinition`) are both supported;
+the first place. A real parallel fork/join (`bpmn:ParallelGateway`) is
+supported, as are three kinds of boundary event on an activity
+(`attachBoundaryEvent`): a timeout (`bpmn:TimerEventDefinition`), a
+business-error handler (`bpmn:ErrorEventDefinition`), and a cost or condition
+guard (`bpmn:ConditionalEventDefinition`, which reads the running totals the
+engine publishes as `_session` -- see [the harness
+reference](harnesses.html#session-cost-and-stopping-on-it));
 most other event types are not. The drafting model is also given the real
 job-type vocabulary up front, so a run like the one above no longer invents a
 plausible-looking type such as `shell:exec` -- lint rejects it and the

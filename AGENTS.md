@@ -152,7 +152,7 @@ run hangs rather than failing, which reads like a deadlock in the engine.
 
 ### The bundled graphs
 
-All five run. `session-default` (the default `run` uses when `--graph` is
+All six run. `session-default` (the default `run` uses when `--graph` is
 omitted) is a callActivity into `pi-default-loop`, so OOTB behaviour matches
 plain Pi ([#47](https://github.com/datakurre/graph-agent/issues/47)) --
 `graph-agent run --dry-run` with no `--graph` prints `graph
@@ -160,43 +160,66 @@ session-default` but otherwise the same transcript as running
 `pi-default-loop` directly. `pi-default-loop` and `shell-demo` drive tool
 calls, parallel ones included. `craft-graph` drafts a small ops list
 (`GraphOp[]`, not a whole document) and splices the elements it describes into
-the live session, and `session-skeleton` calls it after a `resume --answer`
-gate. The whole self-extension path is verified end to end against real
-Haiku: draft -> lint (merges the ops into a real document) -> layout ->
-approval gate -> `graph:extend spliced in 2 element(s)`, with `show` reporting
-two graph revisions. #21, #22, #30, #31, #34, #36 and #37 are all closed and
-re-verified on a clean clone.
+the live session, `session-skeleton` calls it after a `resume --answer`
+gate, and `session-craft` goes straight from a prompt into `craft-graph` and
+runs whatever it builds in the same invocation. The whole self-extension path
+is verified end to end against real Haiku: draft -> lint (merges the ops into
+a real document) -> layout -> approval gate -> `graph:extend spliced in 2
+element(s)`, with `show` reporting two graph revisions. #21, #22, #30, #31,
+#34, #36 and #37 are all closed and re-verified on a clean clone.
 
-**#40 is fixed: a splice is checked against the harness registry.**
-`checkSplice` takes a `knownJobTypes` set and rejects a new service task whose
-`zeebe:taskDefinition type` names no harness; `graph:lint` passes it the live
-registry (`new Set(Object.keys(registry))`), and the drafting model is given
-the same vocabulary up front (`jobTypesBlock`). Haiku used to write
-`type="shell:exec"` (the registry has `shell`) and get away with it -- that
-splice is now rejected and feeds back into the redraft loop instead of
-shipping silently.
+**What `graph:lint` rejects, and why each rule is there.** `checkSplice`
+(`graph.ts`) is the whole contract behind "an approved splice is wired
+correctly or it is rejected with a redraftable reason". Every rule below was
+added because a real drafted fragment got through without it:
 
-**#65 is fixed: a real type wired wrong is also rejected.** `checkSplice`
-now also validates a new activity's `zeebe:input`/`zeebe:taskHeaders`/
-`zeebe:output` bindings against `HARNESS_IO` (`harnessIOContract()` in
-`harnesses.ts`, threaded through as an optional parameter so `graph.ts`
-itself never depends on the harness registry). #40's own repro -- `command`
-passed through `zeebe:ioMapping` when the `shell` harness reads
-`zeebe:taskHeaders`, and `exitCode` read back instead of `exit_code` -- is
-rejected outright now, naming the wrong spelling so the redraft loop's
-`lint_feedback` has something concrete to fix. A `graph:lint` pass is now
-evidence a fragment is wired correctly, not just that its job type is real --
-what review at the approval gate is still for is whether the splice does the
-right thing, not whether it is plumbed correctly.
+- **Additive only.** A removed or renamed element cannot be recovered --
+  `bpmn-engine` replays child state by element id.
+- **A registered job type** (#40). Haiku used to write `type="shell:exec"`
+  (the registry has `shell`) and get away with it; `checkSplice` takes a
+  `knownJobTypes` set, and the drafting model is given the same vocabulary up
+  front (`jobTypesBlock`).
+- **I/O bindings that match the harness** (#65). #40's own repro -- `command`
+  passed through `zeebe:ioMapping` when the `shell` harness reads
+  `zeebe:taskHeaders`, and `exitCode` read back instead of `exit_code` -- is
+  rejected by the exact wrong spelling used, checked against `HARNESS_IO`
+  (`harnessIOContract()` in `harnesses.ts`, threaded through as an optional
+  parameter so `graph.ts` never depends on the harness registry).
+- **A supported element type and event definition**
+  (`supported-bpmn-elements.ts`) -- the same allowlist the editor's palette
+  is restricted to.
+- **The session's own process** (#86, #94). Recovery cannot replay a
+  `callActivity`'s linked process once its definition changed underneath it,
+  so a splice targeting one leaves the session permanently stuck.
+  `applyGraphOps` attaches into whichever container the target already lives
+  in, and the splice is rejected if that is a linked process.
+- **No flow crossing a container** (#100). The same malformation one level
+  down, at a `bpmn:SubProcess` boundary -- `pi-default-loop`'s `tool_batch`
+  is a real one a splice can target.
+- **A usable XML id** (#109) for every id the fragment introduces -- element
+  ids, `insertShape`'s `flowId`, `connect`'s optional id, `createProcess`'s
+  process id. A space serialized fine and then parked the token forever.
+- **This project's own bpmnlint ruleset** (#104), minus the rules that need a
+  laid-out document (`SEMANTIC_CONFIG` in `bpmn-lint.ts`). `fake-join` is the
+  sharp one: bpmn-elements re-triggers a plain activity with two incoming
+  flows once per token instead of joining, silently double-running a billed
+  `agent:turn`.
+
+Because the vocabulary is additive-only, a merge or fork/join can only be
+built by `insertShape`-ing the gateway into the flow that already reaches the
+shared target -- `appendShape`-ing one and connecting existing sources into it
+cannot work (#107). The recipes and worked examples live in
+`AGENT_ROLES.graph_architect`; keep them in step with any change to the ops.
 
 ### Re-verifying a closed issue
 
 Two traps have each produced a false "still broken" here, so check both before
 reopening anything:
 
-- **A stale graph library** (#35). `init` never overwrites, so your
-  `$XDG_CONFIG_HOME/graph-agent/workflows` copy can predate the fix. Diff it
-  against `workflows/` first. This is why #22 looked open when it was not, and
+- **A stale graph library** (#35). Plain `init` auto-upgrades a library copy
+  the self-hash proves you never edited, but leaves a copy you *have* edited
+  alone and only reports it as stale -- so an edited copy can predate the
+  fix. Diff it against `workflows/` first, or `init --refresh`. This is why #22 looked open when it was not, and
   why the default graph once ran without the fix that stopped it billing 110
   turns.
 - **Testing a path the CLI cannot take.** A regression test that drives

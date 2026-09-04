@@ -18,8 +18,9 @@ TypeScript that actually does the work an activity names.
   them.
 - [Getting started](getting-started.html) -- build the project, run the bundled
   Pi demo loop, pair it with a deterministic `shell` step, point it at a real
-  model, drive single-task runs or continuous multi-prompt sessions, and read a
-  run that went wrong.
+  model, drive single-task runs or continuous multi-prompt sessions, read a
+  finished session back with `show`/`report`/`export`, and diagnose a run that
+  went wrong.
 - [Harness reference](harnesses.html) -- every job type a graph can dispatch to,
   and what it expects on the activity.
 
@@ -40,11 +41,11 @@ for](getting-started.html#what-lint-checks-and-what-review-is-still-for)).
 The studio -- `graph-agent ui` -- is a BPMN editor and a session viewer for
 whatever project you point it at.
 
-![The graph library, with the shell-demo workflow visible](screenshots/project.png)
+![The project view: this project's sessions above, the graph library shared across all of them below](screenshots/project.png)
 
-![Editing shell-demo.bpmn: a Pi turn feeding a deterministic shell check](screenshots/graph-shell-demo.png)
+![Editing shell-demo.bpmn: a Pi turn feeding a deterministic shell check, with the palette, live bpmnlint and the properties panel](screenshots/graph-shell-demo.png)
 
-![A completed shell-demo session: one turn, one shell step, both recorded](screenshots/session.png)
+![A completed shell-demo session: cost and token tiles, the diagram with a turn count on each activity that ran, and every turn beside it](screenshots/session.png)
 
 These are not mockups -- `scripts/screenshot-docs.mjs` drives the real CLI and
 a real Chromium against a throwaway workspace to produce them. Run
