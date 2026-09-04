@@ -21,8 +21,8 @@ harness returns: `status`, `summary`, `findings`, `artifacts`, `next_action`).
 | `agent:steer` | Drains steering messages queued from outside the graph and injects them before the next turn. Queued via `--steer` (before a run starts) or `graph-agent steer <session> <text>` (into a run already in flight; issue #48). | out: `injected` (count) |
 | `agent:follow-up` | Drains follow-up messages queued from outside the graph. Queued via `--follow-up` or `graph-agent follow-up <session> <text>` (issue #48). | out: `has_followup` |
 | `agent:prepare-next-turn` | Pi's `prepareNextTurn` seam: decides whether the inner loop should stop. Deliberately does not touch the system prompt or tool list -- both sit in front of every message in the prompt cache, so changing them here discards it on every iteration (see `docs/research/05-pi-loops-and-token-cache.md`). | in: `stop_reason`; out: `should_stop` |
-| `graph:layout` | Runs `bpmn-auto-layout` over a fragment (or the current session graph). Always receives a complete document -- by the time this runs, `graph:lint` has already merged `graph_architect`'s drafted ops into one. | in: `fragment` (optional); out: `fragment` (laid out) |
-| `graph:lint` | `graph_architect` drafts a small ops list (`GraphOp[]`, `src/agent/graph.ts`), not a whole document -- `createProcess`/`appendShape`/`insertShape`/`connect`/`setTaskDefinition`/`setDocumentation`/`attachBoundaryEvent`, each mirroring a real bpmn-js `Modeling` method. This harness merges that list into the current session graph headlessly (`applyGraphOps`), then checks that the result is a valid, additive splice, that every new activity's job type names a registered harness with correctly-wired `zeebe:input`/`zeebe:taskHeaders`/`zeebe:output` bindings, and that every new element's type -- and, for a start/end/boundary event, its event definition -- is one this project's runtime actually supports (`src/js/lib/supported-bpmn-elements.ts`'s `SUPPORTED_ELEMENT_TYPES`/`SUPPORTED_EVENT_DEFINITIONS`: a real parallel fork/join via `bpmn:ParallelGateway`, and a timeout (`bpmn:TimerEventDefinition`) or business-error handler (`bpmn:ErrorEventDefinition`) via `attachBoundaryEvent`, are both supported; most other event types are not) -- before anything applies it ([#40](https://github.com/datakurre/graph-agent/issues/40), [#65](https://github.com/datakurre/graph-agent/issues/65); see AGENTS.md's "bundled graphs" section). On success it republishes the merged document back onto `fragment` for `graph:layout`/`graph:extend` to read. | in: `fragment` (an ops list); out: `added`, `attempt`, `fragment` (the merged document) |
+| `graph:layout` | Lays out a fragment (or the current session graph) with this project's own layout engine (`src/js/lib/bpmn-auto-layout.ts`, which replaced the `bpmn-auto-layout` dependency). Always receives a complete document -- by the time this runs, `graph:lint` has already merged `graph_architect`'s drafted ops into one -- and lays out *every* top-level `bpmn:Process` in it, one `bpmndi:BPMNPlane` each, so a session graph keeps the diagrams of the processes `linkGraph` inlined instead of losing all but the first ([#87](https://github.com/datakurre/graph-agent/issues/87)). `ensureLabelDi` runs with it, so the external labels a gateway or event needs are placed too. | in: `fragment` (optional); out: `fragment` (laid out) |
+| `graph:lint` | `graph_architect` drafts a small ops list (`GraphOp[]`, `src/agent/graph.ts`), not a whole document -- `createProcess`/`appendShape`/`insertShape`/`connect`/`setTaskDefinition`/`setDocumentation`/`attachBoundaryEvent`, each mirroring a real bpmn-js `Modeling` method. This harness merges that list into the current session graph headlessly (`applyGraphOps`), then checks that the result is a valid, additive splice, that every new activity's job type names a registered harness with correctly-wired `zeebe:input`/`zeebe:taskHeaders`/`zeebe:output` bindings, and that every new element's type -- and, for a start/end/boundary event, its event definition -- is one this project's runtime actually supports (`src/js/lib/supported-bpmn-elements.ts`'s `SUPPORTED_ELEMENT_TYPES`/`SUPPORTED_EVENT_DEFINITIONS`: a real parallel fork/join via `bpmn:ParallelGateway`, and a timeout (`bpmn:TimerEventDefinition`), a business-error handler (`bpmn:ErrorEventDefinition`) and a cost/condition guard (`bpmn:ConditionalEventDefinition`, see [Session cost, and stopping on it](#session-cost-and-stopping-on-it)) via `attachBoundaryEvent`, are all supported; most other event types are not) -- before anything applies it ([#40](https://github.com/datakurre/graph-agent/issues/40), [#65](https://github.com/datakurre/graph-agent/issues/65); see AGENTS.md's "bundled graphs" section). On success it republishes the merged document back onto `fragment` for `graph:layout`/`graph:extend` to read. | in: `fragment` (an ops list); out: `added`, `attempt`, `fragment` (the merged document) |
 | `graph:extend` | The self-mutation primitive: replaces the session graph with the (already merged, already laid out) document `fragment` now holds. Runs the same additive/job-type/element-type checks `graph:lint` does (`checkSplice`) independently, rather than trusting that something upstream already checked -- stricter than a studio edit's `checkMigration` (see below), which only protects elements the token has actually reached. Stable ids only -- `bpmn-engine` replays recovered child state by element id, so a fragment that renames or removes a live element cannot be recovered. Same reason `checkSplice` also confines a splice to the session's own (executable) process: recovery cannot replay a `callActivity`'s linked process once its definition has changed underneath it, so a target inside one is rejected -- `applyGraphOps` attaches into whichever process the target (`after`/`into`/`from`/`attachedTo`) already lives in, and `checkSplice` rejects the result if that is a linked one ([#86](https://github.com/datakurre/graph-agent/issues/86), [#94](https://github.com/datakurre/graph-agent/issues/94)). In practice this means a graph whose own process is a thin `callActivity` wrapper -- `session-default` around `pi-default-loop`, say -- can only gain or lose steps around what it calls, not edit inside it; a graph whose own process carries the interesting structure directly (`session-craft`'s) has more to work with. The running engine is stopped and resumed against the new graph immediately after (bounded to 5 re-entries per run), so an element the splice adds gets a chance to run in the same `run`/`resume` invocation rather than only the next one ([#45](https://github.com/datakurre/graph-agent/issues/45)). | in: `fragment` (a complete document); out: `added` |
 | `shell` | A deterministic step: runs a command and reports its exit status. No model call. | headers: `command` (required), `fail_on_error` (default `true`); out: `exit_code`, `stdout`, `stderr` |
 
@@ -51,6 +51,52 @@ recipes and worked examples are in `AGENT_ROLES.graph_architect`,
 name the flow it auto-creates, so a later op in the same batch can target it
 without guessing a generated id -- needed for the second gateway a real
 fork/join's join side requires.
+
+Every id a splice introduces -- an element's `id`, `insertShape`'s `flowId`,
+`connect`'s optional flow id, `createProcess`'s process id -- must be a valid
+XML id (a letter or `_` first, then letters, digits, `_`, `.` or `-`). BPMN
+types every id as `xsd:ID`, and an id that is not one serialized happily
+while leaving the token parked on the offending node forever, so `applyGraphOps`
+rejects the op that introduces it, naming the id
+([#109](https://github.com/datakurre/graph-agent/issues/109)).
+
+A splice also cannot reach into a process `linkGraph` inlined via
+`calledElement`, and no sequence flow it creates may cross a `bpmn:Process`
+or `bpmn:SubProcess` boundary -- see `graph:extend` above and
+[#86](https://github.com/datakurre/graph-agent/issues/86)/[#94](https://github.com/datakurre/graph-agent/issues/94)/[#100](https://github.com/datakurre/graph-agent/issues/100).
+
+### Session cost, and stopping on it
+
+Every `agent:turn` reports what it cost. The engine accumulates that across
+the whole run and publishes it as a FEEL variable named `_session`, readable
+from any gateway condition or event condition in the graph:
+
+| Field | Meaning |
+|---|---|
+| `total_cost` | Cumulative cost in USD, as the provider reported it |
+| `turn_count` | Model turns taken so far |
+| `total_tokens` | Tokens across every turn |
+| `input_tokens` / `output_tokens` | The same, split |
+| `cache_read_tokens` / `cache_write_tokens` | Prompt-cache reads and writes |
+
+Because it is an ordinary FEEL variable, a budget is just a condition:
+
+```xml
+<bpmn:boundaryEvent id="cost_limit" attachedToRef="the_expensive_bit" cancelActivity="true">
+  <bpmn:conditionalEventDefinition>
+    <bpmn:condition xsi:type="bpmn:tFormalExpression">=_session.total_cost &gt;= 0.50</bpmn:condition>
+  </bpmn:conditionalEventDefinition>
+</bpmn:boundaryEvent>
+```
+
+`element_templates/cost_limit_boundary_event.json` is that, as a template you
+can drop on any activity from the studio's properties panel. The condition is
+re-evaluated as the run advances, so a limit crossed *during* the activity
+interrupts it, not only one that was already breached when it started
+([#83](https://github.com/datakurre/graph-agent/issues/83)).
+
+The same numbers are what `graph-agent ls`, `show` and `report` print per
+session, and what the studio's session view shows.
 
 ### Editing a running session's graph
 
