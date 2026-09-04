@@ -229,13 +229,13 @@ reasoning as gw_draft_entry above.</bpmn:documentation>
       <bpmndi:BPMNShape id="gw_lint_di" bpmnElement="gw_lint" isMarkerVisible="true">
         <dc:Bounds x="1100" y="185" width="50" height="50" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="1105" y="243" width="40" height="27" />
+          <dc:Bounds x="1083" y="160" width="40" height="27" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_rejected_entry_di" bpmnElement="gw_rejected_entry" isMarkerVisible="true">
         <dc:Bounds x="1550" y="45" width="50" height="50" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="1544" y="29" width="62" height="14" />
+          <dc:Bounds x="1486" y="63" width="62" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="review_fragment_di" bpmnElement="review_fragment">
@@ -244,7 +244,7 @@ reasoning as gw_draft_entry above.</bpmn:documentation>
       <bpmndi:BPMNShape id="gw_approve_di" bpmnElement="gw_approve" isMarkerVisible="true">
         <dc:Bounds x="1400" y="185" width="50" height="50" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="1391" y="237" width="69" height="14" />
+          <dc:Bounds x="1391" y="169" width="69" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="apply_extension_di" bpmnElement="apply_extension">
@@ -253,13 +253,13 @@ reasoning as gw_draft_entry above.</bpmn:documentation>
       <bpmndi:BPMNShape id="craft_applied_di" bpmnElement="craft_applied">
         <dc:Bounds x="1707" y="192" width="36" height="36" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="1680" y="236" width="90" height="27" />
+          <dc:Bounds x="1700" y="236" width="90" height="27" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="craft_rejected_di" bpmnElement="craft_rejected">
         <dc:Bounds x="1707" y="52" width="36" height="36" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="1680" y="96" width="90" height="27" />
+          <dc:Bounds x="1700" y="96" width="90" height="27" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNEdge id="to_draft_di" bpmnElement="to_draft">
@@ -290,24 +290,26 @@ reasoning as gw_draft_entry above.</bpmn:documentation>
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="lint_exhausted_di" bpmnElement="lint_exhausted">
-        <di:waypoint x="1150" y="210" />
-        <di:waypoint x="1575" y="210" />
-        <di:waypoint x="1575" y="95" />
+        <di:waypoint x="1125" y="235" />
+        <di:waypoint x="1125" y="290" />
+        <di:waypoint x="1665" y="290" />
+        <di:waypoint x="1665" y="70" />
+        <di:waypoint x="1600" y="70" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="1335" y="194" width="56" height="14" />
+          <dc:Bounds x="1367" y="274" width="56" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="into_craft_rejected_di" bpmnElement="into_craft_rejected">
-        <di:waypoint x="1600" y="70" />
-        <di:waypoint x="1707" y="70" />
+        <di:waypoint x="1600" y="64" />
+        <di:waypoint x="1707" y="64" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="lint_retry_di" bpmnElement="lint_retry">
         <di:waypoint x="1125" y="185" />
-        <di:waypoint x="1125" y="-70" />
-        <di:waypoint x="225" y="-70" />
+        <di:waypoint x="1125" y="5" />
+        <di:waypoint x="225" y="5" />
         <di:waypoint x="225" y="185" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="647" y="-66" width="56" height="14" />
+          <dc:Bounds x="647" y="9" width="56" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="to_gw_approve_di" bpmnElement="to_gw_approve">
@@ -322,11 +324,13 @@ reasoning as gw_draft_entry above.</bpmn:documentation>
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="rejected_di" bpmnElement="rejected">
-        <di:waypoint x="1450" y="210" />
-        <di:waypoint x="1575" y="210" />
-        <di:waypoint x="1575" y="95" />
+        <di:waypoint x="1425" y="235" />
+        <di:waypoint x="1425" y="320" />
+        <di:waypoint x="1695" y="320" />
+        <di:waypoint x="1695" y="76" />
+        <di:waypoint x="1600" y="76" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="1528" y="194" width="49" height="14" />
+          <dc:Bounds x="1536" y="324" width="49" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="to_applied_di" bpmnElement="to_applied">
@@ -335,5 +339,5 @@ reasoning as gw_draft_entry above.</bpmn:documentation>
       </bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>
-  <!-- ga:modelHash:86b5c8372963100d96c278d33d53c373ff1dc4d1577c266e1d10bda21d4d65a9 -->
+  <!-- ga:modelHash:c9d1c82b540cc13c6d1291808cfd442ca75ff24d27033e3e7a031fe34cbaa45e -->
 </bpmn:definitions>

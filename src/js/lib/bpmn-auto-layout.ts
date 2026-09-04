@@ -69,6 +69,99 @@ interface NodeLayout {
 interface ProcessLayoutResult {
   nodes: Map<string, NodeLayout>;
   allFlows: any[];
+  /** Assigned once per process, before waypoints are computed. See `planChannels`. */
+  channels?: ChannelPlan;
+}
+
+/**
+ * Where a routed edge -- a loop-back, or a forward bypass over intermediate
+ * nodes -- runs while it is not alongside its own endpoints.
+ *
+ * Two things went wrong while these were fixed constants (`channel1Y` 140,
+ * `channel2Y` 280, a literal `290` for the `minTrack < 0` case). They were
+ * chosen against the *default* track pitch, so once a track was pushed down
+ * to clear a tall element (an expanded SubProcess adds 60px of clearance in
+ * `extraClearanceForTrack`), a channel that used to sit below the row landed
+ * *inside* it: in `pi-default-loop.bpmn` the return channel at Y=290 ran
+ * straight through seven nodes whose band is Y=230..310. And because every
+ * routed edge on a side shared one Y, two of them were drawn on exactly the
+ * same line -- `next_turn` and `followup_again` overlapped for 1500px, which
+ * renders as a single edge.
+ *
+ * So: derive the channel from the band the nodes actually occupy, and give
+ * each edge its own lane whenever its span overlaps another's.
+ */
+interface ChannelPlan {
+  /**
+   * The Y this flow's channel runs at. During the planning pass this records
+   * the request and returns a provisional value; afterwards it returns the
+   * lane actually assigned.
+   */
+  channelY(flowId: string, side: "above" | "below", x1: number, x2: number): number;
+}
+
+const CHANNEL_CLEARANCE = 40;
+const CHANNEL_LANE_GAP = 30;
+
+/**
+ * Two passes over the flows: the first records which of them route through a
+ * channel and how far they span, the second reads back the lane each was
+ * given. Lanes are packed greedily, longest span first, so a long loop-back
+ * nests outside a short one rather than crossing it, and two edges only share
+ * a lane when their spans do not overlap at all.
+ */
+function planChannels(nodes: Map<string, NodeLayout>): {
+  recorder: ChannelPlan;
+  resolve: () => ChannelPlan;
+} {
+  const tops: NodeLayout[] = [];
+  for (const n of nodes.values()) if (!n.isSubProcessChild) tops.push(n);
+  const bandTop = tops.length ? Math.min(...tops.map((n) => n.y)) : 0;
+  const bandBottom = tops.length ? Math.max(...tops.map((n) => n.y + n.height)) : 0;
+
+  const laneY = (side: "above" | "below", lane: number): number =>
+    side === "below"
+      ? bandBottom + CHANNEL_CLEARANCE + lane * CHANNEL_LANE_GAP
+      : bandTop - CHANNEL_CLEARANCE - lane * CHANNEL_LANE_GAP;
+
+  interface Request {
+    flowId: string;
+    side: "above" | "below";
+    lo: number;
+    hi: number;
+  }
+  const requests: Request[] = [];
+  const recorder: ChannelPlan = {
+    channelY(flowId, side, x1, x2) {
+      requests.push({ flowId, side, lo: Math.min(x1, x2), hi: Math.max(x1, x2) });
+      return laneY(side, 0);
+    },
+  };
+
+  const resolve = (): ChannelPlan => {
+    const assigned = new Map<string, number>();
+    for (const side of ["below", "above"] as const) {
+      const mine = requests.filter((r) => r.side === side).sort((a, b) => b.hi - b.lo - (a.hi - a.lo));
+      const lanes: Array<Array<{ lo: number; hi: number }>> = [];
+      for (const req of mine) {
+        let lane = 0;
+        while (
+          lanes[lane]?.some((iv) => Math.min(iv.hi, req.hi) - Math.max(iv.lo, req.lo) > 0)
+        ) {
+          lane += 1;
+        }
+        (lanes[lane] ??= []).push({ lo: req.lo, hi: req.hi });
+        assigned.set(req.flowId, lane);
+      }
+    }
+    return {
+      channelY(flowId, side) {
+        return laneY(side, assigned.get(flowId) ?? 0);
+      },
+    };
+  };
+
+  return { recorder, resolve };
 }
 
 /**
@@ -1042,6 +1135,72 @@ function computeEdgeLabelBounds(
   }
 }
 
+/**
+ * Every edge attaches at the middle of a node's side, so two edges that use the
+ * same side run down the same line -- in `pi-default-loop.bpmn` the flow into
+ * `gw_followup` and the flow back out of it shared 285px of it, which draws as
+ * one edge. Spread the attach points of each crowded side across that side, and
+ * move the neighbouring waypoint with them so the polyline stays orthogonal.
+ */
+function fanOutAttachPoints(
+  edgeWaypoints: Map<string, Array<{ x: number; y: number }>>,
+  layout: ProcessLayoutResult,
+): void {
+  interface Attach {
+    flowId: string;
+    index: number;
+  }
+  const bySide = new Map<string, Attach[]>();
+
+  for (const flow of layout.allFlows) {
+    const pts = edgeWaypoints.get(flow.id);
+    if (!pts || pts.length < 2) continue;
+    for (const [index, nodeId] of [
+      [0, flow.sourceRef?.id],
+      [pts.length - 1, flow.targetRef?.id],
+    ] as Array<[number, string]>) {
+      const node = layout.nodes.get(nodeId);
+      const p = pts[index];
+      if (!node || !p) continue;
+      let side: string | null = null;
+      if (Math.abs(p.y - node.y) < 0.5) side = "top";
+      else if (Math.abs(p.y - (node.y + node.height)) < 0.5) side = "bottom";
+      else if (Math.abs(p.x - node.x) < 0.5) side = "left";
+      else if (Math.abs(p.x - (node.x + node.width)) < 0.5) side = "right";
+      if (!side) continue;
+      const key = `${nodeId}:${side}`;
+      (bySide.get(key) ?? bySide.set(key, []).get(key)!).push({ flowId: flow.id, index });
+    }
+  }
+
+  for (const [key, attaches] of bySide) {
+    if (attaches.length < 2) continue;
+    const [nodeId, side] = key.split(":") as [string, string];
+    const node = layout.nodes.get(nodeId);
+    if (!node) continue;
+    const horizontalSide = side === "top" || side === "bottom";
+    const extent = horizontalSide ? node.width : node.height;
+    // Keep the fan inside the middle half of the side, so an attach point never
+    // lands on a corner.
+    const step = extent / 2 / (attaches.length + 1);
+    const start = (horizontalSide ? node.x : node.y) + extent / 4 + step;
+    attaches.sort((a, b) => a.flowId.localeCompare(b.flowId));
+    attaches.forEach((attach, i) => {
+      const pts = edgeWaypoints.get(attach.flowId)!;
+      const coord = start + i * step;
+      const neighbour = attach.index === 0 ? pts[1] : pts[pts.length - 2];
+      const point = pts[attach.index]!;
+      if (horizontalSide) {
+        if (neighbour && Math.abs(neighbour.x - point.x) < 0.5) neighbour.x = coord;
+        point.x = coord;
+      } else {
+        if (neighbour && Math.abs(neighbour.y - point.y) < 0.5) neighbour.y = coord;
+        point.y = coord;
+      }
+    });
+  }
+}
+
 function createProcessDi(
   moddle: any,
   rootElement: any,
@@ -1051,14 +1210,24 @@ function createProcessDi(
 ) {
   const planeElements: any[] = [];
 
-  // 1. Precompute Edge DI waypoints for each sequence flow
+  // 1. Precompute Edge DI waypoints for each sequence flow.
+  //
+  // Twice: the first pass lets `computeWaypoints` declare which flows route
+  // through a channel and how far each spans, the second reads back the lane
+  // the planner gave it. See `planChannels`.
   const edgeWaypoints = new Map<string, Array<{ x: number; y: number }>>();
-  for (const flow of layout.allFlows) {
-    const src = layout.nodes.get(flow.sourceRef?.id);
-    const tgt = layout.nodes.get(flow.targetRef?.id);
-    if (!src || !tgt) continue;
-    edgeWaypoints.set(flow.id, computeWaypoints(src, tgt, layout, opts, flow));
+  const { recorder, resolve } = planChannels(layout.nodes);
+  for (const pass of [recorder, null]) {
+    layout.channels = pass ?? resolve();
+    edgeWaypoints.clear();
+    for (const flow of layout.allFlows) {
+      const src = layout.nodes.get(flow.sourceRef?.id);
+      const tgt = layout.nodes.get(flow.targetRef?.id);
+      if (!src || !tgt) continue;
+      edgeWaypoints.set(flow.id, repairSegmentCollisions(computeWaypoints(src, tgt, layout, opts, flow), layout, flow));
+    }
   }
+  fanOutAttachPoints(edgeWaypoints, layout);
 
   const placedLabels: LabelBounds[] = [];
 
@@ -1161,6 +1330,210 @@ function createProcessDi(
   rootElement.diagrams.push(diagram);
 }
 
+/**
+ * The leg leaving an attach point has to head away from its own node. Without
+ * this, a nudge is free to lift a channel that hangs below a gateway up past
+ * the gateway's top -- the polyline still misses every *other* element, so it
+ * scores as an improvement, while actually being drawn straight through its own
+ * source (craft-graph's `lint_exhausted` left gw_lint's bottom edge and rose
+ * back through it).
+ */
+function leavesOutward(
+  pts: Array<{ x: number; y: number }>,
+  srcNode: NodeLayout | undefined,
+  tgtNode: NodeLayout | undefined,
+): boolean {
+  const ok = (attach: { x: number; y: number }, next: { x: number; y: number }, node?: NodeLayout): boolean => {
+    if (!node) return true;
+    if (Math.abs(attach.y - node.y) < 0.5) return next.y <= attach.y + 0.5;
+    if (Math.abs(attach.y - (node.y + node.height)) < 0.5) return next.y >= attach.y - 0.5;
+    if (Math.abs(attach.x - node.x) < 0.5) return next.x <= attach.x + 0.5;
+    if (Math.abs(attach.x - (node.x + node.width)) < 0.5) return next.x >= attach.x - 0.5;
+    return true;
+  };
+  return (
+    ok(pts[0]!, pts[1]!, srcNode) && ok(pts[pts.length - 1]!, pts[pts.length - 2]!, tgtNode)
+  );
+}
+
+/**
+ * A routed polyline can still run a riser (or a descender) straight through a
+ * node that happens to sit in the column it climbs: `no_tools` rose out of
+ * `gw_tools` through `end_error`, `not_truncated` through `drain_followup`,
+ * and `to_gw_followup` dropped through `gw_truncated`. Rather than teach each
+ * routing case about every element that might be above or below it, nudge the
+ * finished polyline: for each interior straight segment that intersects a node
+ * it does not connect, try shifting that segment sideways (or up/down) into a
+ * clear gap, keeping the polyline orthogonal by moving both of its endpoints.
+ */
+function repairSegmentCollisions(
+  waypoints: Array<{ x: number; y: number }>,
+  layout: ProcessLayoutResult,
+  flow: any,
+): Array<{ x: number; y: number }> {
+  if (waypoints.length < 3) return waypoints;
+  const endpoints = new Set([flow?.sourceRef?.id, flow?.targetRef?.id]);
+  const obstacles = Array.from(layout.nodes.values()).filter(
+    (n) => !endpoints.has(n.id) && n.element?.$type !== "bpmn:SubProcess",
+  );
+
+  const hits = (pts: Array<{ x: number; y: number }>): number => {
+    let n = 0;
+    for (let i = 0; i < pts.length - 1; i += 1) n += segmentHitCount(pts[i]!, pts[i + 1]!, obstacles);
+    return n;
+  };
+
+  let best = waypoints;
+  let bestHits = hits(best);
+  if (bestHits === 0) return best;
+
+  // Interior segments move freely; the first and last may only slide along the
+  // edge of the node they attach to, so the polyline still meets its endpoints.
+  const srcNode = layout.nodes.get(flow?.sourceRef?.id);
+  const tgtNode = layout.nodes.get(flow?.targetRef?.id);
+  const staysOnNode = (idx: number, moved: { x: number; y: number }): boolean => {
+    const node = idx === 0 ? srcNode : idx === best.length - 1 ? tgtNode : undefined;
+    if (!node) return true;
+    return (
+      moved.x >= node.x && moved.x <= node.x + node.width && moved.y >= node.y && moved.y <= node.y + node.height
+    );
+  };
+
+  for (let i = 0; i < best.length - 1 && bestHits > 0; i += 1) {
+    const a = best[i]!;
+    const b = best[i + 1]!;
+    const vertical = Math.abs(a.x - b.x) < 0.5;
+    const horizontal = Math.abs(a.y - b.y) < 0.5;
+    if (!vertical && !horizontal) continue;
+    for (const delta of SEGMENT_NUDGES) {
+      const candidate = best.map((p, idx) =>
+        idx === i || idx === i + 1
+          ? vertical
+            ? { x: p.x + delta, y: p.y }
+            : { x: p.x, y: p.y + delta }
+          : { ...p },
+      );
+      if (!staysOnNode(i, candidate[i]!) || !staysOnNode(i + 1, candidate[i + 1]!)) continue;
+      if (!leavesOutward(candidate, srcNode, tgtNode)) continue;
+      const candidateHits = hits(candidate);
+      if (candidateHits < bestHits) {
+        best = candidate;
+        bestHits = candidateHits;
+        if (bestHits === 0) break;
+      }
+    }
+  }
+
+  // A final approach that still cannot be cleared is one where the target sits
+  // directly above (or below) an element wide enough that no slide along the
+  // target's own edge escapes it -- craft-graph's `rejected` rising out of the
+  // return channel into `gw_rejected_entry`, which sits on top of
+  // `apply_extension`. Take the vertical around the blocker and come in from
+  // the side instead.
+  if (bestHits > 0 && tgtNode) {
+    // Two flows detouring around the same blocker into the same target would
+    // otherwise pick the same bypass column and draw as one line, so stagger
+    // them by their position among that target's incoming flows.
+    const siblings = layout.allFlows.filter((f: any) => f.targetRef?.id === tgtNode.id);
+    const rank = Math.max(0, siblings.findIndex((f: any) => f.id === flow?.id));
+    const detour = approachFromSide(best, tgtNode, obstacles, rank * CHANNEL_LANE_GAP);
+    if (detour && hits(detour) === 0) return detour;
+  }
+  return best;
+}
+
+/**
+ * Rewrites a polyline's last vertical leg so it climbs clear of whatever is
+ * between the channel and the target, then enters the target's nearer side.
+ */
+function approachFromSide(
+  pts: Array<{ x: number; y: number }>,
+  tgt: NodeLayout,
+  obstacles: NodeLayout[],
+  stagger = 0,
+): Array<{ x: number; y: number }> | null {
+  if (pts.length < 3) return null;
+  const pen = pts[pts.length - 2]!;
+  const end = pts[pts.length - 1]!;
+  if (Math.abs(pen.x - end.x) > 0.5) return null;
+
+  const blocking = obstacles.filter(
+    (o) =>
+      pen.x > o.x - SEGMENT_CLEARANCE &&
+      pen.x < o.x + o.width + SEGMENT_CLEARANCE &&
+      Math.max(Math.min(pen.y, end.y), o.y - SEGMENT_CLEARANCE) <
+        Math.min(Math.max(pen.y, end.y), o.y + o.height + SEGMENT_CLEARANCE),
+  );
+  if (blocking.length === 0) return null;
+
+  for (const dir of [1, -1] as const) {
+    const bypassX =
+      dir === 1
+        ? Math.max(...blocking.map((o) => o.x + o.width)) + CHANNEL_CLEARANCE + stagger
+        : Math.min(...blocking.map((o) => o.x)) - CHANNEL_CLEARANCE - stagger;
+    const entryX = dir === 1 ? tgt.x + tgt.width : tgt.x;
+    const candidate = [
+      ...pts.slice(0, pts.length - 2).map((p) => ({ ...p })),
+      { x: bypassX, y: pen.y },
+      { x: bypassX, y: tgt.centerY },
+      { x: entryX, y: tgt.centerY },
+    ];
+    // keep the leg that reaches `pen` orthogonal
+    const before = candidate[candidate.length - 4];
+    if (before && Math.abs(before.y - pen.y) > 0.5) return null;
+    return candidate;
+  }
+  return null;
+}
+
+/** Nudge offsets tried in order: nearest first, both directions. */
+const SEGMENT_NUDGES: number[] = (() => {
+  const out: number[] = [];
+  for (let d = 15; d <= 135; d += 15) out.push(d, -d);
+  return out;
+})();
+
+/**
+ * How many of `obstacles` an axis-aligned segment passes through, counting a
+ * near miss as a hit: without the clearance the repair below is free to park a
+ * channel exactly on a row of tasks' top edge, which is technically outside
+ * every box and reads as a line drawn through them.
+ */
+const SEGMENT_CLEARANCE = 8;
+
+function segmentHitCount(
+  p: { x: number; y: number },
+  q: { x: number; y: number },
+  obstacles: NodeLayout[],
+): number {
+  let n = 0;
+  for (const o of obstacles) {
+    const x0 = o.x - SEGMENT_CLEARANCE;
+    const y0 = o.y - SEGMENT_CLEARANCE;
+    const x1 = o.x + o.width + SEGMENT_CLEARANCE;
+    const y1 = o.y + o.height + SEGMENT_CLEARANCE;
+    if (Math.abs(p.y - q.y) < 0.5) {
+      if (p.y <= y0 || p.y >= y1) continue;
+      if (Math.max(Math.min(p.x, q.x), x0) < Math.min(Math.max(p.x, q.x), x1)) n += 1;
+    } else if (Math.abs(p.x - q.x) < 0.5) {
+      if (p.x <= x0 || p.x >= x1) continue;
+      if (Math.max(Math.min(p.y, q.y), y0) < Math.min(Math.max(p.y, q.y), y1)) n += 1;
+    }
+  }
+  return n;
+}
+
+/** The Y a routed edge's channel runs at, from the process's channel plan. */
+function channelY(
+  layout: ProcessLayoutResult,
+  flow: any,
+  side: "above" | "below",
+  x1: number,
+  x2: number,
+): number {
+  return layout.channels?.channelY(flow?.id ?? "", side, x1, x2) ?? 0;
+}
+
 function computeWaypoints(
   src: NodeLayout,
   tgt: NodeLayout,
@@ -1180,12 +1553,7 @@ function computeWaypoints(
 
   // Case 1.5: Upside route between exclusive gateways to prevent lane collisions
   if (shouldUseUpsideRoute(src, tgt, layout, flow?.id)) {
-    const isLoopBack = tgt.col <= src.col;
-    let upperChannelY = minTrack < 0 ? opts.spineY - opts.trackGap : Math.max(0, opts.spineY - 70);
-    if (isLoopBack && upperChannelY === 0) {
-      // Place long process loop-backs in upper channel 2 (Y = -20) so local forward bypasses (Y = 0) do not overlap
-      upperChannelY = -20;
-    }
+    const upperChannelY = channelY(layout, flow, "above", src.centerX, tgt.centerX);
     return [
       { x: src.centerX, y: src.y },
       { x: src.centerX, y: upperChannelY },
@@ -1196,22 +1564,13 @@ function computeWaypoints(
 
   // Case 2: Loop-back / Back-edge (target column <= source column)
   if (tgt.col <= src.col) {
-    let channelY = opts.channel1Y;
-    if (minTrack < 0) {
-      channelY = 290;
-    } else {
-      if (src.track === 1) channelY = opts.channel2Y;
-      if (src.track === 2) channelY = opts.channel3Y;
-    }
-
-    const startY = src.y + src.height;
-    const endY = tgt.y + tgt.height;
+    const lane = channelY(layout, flow, "below", src.centerX, tgt.centerX);
 
     return [
-      { x: src.centerX, y: startY },
-      { x: src.centerX, y: channelY },
-      { x: tgt.centerX, y: channelY },
-      { x: tgt.centerX, y: endY },
+      { x: src.centerX, y: src.y + src.height },
+      { x: src.centerX, y: lane },
+      { x: tgt.centerX, y: lane },
+      { x: tgt.centerX, y: tgt.y + tgt.height },
     ];
   }
 
@@ -1239,23 +1598,66 @@ function computeWaypoints(
     }
 
     // Forward bypass skipping intermediate elements on same track via channel
-    let channelY = src.track === 0 ? opts.channel1Y : opts.channel2Y;
-    if (minTrack < 0 && src.track === 0) channelY = 290;
+    const lane = channelY(layout, flow, "below", src.centerX, tgt.centerX);
     return [
       { x: src.centerX, y: src.y + src.height },
-      { x: src.centerX, y: channelY },
-      { x: tgt.centerX, y: channelY },
+      { x: src.centerX, y: lane },
+      { x: tgt.centerX, y: lane },
       { x: tgt.centerX, y: tgt.y + tgt.height },
     ];
   }
 
   // Case 4: Branching UP from gateway to upper track (e.g. Track 0 -> Track -1)
   if (src.track > tgt.track && src.element.$type.endsWith("Gateway") && !tgt.element.$type.endsWith("Gateway")) {
-    return [
+    // Rising at src.centerX and then running left to `tgt.x` only makes sense
+    // while the gateway is left of the target. When it is under (or right of)
+    // it, that last leg doubles back *through* the target -- what put
+    // `no_tools` inside `end_error` and `not_truncated` inside
+    // `drain_followup`. Enter the nearest edge instead.
+    if (src.centerX >= tgt.x && src.centerX <= tgt.x + tgt.width) {
+      return [
+        { x: src.centerX, y: src.y },
+        { x: src.centerX, y: tgt.y + tgt.height },
+      ];
+    }
+    const entryX = src.centerX > tgt.x + tgt.width ? tgt.x + tgt.width : tgt.x;
+    // A gateway is only 50px wide, so when something sits in the column
+    // directly above it the riser cannot simply slide clear (repairSegment-
+    // Collisions keeps an attach point on its own node's edge). Leave by the
+    // side instead and climb in the gap between the two elements.
+    const direct = [
       { x: src.centerX, y: src.y },
       { x: src.centerX, y: tgt.centerY },
-      { x: tgt.x, y: tgt.centerY },
+      { x: entryX, y: tgt.centerY },
     ];
+    const blockers = Array.from(layout.nodes.values()).filter(
+      (n) => n.id !== src.id && n.id !== tgt.id && n.element?.$type !== "bpmn:SubProcess",
+    );
+    if (segmentHitCount(direct[0]!, direct[1]!, blockers) > 0 && entryX === tgt.x) {
+      // Climb out of the gateway's own column only as far as the blocker's
+      // lower edge, cross into the gap between the two elements, and finish the
+      // climb there. Leaving by the gateway's right side instead would work,
+      // but would share that stub with the gateway's own forward flow.
+      const gapX = (src.x + src.width + tgt.x) / 2;
+      const blockerBottom = Math.max(
+        tgt.y + tgt.height,
+        ...blockers
+          .filter((n) => n.x < src.centerX && src.centerX < n.x + n.width && n.y + n.height < src.y)
+          .map((n) => n.y + n.height),
+      );
+      const midY = (blockerBottom + src.y) / 2;
+      const jog = [
+        { x: src.centerX, y: src.y },
+        { x: src.centerX, y: midY },
+        { x: gapX, y: midY },
+        { x: gapX, y: tgt.centerY },
+        { x: tgt.x, y: tgt.centerY },
+      ];
+      let jogHits = 0;
+      for (let i = 0; i < jog.length - 1; i += 1) jogHits += segmentHitCount(jog[i]!, jog[i + 1]!, blockers);
+      if (jogHits === 0) return jog;
+    }
+    return direct;
   }
 
   // Case 5: Merging DOWN from upper track into a gateway (e.g. Track -1 -> Track 0)
@@ -1271,10 +1673,19 @@ function computeWaypoints(
   if (src.track < tgt.track) {
     // Exits bottom of gateway
     if (src.element.$type.endsWith("Gateway")) {
+      // Same as case 4, mirrored: a horizontal leg back to `tgt.x` would run
+      // through the target when the gateway is not left of it.
+      if (src.centerX >= tgt.x && src.centerX <= tgt.x + tgt.width) {
+        return [
+          { x: src.centerX, y: src.y + src.height },
+          { x: src.centerX, y: tgt.y },
+        ];
+      }
+      const entryX = src.centerX > tgt.x + tgt.width ? tgt.x + tgt.width : tgt.x;
       return [
         { x: src.centerX, y: src.y + src.height },
         { x: src.centerX, y: tgt.centerY },
-        { x: tgt.x, y: tgt.centerY },
+        { x: entryX, y: tgt.centerY },
       ];
     }
     // Exits right of task, drops to target centerY
@@ -1298,20 +1709,38 @@ function computeWaypoints(
     const isLonger = otherTgt ? tgt.col > otherTgt.col : false;
 
     if (isOtherExit && isLonger && src.element.$type.endsWith("Gateway")) {
-      const channelY = src.track === 1 ? opts.channel2Y : opts.channel3Y;
+      const lane = channelY(layout, flow, "below", src.centerX, tgt.centerX);
       return [
         { x: src.centerX, y: src.y + src.height },
-        { x: src.centerX, y: channelY },
-        { x: tgt.centerX, y: channelY },
+        { x: src.centerX, y: lane },
+        { x: tgt.centerX, y: lane },
         { x: tgt.centerX, y: tgt.y + tgt.height },
       ];
     }
 
-    return [
+    // Running along `src.centerY` all the way to the target's column only works
+    // while nothing sits between them on that track. In craft-graph it did not:
+    // `lint_exhausted` (gw_lint -> gw_rejected_entry) crossed review_fragment,
+    // gw_approve and apply_extension in one straight line. Drop into a channel
+    // instead, exactly as the branch above does.
+    const straight = [
       { x: src.x + src.width, y: src.centerY },
       { x: tgt.centerX, y: src.centerY },
       { x: tgt.centerX, y: tgt.y + tgt.height },
     ];
+    const between = Array.from(layout.nodes.values()).filter(
+      (n) => n.id !== src.id && n.id !== tgt.id && n.element?.$type !== "bpmn:SubProcess",
+    );
+    if (segmentHitCount(straight[0]!, straight[1]!, between) > 0) {
+      const lane = channelY(layout, flow, "below", src.centerX, tgt.centerX);
+      return [
+        { x: src.centerX, y: src.y + src.height },
+        { x: src.centerX, y: lane },
+        { x: tgt.centerX, y: lane },
+        { x: tgt.centerX, y: tgt.y + tgt.height },
+      ];
+    }
+    return straight;
   }
 
   // Fallback orthogonal

@@ -162,11 +162,11 @@ self-documenting artifact.</bpmn:documentation>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="back_to_intent_di" bpmnElement="back_to_intent">
         <di:waypoint x="675" y="250" />
-        <di:waypoint x="675" y="280" />
-        <di:waypoint x="225" y="280" />
+        <di:waypoint x="675" y="290" />
+        <di:waypoint x="225" y="290" />
         <di:waypoint x="225" y="95" />
       </bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>
-  <!-- ga:modelHash:8af2b12044a5e4e979e189600be5b86dbc53f34330a97e2fcb7455fa623609a4 -->
+  <!-- ga:modelHash:d7fd5cef384a8807623e8d7d91c0c72bf78f4e92452a51875a095f35a8d2004b -->
 </bpmn:definitions>

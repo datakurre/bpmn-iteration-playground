@@ -263,7 +263,7 @@ the same reasoning as gw_inject_entry above.</bpmn:documentation>
       <bpmndi:BPMNShape id="gw_tools_di" bpmnElement="gw_tools" isMarkerVisible="true">
         <dc:Bounds x="950" y="245" width="50" height="50" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="995" y="303" width="40" height="27" />
+          <dc:Bounds x="955" y="303" width="40" height="27" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="gw_truncated_di" bpmnElement="gw_truncated" isMarkerVisible="true">
@@ -347,7 +347,7 @@ the same reasoning as gw_inject_entry above.</bpmn:documentation>
       <bpmndi:BPMNShape id="end_error_di" bpmnElement="end_error">
         <dc:Bounds x="957" y="52" width="36" height="36" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="870" y="96" width="90" height="20" />
+          <dc:Bounds x="930" y="96" width="90" height="20" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNEdge id="to_inject_di" bpmnElement="to_inject">
@@ -390,10 +390,12 @@ the same reasoning as gw_inject_entry above.</bpmn:documentation>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="no_tools_di" bpmnElement="no_tools">
         <di:waypoint x="975" y="245" />
-        <di:waypoint x="975" y="70" />
+        <di:waypoint x="975" y="178" />
+        <di:waypoint x="1038" y="178" />
+        <di:waypoint x="1038" y="70" />
         <di:waypoint x="1075" y="70" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="1010" y="54" width="30" height="14" />
+          <dc:Bounds x="991" y="162" width="30" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="truncated_di" bpmnElement="truncated">
@@ -405,10 +407,12 @@ the same reasoning as gw_inject_entry above.</bpmn:documentation>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="not_truncated_di" bpmnElement="not_truncated">
         <di:waypoint x="1125" y="245" />
-        <di:waypoint x="1125" y="70" />
+        <di:waypoint x="1125" y="208" />
+        <di:waypoint x="1198" y="208" />
+        <di:waypoint x="1198" y="70" />
         <di:waypoint x="1245" y="70" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="1154" y="54" width="62" height="14" />
+          <dc:Bounds x="1130" y="192" width="62" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="failed_to_prepare_di" bpmnElement="failed_to_prepare">
@@ -417,8 +421,8 @@ the same reasoning as gw_inject_entry above.</bpmn:documentation>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="batch_done_di" bpmnElement="batch_done">
         <di:waypoint x="1425" y="170" />
-        <di:waypoint x="1425" y="280" />
-        <di:waypoint x="2025" y="280" />
+        <di:waypoint x="1425" y="410" />
+        <di:waypoint x="2025" y="410" />
         <di:waypoint x="2025" y="110" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="collected_di" bpmnElement="collected">
@@ -426,19 +430,19 @@ the same reasoning as gw_inject_entry above.</bpmn:documentation>
         <di:waypoint x="2150" y="70" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="batch_terminates_di" bpmnElement="batch_terminates">
-        <di:waypoint x="2200" y="70" />
-        <di:waypoint x="2775" y="70" />
+        <di:waypoint x="2200" y="74" />
+        <di:waypoint x="2775" y="74" />
         <di:waypoint x="2775" y="245" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="2443" y="54" width="90" height="14" />
+          <dc:Bounds x="2443" y="78" width="90" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="batch_continues_di" bpmnElement="batch_continues">
-        <di:waypoint x="2200" y="70" />
-        <di:waypoint x="2325" y="70" />
+        <di:waypoint x="2200" y="66" />
+        <di:waypoint x="2325" y="66" />
         <di:waypoint x="2325" y="245" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="2232" y="54" width="62" height="14" />
+          <dc:Bounds x="2232" y="50" width="62" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="into_prepare_next_turn_di" bpmnElement="into_prepare_next_turn">
@@ -458,26 +462,26 @@ the same reasoning as gw_inject_entry above.</bpmn:documentation>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="next_turn_di" bpmnElement="next_turn">
         <di:waypoint x="2625" y="295" />
-        <di:waypoint x="2625" y="290" />
-        <di:waypoint x="225" y="290" />
-        <di:waypoint x="225" y="295" />
+        <di:waypoint x="2625" y="350" />
+        <di:waypoint x="229" y="350" />
+        <di:waypoint x="229" y="295" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="1381" y="294" width="88" height="14" />
+          <dc:Bounds x="1383" y="334" width="88" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="to_gw_followup_di" bpmnElement="to_gw_followup">
-        <di:waypoint x="1125" y="110" />
-        <di:waypoint x="1125" y="280" />
-        <di:waypoint x="1725" y="280" />
-        <di:waypoint x="1725" y="95" />
+        <di:waypoint x="1170" y="110" />
+        <di:waypoint x="1170" y="440" />
+        <di:waypoint x="1729" y="440" />
+        <di:waypoint x="1729" y="95" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="followup_again_di" bpmnElement="followup_again">
-        <di:waypoint x="1725" y="95" />
-        <di:waypoint x="1725" y="290" />
-        <di:waypoint x="225" y="290" />
-        <di:waypoint x="225" y="295" />
+        <di:waypoint x="1721" y="95" />
+        <di:waypoint x="1721" y="380" />
+        <di:waypoint x="221" y="380" />
+        <di:waypoint x="221" y="295" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="960" y="294" width="30" height="14" />
+          <dc:Bounds x="956" y="384" width="30" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="no_followup_di" bpmnElement="no_followup">
@@ -501,5 +505,5 @@ the same reasoning as gw_inject_entry above.</bpmn:documentation>
       </bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>
-  <!-- ga:modelHash:2835e91866707c4aa00b32a81dbcf8ec67064dffb494ccb1b82931cbacadd868 -->
+  <!-- ga:modelHash:b0574961ef5e6dcd334547e05dfecdd7668aa0d9cf386ea74011fc47c47a0f27 -->
 </bpmn:definitions>

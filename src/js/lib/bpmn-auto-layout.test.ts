@@ -301,3 +301,97 @@ describe("bpmn-auto-layout", () => {
     await expect(layoutProcess(xml)).rejects.toThrow(/crossing.*cannot cross between processes or subprocesses/s);
   });
 });
+
+/**
+ * The routed diagram has to be *readable*, not merely valid: bpmnlint's
+ * `no-overlapping-elements` only compares shapes, so nothing caught a channel
+ * running straight through a row of nodes, or two edges drawn on exactly the
+ * same line. Both were real -- with the channel Y fixed at 290 while the node
+ * band sat at 230..310, `pi-default-loop.bpmn`'s `next_turn` crossed seven
+ * elements and overlapped `followup_again` for 1500px. These are the geometric
+ * invariants that had no test.
+ */
+describe("routing invariants over the bundled graphs", () => {
+  interface Box { id: string; x: number; y: number; width: number; height: number }
+  interface Seg { flowId: string; a: { x: number; y: number }; b: { x: number; y: number } }
+
+  function readGeometry(xml: string): { boxes: Box[]; segs: Seg[]; ends: Map<string, [string, string]>; parentOf: Map<string, string> } {
+    const boxes: Box[] = [];
+    for (const m of xml.matchAll(
+      /<bpmndi:BPMNShape id="[^"]*" bpmnElement="([^"]+)"[^>]*>\s*<dc:Bounds x="(-?[\d.]+)" y="(-?[\d.]+)" width="([\d.]+)" height="([\d.]+)"/g,
+    )) {
+      boxes.push({ id: m[1]!, x: +m[2]!, y: +m[3]!, width: +m[4]!, height: +m[5]! });
+    }
+    const segs: Seg[] = [];
+    for (const m of xml.matchAll(/<bpmndi:BPMNEdge id="[^"]*" bpmnElement="([^"]+)"[^>]*>([\s\S]*?)<\/bpmndi:BPMNEdge>/g)) {
+      const pts = [...m[2]!.matchAll(/<di:waypoint x="(-?[\d.]+)" y="(-?[\d.]+)"/g)].map((w) => ({ x: +w[1]!, y: +w[2]! }));
+      for (let i = 0; i < pts.length - 1; i += 1) segs.push({ flowId: m[1]!, a: pts[i]!, b: pts[i + 1]! });
+    }
+    const ends = new Map<string, [string, string]>();
+    for (const m of xml.matchAll(/<bpmn:sequenceFlow id="([^"]+)"[^>]*sourceRef="([^"]+)"[^>]*targetRef="([^"]+)"/g)) {
+      ends.set(m[1]!, [m[2]!, m[3]!]);
+    }
+    const parentOf = new Map<string, string>();
+    for (const m of xml.matchAll(/<bpmn:subProcess id="([^"]+)"[^>]*>([\s\S]*?)<\/bpmn:subProcess>/g)) {
+      for (const c of m[2]!.matchAll(/<bpmn:[A-Za-z]+ id="([^"]+)"/g)) parentOf.set(c[1]!, m[1]!);
+    }
+    return { boxes, segs, ends, parentOf };
+  }
+
+  const graphs = ["craft-graph", "pi-default-loop", "session-craft", "session-default", "session-skeleton", "shell-demo"];
+
+  for (const id of graphs) {
+    it(`${id}.bpmn: no edge is routed through an element it does not connect`, async () => {
+      const xml = readFileSync(join(process.cwd(), "workflows", `${id}.bpmn`), "utf8");
+      const { boxes, segs, ends, parentOf } = readGeometry(xml);
+      const through: string[] = [];
+      for (const seg of segs) {
+        const connected = new Set(ends.get(seg.flowId) ?? []);
+        for (const box of boxes) {
+          if (connected.has(box.id)) continue;
+          if (parentOf.get(seg.flowId) === box.id) continue; // a flow inside its own subprocess
+          const x0 = box.x + 1;
+          const y0 = box.y + 1;
+          const x1 = box.x + box.width - 1;
+          const y1 = box.y + box.height - 1;
+          const horizontal = Math.abs(seg.a.y - seg.b.y) < 0.5;
+          const vertical = Math.abs(seg.a.x - seg.b.x) < 0.5;
+          if (horizontal && seg.a.y > y0 && seg.a.y < y1) {
+            if (Math.max(Math.min(seg.a.x, seg.b.x), x0) < Math.min(Math.max(seg.a.x, seg.b.x), x1)) {
+              through.push(`${seg.flowId} through ${box.id}`);
+            }
+          } else if (vertical && seg.a.x > x0 && seg.a.x < x1) {
+            if (Math.max(Math.min(seg.a.y, seg.b.y), y0) < Math.min(Math.max(seg.a.y, seg.b.y), y1)) {
+              through.push(`${seg.flowId} through ${box.id}`);
+            }
+          }
+        }
+      }
+      expect([...new Set(through)]).toEqual([]);
+    });
+
+    it(`${id}.bpmn: no two edges are drawn on top of each other`, async () => {
+      const xml = readFileSync(join(process.cwd(), "workflows", `${id}.bpmn`), "utf8");
+      const { segs, ends } = readGeometry(xml);
+      const overlaps: string[] = [];
+      for (let i = 0; i < segs.length; i += 1) {
+        for (let j = i + 1; j < segs.length; j += 1) {
+          const s = segs[i]!;
+          const t = segs[j]!;
+          if (s.flowId === t.flowId) continue;
+          const sameH =
+            Math.abs(s.a.y - s.b.y) < 0.5 && Math.abs(t.a.y - t.b.y) < 0.5 && Math.abs(s.a.y - t.a.y) < 0.5;
+          const sameV =
+            Math.abs(s.a.x - s.b.x) < 0.5 && Math.abs(t.a.x - t.b.x) < 0.5 && Math.abs(s.a.x - t.a.x) < 0.5;
+          if (!sameH && !sameV) continue;
+          const [lo1, hi1] = sameH ? [Math.min(s.a.x, s.b.x), Math.max(s.a.x, s.b.x)] : [Math.min(s.a.y, s.b.y), Math.max(s.a.y, s.b.y)];
+          const [lo2, hi2] = sameH ? [Math.min(t.a.x, t.b.x), Math.max(t.a.x, t.b.x)] : [Math.min(t.a.y, t.b.y), Math.max(t.a.y, t.b.y)];
+          if (Math.min(hi1, hi2) - Math.max(lo1, lo2) > 8) {
+            overlaps.push(`${[s.flowId, t.flowId].sort().join(" & ")}`);
+          }
+        }
+      }
+      expect([...new Set(overlaps)]).toEqual([]);
+    });
+  }
+});
