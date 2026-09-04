@@ -841,6 +841,29 @@ describe("applyGraphOps", () => {
     );
   });
 
+  it("throws a clear error for an id that is not a valid XML id, naming it, before it can hang a run (issue #109)", async () => {
+    // Exactly issue #109's own repro: an id with a space passes checkSplice
+    // (before the fix), serializes fine (well-formed XML tolerates far more
+    // in an attribute value than an NCName allows), and then the token
+    // parks on the node forever -- nothing ever sanitizes it enough to
+    // dispatch a harness.
+    await expect(
+      applyGraphOps(base, [{ op: "appendShape", type: "bpmn:ServiceTask", id: "bad id", after: "gate" }]),
+    ).rejects.toThrow(/'bad id' is not a valid XML id/);
+  });
+
+  it("rejects an invalid flowId the same way -- it names a real element in the document too", async () => {
+    await expect(
+      applyGraphOps(base, [{ op: "insertShape", type: "bpmn:ServiceTask", id: "mid", into: "f1", flowId: "bad flow" }]),
+    ).rejects.toThrow(/'bad flow' is not a valid XML id/);
+  });
+
+  it("rejects an invalid createProcess id the same way", async () => {
+    await expect(applyGraphOps(base, [{ op: "createProcess", id: "bad process" }])).rejects.toThrow(
+      /'bad process' is not a valid XML id/,
+    );
+  });
+
   it("appendShape with eventDefinitionType adds a Terminate end event (closing the pre-existing gap)", async () => {
     const ops: GraphOp[] = [
       { op: "appendShape", type: "bpmn:EndEvent", id: "terminated", after: "gate", eventDefinitionType: "bpmn:TerminateEventDefinition" },
