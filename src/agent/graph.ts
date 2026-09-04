@@ -563,7 +563,19 @@ export async function applyGraphOps(currentXml: string, ops: GraphOp[]): Promise
       throw new Error(`op ${opIndex}: type '${type}' is not supported -- allowed types are: ${valid}`);
     }
   };
+  // Close enough for BPMN: every element/attribute id in the schema is
+  // xsd:ID, which XSD defines as an NCName. Nothing upstream of this checks
+  // that -- a space or other invalid character still passes checkSplice and
+  // graph:layout, still serializes (well-formed XML tolerates far more in an
+  // attribute value than an NCName allows), and the resulting document is
+  // invalid against the BPMN XSD. Worse, an id naming a real dispatch target
+  // (a task/gateway/event id, not a flow id) that bpmn-elements' own
+  // sanitizing rejects at runtime leaves the token parked on the node
+  // forever with no harness ever invoked -- the same permanent-stall failure
+  // #86 and #100 hit by other routes (issue #109).
+  const NCNAME = /^[A-Za-z_][\w.-]*$/;
   const requireNewId = (id: string, opIndex: number): void => {
+    if (!NCNAME.test(id)) throw new Error(`op ${opIndex}: id '${id}' is not a valid XML id (letters, digits, '_', '.', '-' only, and cannot start with a digit)`);
     if (registry.has(id)) throw new Error(`op ${opIndex}: id '${id}' already exists`);
   };
   const attach = (process: ModdleFlowElement, el: ModdleFlowElement): void => {
