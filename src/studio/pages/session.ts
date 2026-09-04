@@ -151,7 +151,9 @@ function paintOverlays(detail: SessionDetail): void {
       const costFormatted = stat.cost > 0 ? formatCost(stat.cost) : `${stat.turns} turn${stat.turns === 1 ? "" : "s"}`;
       overlays.add(activityId, "cost-badge", {
         position: { bottom: 0, right: 0 },
-        html: `<div class="font-mono text-[9px] px-1 py-0.5 rounded bg-accent text-white font-bold shadow-md cursor-pointer pointer-events-auto" title="${stat.turns} turn(s), ${formatCost(stat.cost)}">${costFormatted}</div>`,
+        // whitespace-nowrap: the overlay is anchored to the element's own box, so
+// without it a two-word badge ("1 turn") wraps to two lines on a task shape.
+html: `<div class="font-mono text-[9px] px-1 py-0.5 rounded bg-accent text-white font-bold shadow-md cursor-pointer pointer-events-auto whitespace-nowrap" title="${stat.turns} turn(s), ${formatCost(stat.cost)}">${costFormatted}</div>`,
       });
     } catch {}
   }
